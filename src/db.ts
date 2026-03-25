@@ -152,6 +152,10 @@ export function initDatabase(): void {
   migrateJsonState();
 }
 
+export function getDb(): Database.Database {
+  return db;
+}
+
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
