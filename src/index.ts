@@ -6,10 +6,12 @@ import {
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  TELEGRAM_BOT_POOL,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { initBotPool } from './channels/telegram.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -35,12 +37,18 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  getDb,
   setRegisteredGroup,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import {
+  ensureCostTables,
+  recordCost,
+  registerCostTasks,
+} from './cost-tracker.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -210,6 +218,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let collectedOutput = '';
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -224,6 +233,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
+        collectedOutput += (collectedOutput ? '\n' : '') + text;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -260,6 +270,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     return false;
   }
+
+  // Record cost silently on the success path.
+  recordCost(group.folder, prompt, collectedOutput, 'claude-sonnet-4-6');
 
   return true;
 }
@@ -472,8 +485,10 @@ function ensureContainerSystemRunning(): void {
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
+  ensureCostTables(getDb());
   logger.info('Database initialized');
   loadState();
+  registerCostTasks();
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
@@ -594,6 +609,10 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  if (TELEGRAM_BOT_POOL.length > 0) {
+    await initBotPool(TELEGRAM_BOT_POOL);
   }
 
   // Start subsystems (independently of connection handler)
