@@ -5,7 +5,12 @@ import Database from 'better-sqlite3';
 import { CronExpressionParser } from 'cron-parser';
 
 import { GROUPS_DIR, TIMEZONE } from './config.js';
-import { createTask, getAllRegisteredGroups, getDb, getTaskById } from './db.js';
+import {
+  createTask,
+  getAllRegisteredGroups,
+  getDb,
+  getTaskById,
+} from './db.js';
 import { logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
@@ -62,9 +67,7 @@ function estimateTokens(text: string): number {
 }
 
 function lookupPricing(model: string): { input: number; output: number } {
-  const key = Object.keys(PRICING).find((k) =>
-    model.toLowerCase().includes(k),
-  );
+  const key = Object.keys(PRICING).find((k) => model.toLowerCase().includes(k));
   return key ? PRICING[key] : DEFAULT_PRICING;
 }
 
@@ -158,10 +161,7 @@ export function buildWeeklyReport(db: Database.Database, date?: Date): string {
   return `*Weekly cost report — ${span}*\nTotal: $${grand.toFixed(4)}\n${lines.join('\n')}`;
 }
 
-export function buildMonthlyReport(
-  db: Database.Database,
-  date?: Date,
-): string {
+export function buildMonthlyReport(db: Database.Database, date?: Date): string {
   const month = (date ?? new Date()).toISOString().slice(0, 7);
   const rows = db
     .prepare(
