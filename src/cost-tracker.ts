@@ -209,15 +209,17 @@ function writeReportFiles(mainGroupFolder: string): void {
 // ---------------------------------------------------------------------------
 export function recordCost(
   groupFolder: string,
-  inputText: string,
-  outputText: string,
   model: string,
+  realInputTokens?: number,
+  realOutputTokens?: number,
+  realCostUsd?: number,
 ): void {
   const db = getDb();
-  const inputTokens = estimateTokens(inputText);
-  const outputTokens = estimateTokens(outputText);
+  const inputTokens = realInputTokens ?? 0;
+  const outputTokens = realOutputTokens ?? 0;
   const pricing = lookupPricing(model);
   const costUsd =
+    realCostUsd ??
     (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
   const runAt = new Date().toISOString();
 
