@@ -36,6 +36,10 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  model?: string;
 }
 
 interface SessionEntry {
@@ -338,7 +342,7 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; totalCostUsd?: number; inputTokens?: number; outputTokens?: number; model?: string }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -367,6 +371,10 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let totalCostUsd: number | undefined;
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let model: string | undefined;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -451,19 +459,33 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const msg = message as {
+        result?: string;
+        total_cost_usd?: number;
+        usage?: { input_tokens?: number; output_tokens?: number };
+        model?: string;
+      };
+      const textResult = msg.result ?? null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      if (msg.total_cost_usd !== undefined) totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;
+      if (msg.usage?.input_tokens !== undefined) inputTokens = (inputTokens ?? 0) + msg.usage.input_tokens;
+      if (msg.usage?.output_tokens !== undefined) outputTokens = (outputTokens ?? 0) + msg.usage.output_tokens;
+      if (msg.model) model = msg.model;
       writeOutput({
         status: 'success',
-        result: textResult || null,
-        newSessionId
+        result: textResult,
+        newSessionId,
+        totalCostUsd,
+        inputTokens,
+        outputTokens,
+        model,
       });
     }
   }
 
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, totalCostUsd, inputTokens, outputTokens, model };
 }
 
 interface ScriptResult {

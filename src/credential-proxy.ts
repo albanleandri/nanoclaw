@@ -37,7 +37,9 @@ export function startCredentialProxy(
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
   ]);
-  const initialAuthMode: AuthMode = initialSecrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  const initialAuthMode: AuthMode = initialSecrets.ANTHROPIC_API_KEY
+    ? 'api-key'
+    : 'oauth';
   const upstreamUrl = new URL(
     initialSecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
   );
@@ -54,7 +56,9 @@ export function startCredentialProxy(
         'ANTHROPIC_AUTH_TOKEN',
         'ANTHROPIC_BASE_URL',
       ]);
-      const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+      const authMode: AuthMode = secrets.ANTHROPIC_API_KEY
+        ? 'api-key'
+        : 'oauth';
       const oauthToken =
         secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
 
@@ -119,7 +123,10 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info({ port, host, authMode: initialAuthMode }, 'Credential proxy started');
+      logger.info(
+        { port, host, authMode: initialAuthMode },
+        'Credential proxy started',
+      );
       resolve(server);
     });
 

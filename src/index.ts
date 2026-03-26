@@ -281,7 +281,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
-  let collectedOutput = '';
+  let totalCostUsd: number | undefined;
+  let totalInputTokens: number | undefined;
+  let totalOutputTokens: number | undefined;
+  let lastModel: string | undefined;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -296,11 +299,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
-        collectedOutput += (collectedOutput ? '\n' : '') + text;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
+
+    // Accumulate cost/usage from the latest result (container sends running totals)
+    if (result.totalCostUsd !== undefined) totalCostUsd = result.totalCostUsd;
+    if (result.inputTokens !== undefined) totalInputTokens = result.inputTokens;
+    if (result.outputTokens !== undefined) totalOutputTokens = result.outputTokens;
+    if (result.model) lastModel = result.model;
 
     if (result.status === 'success') {
       queue.notifyIdle(chatJid);
@@ -335,7 +343,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // Record cost silently on the success path.
-  recordCost(group.folder, prompt, collectedOutput, 'claude-sonnet-4-6');
+  recordCost(
+    group.folder,
+    lastModel ?? 'claude-sonnet-4-6',
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+  );
 
   return true;
 }

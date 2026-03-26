@@ -47,6 +47,10 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  totalCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  model?: string;
 }
 
 interface VolumeMount {
@@ -232,8 +236,10 @@ function buildContainerArgs(
   // Credential proxy handles injection — containers never see real secrets.
   // The proxy runs on the host and injects API keys or OAuth tokens per-request.
   args.push(
-    '-e', `ANTHROPIC_BASE_URL=http://host.docker.internal:${CREDENTIAL_PROXY_PORT}`,
-    '-e', 'ANTHROPIC_API_KEY=placeholder',
+    '-e',
+    `ANTHROPIC_BASE_URL=http://host.docker.internal:${CREDENTIAL_PROXY_PORT}`,
+    '-e',
+    'ANTHROPIC_API_KEY=placeholder',
   );
 
   // Runtime-specific args for host gateway resolution
@@ -261,7 +267,6 @@ function buildContainerArgs(
 
   return args;
 }
-
 
 export async function runContainerAgent(
   group: RegisteredGroup,
