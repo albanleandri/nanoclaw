@@ -307,7 +307,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Accumulate cost/usage from the latest result (container sends running totals)
     if (result.totalCostUsd !== undefined) totalCostUsd = result.totalCostUsd;
     if (result.inputTokens !== undefined) totalInputTokens = result.inputTokens;
-    if (result.outputTokens !== undefined) totalOutputTokens = result.outputTokens;
+    if (result.outputTokens !== undefined)
+      totalOutputTokens = result.outputTokens;
     if (result.model) lastModel = result.model;
 
     if (result.status === 'success') {
