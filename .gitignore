@@ -35,7 +35,7 @@ groups/global/*
 # Skills system (local per-installation state)
 .nanoclaw/
 
-# Private custom skills and scripts
-container/skills/polymarket/
+# Skills are tracked in a separate private submodule (container/skills/)
+# See .gitmodules once the submodule is added
 
 agents-sdk-docs
