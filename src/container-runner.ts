@@ -248,7 +248,10 @@ function buildContainerArgs(
   // while falling back to the credential proxy for all other agent calls.
   const extraKeys = readEnvFile(['POLYMARKET_ANTHROPIC_KEY']);
   if (extraKeys.POLYMARKET_ANTHROPIC_KEY) {
-    args.push('-e', `POLYMARKET_ANTHROPIC_KEY=${extraKeys.POLYMARKET_ANTHROPIC_KEY}`);
+    args.push(
+      '-e',
+      `POLYMARKET_ANTHROPIC_KEY=${extraKeys.POLYMARKET_ANTHROPIC_KEY}`,
+    );
   }
 
   // Runtime-specific args for host gateway resolution
