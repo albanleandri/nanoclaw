@@ -135,14 +135,26 @@ def filter_candidates(markets):
             # Reference prob = first outcome (usually YES) for cache drift detection
             reference_prob = outcome_prices[0][1]
 
+            # Days to close (for annualised EV display)
+            end_date = m.get("endDateIso") or m.get("endDate") or ""
+            days_to_close = None
+            if end_date:
+                try:
+                    end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                    delta = end_dt - datetime.now(timezone.utc)
+                    days_to_close = max(delta.days + delta.seconds / 86400, 0.1)
+                except:
+                    pass
+
             candidates.append({
-                "id":            m.get("id"),
-                "question":      m.get("question", ""),
-                "description":   (m.get("description", "") or "")[:300],
-                "volume":        volume,
-                "created_at":    created,
+                "id":             m.get("id"),
+                "question":       m.get("question", ""),
+                "description":    (m.get("description", "") or "")[:300],
+                "volume":         volume,
+                "created_at":     created,
                 "outcome_prices": outcome_prices,  # [(outcome, prob), ...]
                 "reference_prob": reference_prob,
+                "days_to_close":  days_to_close,
             })
         except:
             continue
@@ -312,7 +324,17 @@ def score_and_report(results):
         print(f"  Market odds:  {market_odds_str}")
         print(f"  AI estimate:  {round(r['ai_win_probability']*100,1)}% for {r['recommended_outcome']}")
         print(f"  ROI if win:   {round(r['market_roi']*100,1)}%")
-        print(f"  Expected EV:  {round(r['expected_value']*100,1)}%")
+        ev = r['expected_value']
+        days = r.get("days_to_close")
+        if days and days > 0:
+            annualised = round(((1 + ev) ** (365 / days) - 1) * 100, 1)
+            ev_str = f"{round(ev*100,1)}%  (annualised: {annualised}%)"
+            resolves_str = f"{round(days)} day{'s' if round(days) != 1 else ''}"
+        else:
+            ev_str = f"{round(ev*100,1)}%"
+            resolves_str = "unknown"
+        print(f"  Expected EV:  {ev_str}")
+        print(f"  Resolves in:  {resolves_str}")
         print(f"  Confidence:   {r['confidence']}")
         print(f"  Reasoning:    {r['reasoning']}")
         print(f"  Volume:       ${r['volume']:,.0f}")
