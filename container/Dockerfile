@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     git \
     python3 \
     python3-pip \
-    && pip3 install --break-system-packages requests anthropic yfinance pandas financedatabase \
+    && pip3 install --break-system-packages requests anthropic yfinance pandas financedatabase curl_cffi \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
