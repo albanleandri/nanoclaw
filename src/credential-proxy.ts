@@ -3,12 +3,12 @@
  * Containers connect here instead of directly to the Anthropic API.
  * The proxy injects real credentials so containers never see them.
  *
- * Two auth modes:
- *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ * Auth mode priority (first match wins):
+ *   1. API key:    ANTHROPIC_API_KEY in .env — injects x-api-key on every request.
+ *   2. .env OAuth: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_AUTH_TOKEN in .env.
+ *   3. Host OAuth: ~/.claude/.credentials.json — uses the host Claude Code token,
+ *                  auto-refreshing it when it expires. This lets containers share
+ *                  the host's Claude subscription instead of paying per-token API rates.
  *
  * Credentials are re-read from .env on every request so updates take
  * effect immediately without restarting NanoClaw.
@@ -19,12 +19,9 @@ import { request as httpRequest, RequestOptions } from 'http';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { getValidClaudeOAuthToken } from './claude-credentials.js';
 
-export type AuthMode = 'api-key' | 'oauth';
-
-export interface ProxyConfig {
-  authMode: AuthMode;
-}
+type AuthMode = 'api-key' | 'oauth';
 
 export function startCredentialProxy(
   port: number,
@@ -64,7 +61,7 @@ export function startCredentialProxy(
 
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
-      req.on('end', () => {
+      req.on('end', async () => {
         const body = Buffer.concat(chunks);
         const headers: Record<string, string | number | string[] | undefined> =
           {
@@ -83,12 +80,32 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
+          // OAuth mode: inject Bearer token and ensure the oauth-2025-04-20 beta
+          // flag is present. Without that flag the API returns 401 "OAuth
+          // authentication is currently not supported."
+          // Priority: .env token > ~/.claude/.credentials.json (host Claude token)
+          const resolvedToken =
+            oauthToken || (await getValidClaudeOAuthToken());
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          if (resolvedToken) {
+            headers['authorization'] = `Bearer ${resolvedToken}`;
+            // Append oauth beta flag if not already present.
+            // Normalise to a string first — Node may parse repeated headers as string[].
+            const rawBeta = headers['anthropic-beta'];
+            const beta = Array.isArray(rawBeta)
+              ? rawBeta.join(',')
+              : (rawBeta as string | undefined) ?? '';
+            if (!beta.includes('oauth-2025-04-20')) {
+              headers['anthropic-beta'] = beta
+                ? `${beta},oauth-2025-04-20`
+                : 'oauth-2025-04-20';
             }
+          } else {
+            logger.warn(
+              { url: req.url },
+              'OAuth mode: no token available — request will reach upstream unauthenticated',
+            );
           }
         }
 
@@ -134,8 +151,3 @@ export function startCredentialProxy(
   });
 }
 
-/** Detect which auth mode the host is configured for. */
-export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-}

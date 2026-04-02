@@ -49,11 +49,6 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
-import {
-  ensureCostTables,
-  recordCost,
-  registerCostTasks,
-} from './cost-tracker.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -308,11 +303,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
-  let totalCostUsd: number | undefined;
-  let totalInputTokens: number | undefined;
-  let totalOutputTokens: number | undefined;
-  let lastModel: string | undefined;
-
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -330,13 +320,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
-
-    // Accumulate cost/usage from the latest result (container sends running totals)
-    if (result.totalCostUsd !== undefined) totalCostUsd = result.totalCostUsd;
-    if (result.inputTokens !== undefined) totalInputTokens = result.inputTokens;
-    if (result.outputTokens !== undefined)
-      totalOutputTokens = result.outputTokens;
-    if (result.model) lastModel = result.model;
 
     if (result.status === 'success') {
       queue.notifyIdle(chatJid);
@@ -369,15 +352,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     );
     return false;
   }
-
-  // Record cost silently on the success path.
-  recordCost(
-    group.folder,
-    lastModel ?? 'claude-sonnet-4-6',
-    totalInputTokens,
-    totalOutputTokens,
-    totalCostUsd,
-  );
 
   return true;
 }
@@ -624,10 +598,8 @@ function ensureContainerSystemRunning(): void {
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
-  ensureCostTables(getDb());
   logger.info('Database initialized');
   loadState();
-  registerCostTasks();
 
   // Start credential proxy (containers route API calls through this)
   await startCredentialProxy(CREDENTIAL_PROXY_PORT, PROXY_BIND_HOST);
