@@ -16,7 +16,6 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -48,10 +47,6 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
-  totalCostUsd?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  model?: string;
 }
 
 interface VolumeMount {
@@ -242,17 +237,6 @@ function buildContainerArgs(
     '-e',
     'ANTHROPIC_API_KEY=placeholder',
   );
-
-  // Inject optional per-skill API keys. These allow individual scripts to use
-  // dedicated keys (e.g. for separate cost tracking in the Anthropic dashboard)
-  // while falling back to the credential proxy for all other agent calls.
-  const extraKeys = readEnvFile(['POLYMARKET_ANTHROPIC_KEY']);
-  if (extraKeys.POLYMARKET_ANTHROPIC_KEY) {
-    args.push(
-      '-e',
-      `POLYMARKET_ANTHROPIC_KEY=${extraKeys.POLYMARKET_ANTHROPIC_KEY}`,
-    );
-  }
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
