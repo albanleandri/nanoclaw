@@ -7,10 +7,21 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// Mock https so defaultFetcher tests don't make real network calls
+const mockReq = {
+  write: vi.fn(),
+  end: vi.fn(),
+  on: vi.fn(),
+  setTimeout: vi.fn(),
+  destroy: vi.fn(),
+};
+vi.mock('https', () => ({ request: vi.fn(() => mockReq) }));
+
 import {
   readClaudeCredentials,
   isTokenExpired,
   getValidClaudeOAuthToken,
+  defaultFetcher,
   type ClaudeOAuthCredentials,
 } from './claude-credentials.js';
 
@@ -18,7 +29,9 @@ const FUTURE = Date.now() + 2 * 60 * 60 * 1000; // 2 hours from now
 const PAST = Date.now() - 60 * 1000; // 1 minute ago
 const SOON = Date.now() + 3 * 60 * 1000; // 3 min from now (within 5-min buffer)
 
-function makeCreds(overrides: Partial<ClaudeOAuthCredentials> = {}): ClaudeOAuthCredentials {
+function makeCreds(
+  overrides: Partial<ClaudeOAuthCredentials> = {},
+): ClaudeOAuthCredentials {
   return {
     accessToken: 'sk-ant-oat01-valid',
     refreshToken: 'sk-ant-ort01-refresh',
@@ -30,7 +43,10 @@ function makeCreds(overrides: Partial<ClaudeOAuthCredentials> = {}): ClaudeOAuth
   };
 }
 
-function writeCredentialsFile(tmpDir: string, creds: ClaudeOAuthCredentials): string {
+function writeCredentialsFile(
+  tmpDir: string,
+  creds: ClaudeOAuthCredentials,
+): string {
   const filePath = path.join(tmpDir, '.credentials.json');
   fs.writeFileSync(filePath, JSON.stringify({ claudeAiOauth: creds }));
   return filePath;
@@ -163,7 +179,10 @@ describe('getValidClaudeOAuthToken', () => {
       filePath,
       JSON.stringify({ claudeAiOauth: creds, someOtherKey: 'preserved' }),
     );
-    const newCreds = makeCreds({ accessToken: 'sk-ant-oat01-refreshed', expiresAt: FUTURE });
+    const newCreds = makeCreds({
+      accessToken: 'sk-ant-oat01-refreshed',
+      expiresAt: FUTURE,
+    });
     const mockFetcher = vi.fn().mockResolvedValue(newCreds);
 
     await getValidClaudeOAuthToken(filePath, mockFetcher);
@@ -184,3 +203,31 @@ describe('getValidClaudeOAuthToken', () => {
   });
 });
 
+describe('defaultFetcher', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockReq.on.mockReturnThis();
+    mockReq.setTimeout.mockReturnThis();
+  });
+
+  it('returns null when the refresh server does not respond within the timeout', async () => {
+    // Simulate: server accepts connection but sends nothing.
+    // The timeout callback fires immediately (no real waiting in tests),
+    // destroy() is called, which triggers the error handler with a socket hang-up.
+    mockReq.setTimeout.mockImplementation((_ms: number, cb: () => void) => {
+      // Defer so req.on('error', ...) is registered first (it comes after setTimeout in the source)
+      process.nextTick(cb);
+      return mockReq;
+    });
+    mockReq.destroy.mockImplementation(() => {
+      // Real Node.js sockets emit 'error' after destroy — simulate that
+      const errorHandler = mockReq.on.mock.calls.find(([event]: string[]) => event === 'error')?.[1];
+      errorHandler?.(new Error('socket hang up'));
+    });
+
+    const result = await defaultFetcher('sk-ant-ort01-any');
+
+    expect(result).toBeNull();
+    expect(mockReq.destroy).toHaveBeenCalled();
+  });
+});
