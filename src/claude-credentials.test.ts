@@ -153,7 +153,9 @@ describe('getValidClaudeOAuthToken', () => {
     const token = await getValidClaudeOAuthToken(filePath, mockFetcher);
 
     expect(token).toBe('sk-ant-oat01-refreshed');
-    expect(mockFetcher).toHaveBeenCalledWith('sk-ant-ort01-refresh');
+    expect(mockFetcher).toHaveBeenCalledWith('sk-ant-ort01-refresh', [
+      'user:inference',
+    ]);
   });
 
   it('writes refreshed credentials back to file', async () => {
@@ -227,7 +229,7 @@ describe('defaultFetcher', () => {
       errorHandler?.(new Error('socket hang up'));
     });
 
-    const result = await defaultFetcher('sk-ant-ort01-any');
+    const result = await defaultFetcher('sk-ant-ort01-any', ['user:inference']);
 
     expect(result).toBeNull();
     expect(mockReq.destroy).toHaveBeenCalled();
