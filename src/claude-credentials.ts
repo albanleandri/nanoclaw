@@ -27,6 +27,7 @@ export const CREDENTIALS_PATH = path.join(
 );
 
 const REFRESH_URL = 'https://platform.claude.com/v1/oauth/token';
+const REFRESH_TIMEOUT_MS = 10_000; // abort if the token endpoint doesn't respond
 
 // Refresh 5 minutes before actual expiry to avoid races
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -57,7 +58,7 @@ export type TokenFetcher = (
   refreshToken: string,
 ) => Promise<ClaudeOAuthCredentials | null>;
 
-async function defaultFetcher(
+export async function defaultFetcher(
   refreshToken: string,
 ): Promise<ClaudeOAuthCredentials | null> {
   return new Promise((resolve) => {
@@ -84,7 +85,10 @@ async function defaultFetcher(
           try {
             const data = JSON.parse(Buffer.concat(chunks).toString());
             if (!data.access_token) {
-              logger.error({ status: res.statusCode, data }, 'Token refresh failed');
+              logger.error(
+                { status: res.statusCode, data },
+                'Token refresh failed',
+              );
               resolve(null);
               return;
             }
@@ -95,7 +99,8 @@ async function defaultFetcher(
               accessToken: data.access_token,
               refreshToken: data.refresh_token ?? refreshToken,
               expiresAt,
-              scopes: typeof data.scope === 'string' ? data.scope.split(' ') : [],
+              scopes:
+                typeof data.scope === 'string' ? data.scope.split(' ') : [],
               subscriptionType: data.subscription_type ?? '',
               rateLimitTier: data.rate_limit_tier ?? '',
             });
@@ -106,6 +111,10 @@ async function defaultFetcher(
         });
       },
     );
+
+    req.setTimeout(REFRESH_TIMEOUT_MS, () => {
+      req.destroy();
+    });
 
     req.on('error', (err: Error) => {
       logger.error({ err }, 'Token refresh request failed');
@@ -153,7 +162,9 @@ export async function getValidClaudeOAuthToken(
   }
 
   if (!creds.refreshToken) {
-    logger.warn('Claude OAuth credentials have no refreshToken — cannot refresh');
+    logger.warn(
+      'Claude OAuth credentials have no refreshToken — cannot refresh',
+    );
     return creds.accessToken;
   }
 
@@ -162,7 +173,9 @@ export async function getValidClaudeOAuthToken(
   const newCreds = await refresh(creds.refreshToken);
 
   if (!newCreds) {
-    logger.warn('Token refresh failed — using potentially expired token as fallback');
+    logger.warn(
+      'Token refresh failed — using potentially expired token as fallback',
+    );
     return creds.accessToken;
   }
 

@@ -95,7 +95,7 @@ export function startCredentialProxy(
             const rawBeta = headers['anthropic-beta'];
             const beta = Array.isArray(rawBeta)
               ? rawBeta.join(',')
-              : (rawBeta as string | undefined) ?? '';
+              : ((rawBeta as string | undefined) ?? '');
             if (!beta.includes('oauth-2025-04-20')) {
               headers['anthropic-beta'] = beta
                 ? `${beta},oauth-2025-04-20`
@@ -150,4 +150,3 @@ export function startCredentialProxy(
     server.on('error', reject);
   });
 }
-
