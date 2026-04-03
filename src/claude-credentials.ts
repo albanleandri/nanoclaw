@@ -29,6 +29,10 @@ export const CREDENTIALS_PATH = path.join(
 const REFRESH_URL = 'https://platform.claude.com/v1/oauth/token';
 const REFRESH_TIMEOUT_MS = 10_000; // abort if the token endpoint doesn't respond
 
+// OAuth client ID for Claude Code CLI — must match the value hardcoded in the CLI binary.
+// Omitting this causes the endpoint to return "Invalid request format".
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+
 // Refresh 5 minutes before actual expiry to avoid races
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
@@ -56,15 +60,19 @@ export function isTokenExpired(expiresAt: number): boolean {
 
 export type TokenFetcher = (
   refreshToken: string,
+  scopes: string[],
 ) => Promise<ClaudeOAuthCredentials | null>;
 
 export async function defaultFetcher(
   refreshToken: string,
+  scopes: string[],
 ): Promise<ClaudeOAuthCredentials | null> {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
+      client_id: OAUTH_CLIENT_ID,
+      scope: scopes.join(' '),
     });
 
     const url = new URL(REFRESH_URL);
@@ -170,7 +178,7 @@ export async function getValidClaudeOAuthToken(
 
   logger.info('Claude OAuth token expired or expiring soon, refreshing...');
   const refresh = fetcher ?? defaultFetcher;
-  const newCreds = await refresh(creds.refreshToken);
+  const newCreds = await refresh(creds.refreshToken, creds.scopes);
 
   if (!newCreds) {
     logger.warn(
