@@ -221,7 +221,9 @@ describe('defaultFetcher', () => {
     });
     mockReq.destroy.mockImplementation(() => {
       // Real Node.js sockets emit 'error' after destroy — simulate that
-      const errorHandler = mockReq.on.mock.calls.find(([event]: string[]) => event === 'error')?.[1];
+      const errorHandler = mockReq.on.mock.calls.find(
+        ([event]: string[]) => event === 'error',
+      )?.[1];
       errorHandler?.(new Error('socket hang up'));
     });
 
