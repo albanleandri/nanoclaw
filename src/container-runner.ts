@@ -147,12 +147,25 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Removes stale skill folders that no longer exist in the source.
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
+    const srcDirs = new Set(
+      fs.readdirSync(skillsSrc).filter(d =>
+        fs.statSync(path.join(skillsSrc, d)).isDirectory()
+      )
+    );
+    // Remove stale skill folders
+    if (fs.existsSync(skillsDst)) {
+      for (const existing of fs.readdirSync(skillsDst)) {
+        if (!srcDirs.has(existing) && fs.statSync(path.join(skillsDst, existing)).isDirectory()) {
+          fs.rmSync(path.join(skillsDst, existing), { recursive: true });
+        }
+      }
+    }
+    for (const skillDir of srcDirs) {
       const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
