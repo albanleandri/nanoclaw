@@ -152,14 +152,17 @@ function buildVolumeMounts(
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     const srcDirs = new Set(
-      fs.readdirSync(skillsSrc).filter(d =>
-        fs.statSync(path.join(skillsSrc, d)).isDirectory()
-      )
+      fs
+        .readdirSync(skillsSrc)
+        .filter((d) => fs.statSync(path.join(skillsSrc, d)).isDirectory()),
     );
     // Remove stale skill folders
     if (fs.existsSync(skillsDst)) {
       for (const existing of fs.readdirSync(skillsDst)) {
-        if (!srcDirs.has(existing) && fs.statSync(path.join(skillsDst, existing)).isDirectory()) {
+        if (
+          !srcDirs.has(existing) &&
+          fs.statSync(path.join(skillsDst, existing)).isDirectory()
+        ) {
           fs.rmSync(path.join(skillsDst, existing), { recursive: true });
         }
       }
@@ -167,7 +170,7 @@ function buildVolumeMounts(
     for (const skillDir of srcDirs) {
       const srcDir = path.join(skillsSrc, skillDir);
       const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
     }
   }
   mounts.push({
