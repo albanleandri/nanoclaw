@@ -39,3 +39,4 @@ groups/global/*
 # See .gitmodules once the submodule is added
 
 agents-sdk-docs
+.worktrees/
