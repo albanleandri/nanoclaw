@@ -251,7 +251,10 @@ describe('agents sync', () => {
     });
     vi.mocked(fs.readdirSync).mockImplementation((p) => {
       if (String(p).endsWith('container/agents')) {
-        return ['stock-dd-writer.md', 'stock-technical-analyst.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+        return [
+          'stock-dd-writer.md',
+          'stock-technical-analyst.md',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
       }
       return [] as unknown as ReturnType<typeof fs.readdirSync>;
     });
@@ -275,16 +278,23 @@ describe('agents sync', () => {
 
   it('removes stale .md files from .claude/agents when absent from source', async () => {
     vi.mocked(fs.existsSync).mockImplementation((p) => {
-      return String(p).includes('container/agents') || String(p).includes('.claude');
+      return (
+        String(p).includes('container/agents') || String(p).includes('.claude')
+      );
     });
     vi.mocked(fs.readdirSync).mockImplementation((p) => {
       const str = String(p);
       if (str.endsWith('container/agents')) {
-        return ['stock-dd-writer.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+        return ['stock-dd-writer.md'] as unknown as ReturnType<
+          typeof fs.readdirSync
+        >;
       }
       if (str.endsWith('agents')) {
         // Destination has a stale file
-        return ['stock-dd-writer.md', 'stale-agent.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+        return [
+          'stock-dd-writer.md',
+          'stale-agent.md',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
       }
       return [] as unknown as ReturnType<typeof fs.readdirSync>;
     });
