@@ -178,18 +178,21 @@ function buildVolumeMounts(
   const agentsSrc = path.join(process.cwd(), 'container', 'agents');
   const agentsDst = path.join(groupSessionsDir, 'agents');
   if (fs.existsSync(agentsSrc)) {
-    fs.mkdirSync(agentsDst, { recursive: true });
     const srcFiles = new Set(
       fs.readdirSync(agentsSrc).filter((f) => String(f).endsWith('.md')),
     );
     // Remove stale .md agent files no longer in source
     if (fs.existsSync(agentsDst)) {
       for (const existing of fs.readdirSync(agentsDst)) {
-        if (String(existing).endsWith('.md') && !srcFiles.has(String(existing))) {
-          fs.rmSync(path.join(agentsDst, String(existing)));
+        if (
+          String(existing).endsWith('.md') &&
+          !srcFiles.has(String(existing))
+        ) {
+          fs.rmSync(path.join(agentsDst, String(existing))); // no recursive — agents are flat .md files
         }
       }
     }
+    fs.mkdirSync(agentsDst, { recursive: true });
     for (const agentFile of srcFiles) {
       fs.copyFileSync(
         path.join(agentsSrc, String(agentFile)),
