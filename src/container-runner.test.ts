@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -44,6 +45,7 @@ vi.mock('fs', async () => {
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
       copyFileSync: vi.fn(),
+      rmSync: vi.fn(),
     },
   };
 });
@@ -227,5 +229,75 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('agents sync', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.readdirSync).mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('copies .md files from container/agents to .claude/agents when source exists', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      return String(p).endsWith('container/agents');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      if (String(p).endsWith('container/agents')) {
+        return ['stock-dd-writer.md', 'stock-technical-analyst.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.copyFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('stock-dd-writer.md'),
+      expect.stringContaining('stock-dd-writer.md'),
+    );
+    expect(vi.mocked(fs.copyFileSync)).toHaveBeenCalledWith(
+      expect.stringContaining('stock-technical-analyst.md'),
+      expect.stringContaining('stock-technical-analyst.md'),
+    );
+  });
+
+  it('removes stale .md files from .claude/agents when absent from source', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      return String(p).includes('container/agents') || String(p).includes('.claude');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      const str = String(p);
+      if (str.endsWith('container/agents')) {
+        return ['stock-dd-writer.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      if (str.endsWith('agents')) {
+        // Destination has a stale file
+        return ['stock-dd-writer.md', 'stale-agent.md'] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.rmSync)).toHaveBeenCalledWith(
+      expect.stringContaining('stale-agent.md'),
+    );
   });
 });

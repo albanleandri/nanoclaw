@@ -173,6 +173,30 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
     }
   }
+  // Sync agent definitions from container/agents/ into each group's .claude/agents/
+  // Syncs individual .md files (not subdirectories) — matches Claude Code's agents/ convention.
+  const agentsSrc = path.join(process.cwd(), 'container', 'agents');
+  const agentsDst = path.join(groupSessionsDir, 'agents');
+  if (fs.existsSync(agentsSrc)) {
+    fs.mkdirSync(agentsDst, { recursive: true });
+    const srcFiles = new Set(
+      fs.readdirSync(agentsSrc).filter((f) => String(f).endsWith('.md')),
+    );
+    // Remove stale .md agent files no longer in source
+    if (fs.existsSync(agentsDst)) {
+      for (const existing of fs.readdirSync(agentsDst)) {
+        if (String(existing).endsWith('.md') && !srcFiles.has(String(existing))) {
+          fs.rmSync(path.join(agentsDst, String(existing)));
+        }
+      }
+    }
+    for (const agentFile of srcFiles) {
+      fs.copyFileSync(
+        path.join(agentsSrc, String(agentFile)),
+        path.join(agentsDst, String(agentFile)),
+      );
+    }
+  }
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
