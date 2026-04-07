@@ -279,7 +279,8 @@ describe('agents sync', () => {
   it('removes stale .md files from .claude/agents when absent from source', async () => {
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       return (
-        String(p).includes('container/skills/agents') || String(p).includes('.claude')
+        String(p).includes('container/skills/agents') ||
+        String(p).includes('.claude')
       );
     });
     vi.mocked(fs.readdirSync).mockImplementation((p) => {
