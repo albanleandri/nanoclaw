@@ -24,6 +24,8 @@ groups/global/*
 
 # Temp files
 .tmp-*
+*.pid
+*.diff
 
 # OS
 .DS_Store
