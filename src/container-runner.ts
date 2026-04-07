@@ -173,9 +173,9 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true, force: true });
     }
   }
-  // Sync agent definitions from container/agents/ into each group's .claude/agents/
+  // Sync agent definitions from container/skills/agents/ into each group's .claude/agents/
   // Syncs individual .md files (not subdirectories) — matches Claude Code's agents/ convention.
-  const agentsSrc = path.join(process.cwd(), 'container', 'agents');
+  const agentsSrc = path.join(process.cwd(), 'container', 'skills', 'agents');
   const agentsDst = path.join(groupSessionsDir, 'agents');
   if (fs.existsSync(agentsSrc)) {
     const srcFiles = new Set(
