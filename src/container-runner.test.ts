@@ -247,10 +247,10 @@ describe('agents sync', () => {
 
   it('copies .md files from container/agents to .claude/agents when source exists', async () => {
     vi.mocked(fs.existsSync).mockImplementation((p) => {
-      return String(p).endsWith('container/agents');
+      return String(p).endsWith('container/skills/agents');
     });
     vi.mocked(fs.readdirSync).mockImplementation((p) => {
-      if (String(p).endsWith('container/agents')) {
+      if (String(p).endsWith('container/skills/agents')) {
         return [
           'stock-dd-writer.md',
           'stock-technical-analyst.md',
@@ -279,12 +279,12 @@ describe('agents sync', () => {
   it('removes stale .md files from .claude/agents when absent from source', async () => {
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       return (
-        String(p).includes('container/agents') || String(p).includes('.claude')
+        String(p).includes('container/skills/agents') || String(p).includes('.claude')
       );
     });
     vi.mocked(fs.readdirSync).mockImplementation((p) => {
       const str = String(p);
-      if (str.endsWith('container/agents')) {
+      if (str.endsWith('container/skills/agents')) {
         return ['stock-dd-writer.md'] as unknown as ReturnType<
           typeof fs.readdirSync
         >;
