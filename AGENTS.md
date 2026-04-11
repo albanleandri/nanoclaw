@@ -11,7 +11,7 @@
 - Assume commands are run from the repository root unless stated otherwise.
 
 ## First steps for any task
-1. Read `README.md`, `docs/README.md`, `docs/REQUIREMENTS.md`, and `docs/HANDOFF.md` if they exist. There is no `docs/ARCHITECTURE.md` in this repo at the moment.
+1. Read `README.md`, `docs/README.md`, `docs/REQUIREMENTS.md`, and the handoff file if present. Prefer `docs/HANDOFF.local.md`; otherwise use `docs/HANDOFF.md`. There is no `docs/ARCHITECTURE.md` in this repo at the moment.
 2. Inspect the relevant package manifests and entrypoints before editing.
 3. Summarize the intended change before making large edits.
 4. Prefer small, reviewable diffs.
@@ -89,7 +89,11 @@
 - Prefer editing existing files over introducing new abstractions unless there is a clear benefit.
 
 ## Handoff protocol
-After each meaningful change, update `docs/HANDOFF.md` with:
+After each meaningful change, update the handoff file. Prefer `docs/HANDOFF.local.md` if it exists; otherwise update `docs/HANDOFF.md`.
+
+The tracked `docs/HANDOFF.md` should stay minimal and generic. Put sensitive, local, or domain-specific notes in `docs/HANDOFF.local.md`, which is intentionally ignored.
+
+Record:
 - current objective
 - files changed
 - commands run

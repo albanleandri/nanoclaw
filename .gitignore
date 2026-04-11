@@ -21,6 +21,7 @@ groups/global/*
 # Secrets
 *.keys.json
 .env
+docs/HANDOFF.local.md
 
 # Temp files
 .tmp-*
@@ -37,8 +38,8 @@ groups/global/*
 # Skills system (local per-installation state)
 .nanoclaw/
 
-# Skills are tracked in a separate private submodule (container/skills/)
-# See .gitmodules once the submodule is added
+# Personal forks may back `container/skills/` with a private submodule.
+# The public `.gitmodules` entry is intentionally a placeholder.
 
 agents-sdk-docs
 .worktrees/
