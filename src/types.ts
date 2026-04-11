@@ -29,6 +29,8 @@ export interface AllowedRoot {
 
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
+  extraSkills?: string[]; // Optional runtime skills to sync in addition to base skills
+  skillMode?: 'all' | 'base-plus-extras'; // Default: main groups use 'all', other groups use 'base-plus-extras'
   timeout?: number; // Default: 300000 (5 minutes)
 }
 

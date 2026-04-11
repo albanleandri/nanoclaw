@@ -44,6 +44,7 @@ vi.mock('fs', async () => {
       readFileSync: vi.fn(() => ''),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
+      cpSync: vi.fn(),
       copyFileSync: vi.fn(),
       rmSync: vi.fn(),
     },
@@ -309,6 +310,156 @@ describe('agents sync', () => {
 
     expect(vi.mocked(fs.rmSync)).toHaveBeenCalledWith(
       expect.stringContaining('stale-agent.md'),
+    );
+  });
+});
+
+describe('skills sync', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.readdirSync).mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('syncs only base runtime skills for non-main groups by default', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      const str = String(p);
+      return str.endsWith('container/skills');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      if (String(p).endsWith('container/skills')) {
+        return [
+          'agent-browser',
+          'capabilities',
+          'status',
+          'polymarket',
+          'stock-market-investing',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.statSync).mockReturnValue({
+      isDirectory: () => true,
+    } as ReturnType<typeof fs.statSync>);
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/agent-browser'),
+      expect.stringContaining('/skills/agent-browser'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/capabilities'),
+      expect.stringContaining('/skills/capabilities'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/status'),
+      expect.stringContaining('/skills/status'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    expect(vi.mocked(fs.cpSync)).not.toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/polymarket'),
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(vi.mocked(fs.cpSync)).not.toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/stock-market-investing'),
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  it('syncs configured extra runtime skills for non-main groups', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      const str = String(p);
+      return str.endsWith('container/skills');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      if (String(p).endsWith('container/skills')) {
+        return [
+          'agent-browser',
+          'capabilities',
+          'status',
+          'polymarket',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.statSync).mockReturnValue({
+      isDirectory: () => true,
+    } as ReturnType<typeof fs.statSync>);
+
+    const groupWithExtras: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { extraSkills: ['polymarket'] },
+    };
+
+    const resultPromise = runContainerAgent(
+      groupWithExtras,
+      testInput,
+      () => {},
+    );
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/polymarket'),
+      expect.stringContaining('/skills/polymarket'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+  });
+
+  it('preserves legacy all-skills behavior for main groups by default', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      const str = String(p);
+      return str.endsWith('container/skills');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      if (String(p).endsWith('container/skills')) {
+        return [
+          'agent-browser',
+          'capabilities',
+          'status',
+          'polymarket',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.statSync).mockReturnValue({
+      isDirectory: () => true,
+    } as ReturnType<typeof fs.statSync>);
+
+    const resultPromise = runContainerAgent(
+      { ...testGroup, isMain: true },
+      { ...testInput, isMain: true },
+      () => {},
+    );
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/polymarket'),
+      expect.stringContaining('/skills/polymarket'),
+      expect.objectContaining({ recursive: true, force: true }),
     );
   });
 });

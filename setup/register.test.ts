@@ -177,6 +177,33 @@ describe('parameterized SQL registration', () => {
     expect(row.is_main).toBe(0);
   });
 
+  it('stores container_config JSON for runtime skill settings', () => {
+    const containerConfig = {
+      skillMode: 'base-plus-extras',
+      extraSkills: ['polymarket', 'status'],
+    };
+
+    db.prepare(
+      `INSERT OR REPLACE INTO registered_groups
+       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'skills@g.us',
+      'Skills Group',
+      'skills-group',
+      '@Andy',
+      '2024-01-01T00:00:00.000Z',
+      JSON.stringify(containerConfig),
+      1,
+    );
+
+    const row = db
+      .prepare('SELECT container_config FROM registered_groups WHERE jid = ?')
+      .get('skills@g.us') as { container_config: string };
+
+    expect(JSON.parse(row.container_config)).toEqual(containerConfig);
+  });
+
   it('upserts on conflict', () => {
     const stmt = db.prepare(
       `INSERT OR REPLACE INTO registered_groups

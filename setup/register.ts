@@ -22,6 +22,8 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  skillMode?: 'all' | 'base-plus-extras';
+  extraSkills?: string[];
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -34,6 +36,7 @@ function parseArgs(args: string[]): RegisterArgs {
     requiresTrigger: true,
     isMain: false,
     assistantName: 'Andy',
+    extraSkills: [],
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -61,6 +64,19 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
+        break;
+      case '--skill-mode': {
+        const value = args[++i];
+        if (value === 'all' || value === 'base-plus-extras') {
+          result.skillMode = value;
+        }
+        break;
+      }
+      case '--extra-skills':
+        result.extraSkills = (args[++i] || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
         break;
     }
   }
@@ -105,6 +121,15 @@ export async function run(args: string[]): Promise<void> {
     folder: parsed.folder,
     trigger: parsed.trigger,
     added_at: new Date().toISOString(),
+    containerConfig:
+      parsed.skillMode || parsed.extraSkills?.length
+        ? {
+            ...(parsed.skillMode ? { skillMode: parsed.skillMode } : {}),
+            ...(parsed.extraSkills?.length
+              ? { extraSkills: parsed.extraSkills }
+              : {}),
+          }
+        : undefined,
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });
@@ -195,6 +220,8 @@ export async function run(args: string[]): Promise<void> {
     TRIGGER: parsed.trigger,
     REQUIRES_TRIGGER: parsed.requiresTrigger,
     ASSISTANT_NAME: parsed.assistantName,
+    SKILL_MODE: parsed.skillMode || '',
+    EXTRA_SKILLS: parsed.extraSkills?.join(',') || '',
     NAME_UPDATED: nameUpdated,
     STATUS: 'success',
     LOG: 'logs/setup.log',
