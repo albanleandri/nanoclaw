@@ -4,6 +4,7 @@
 - Use `AGENTS.md` as the shared repo instruction source. Keep Claude-specific additions here small and non-conflicting.
 - Prefer repo scripts and `package.json` commands over repeating long shell snippets in Claude-only instructions.
 - For dependency installation, use `npm run deps:install` instead of separate root and `container/agent-runner` install commands.
+- For handoff context, prefer `docs/HANDOFF.local.md` when present; otherwise use the tracked `docs/HANDOFF.md`.
 
 # NanoClaw
 

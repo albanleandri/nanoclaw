@@ -14,7 +14,7 @@ npm run container:build
 ```bash
 npm run setup:bootstrap
 npm run setup:step -- environment
-npm run setup:step -- timezone -- --tz Europe/Zurich
+npm run setup:step -- timezone -- --tz <your-timezone>
 ```
 
 ## Service
