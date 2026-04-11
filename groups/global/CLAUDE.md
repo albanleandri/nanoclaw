@@ -34,11 +34,11 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
-## Runtime Skills
+## Runtime Tools And Skills
 
-Every group has a small base runtime skill set. Some groups also have extra niche skills enabled by the operator.
+Some groups have only a narrow runtime tool and skill set, while others have broader access.
 
-If a specialized skill or command is unavailable in this group:
+If a specialized tool, skill, or command is unavailable in this group:
 - do not invent it
 - say it is not enabled for this group
 - suggest using a group where it is enabled or asking the operator to enable it

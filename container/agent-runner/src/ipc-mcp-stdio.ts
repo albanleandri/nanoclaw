@@ -10,6 +10,13 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import {
+  formatRuntimeSelectionList,
+  getAvailableSkillOptions,
+  RECOMMENDED_SECONDARY_SKILLS,
+  RECOMMENDED_SECONDARY_TOOLS,
+  SELECTABLE_RUNTIME_TOOLS,
+} from './runtime-capabilities.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -68,8 +75,24 @@ server.tool(
 );
 
 server.tool(
+  'list_runtime_capabilities',
+  'List the exact runtime tools and skills that can be enabled for a group, with numbered selections and recommended defaults for secondary groups.',
+  {},
+  async () => {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: formatRuntimeSelectionList(getAvailableSkillOptions()),
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+  `Schedule a recurring or one-time task. The task will run as an agent with the tools enabled for this group. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
 CONTEXT MODE - Choose based on task type:
 \u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
@@ -448,7 +471,7 @@ server.tool(
 
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.
 
-By default, non-main groups only get the base runtime skills: agent-browser, capabilities, and status. Ask the user which extra niche skills they want enabled for the new group, if any.`,
+Before registering a new secondary group, call list_runtime_capabilities and show the numbered tool and skill lists to the user. Ask them which exact tools and skills they want enabled. If they do not care, use the recommended defaults from list_runtime_capabilities.`,
   {
     jid: z
       .string()
@@ -462,6 +485,18 @@ By default, non-main groups only get the base runtime skills: agent-browser, cap
         'Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")',
       ),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    allowed_tools: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Optional exact runtime tool IDs to enable for this group. For new secondary groups, derive these from list_runtime_capabilities.',
+      ),
+    enabled_skills: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Optional exact runtime skill names to enable for this group. For new secondary groups, derive these from list_runtime_capabilities.',
+      ),
     skill_mode: z
       .enum(['all', 'base-plus-extras'])
       .optional()
@@ -494,15 +529,14 @@ By default, non-main groups only get the base runtime skills: agent-browser, cap
       name: args.name,
       folder: args.folder,
       trigger: args.trigger,
-      containerConfig:
-        args.skill_mode || args.extra_skills?.length
-          ? {
-              ...(args.skill_mode ? { skillMode: args.skill_mode } : {}),
-              ...(args.extra_skills?.length
-                ? { extraSkills: args.extra_skills }
-                : {}),
-            }
-          : undefined,
+      containerConfig: {
+        allowedTools: args.allowed_tools ?? RECOMMENDED_SECONDARY_TOOLS,
+        enabledSkills: args.enabled_skills ?? RECOMMENDED_SECONDARY_SKILLS,
+        ...(args.skill_mode ? { skillMode: args.skill_mode } : {}),
+        ...(args.extra_skills?.length
+          ? { extraSkills: args.extra_skills }
+          : {}),
+      },
       timestamp: new Date().toISOString(),
     };
 

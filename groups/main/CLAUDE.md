@@ -34,13 +34,13 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
-## Runtime Skills
+## Runtime Tools And Skills
 
-Main groups may have more runtime skills than other groups, but skill availability is still configuration-driven.
+Main groups may have more runtime tools and skills than other groups, but availability is still configuration-driven.
 
-If a specialized skill or command is unavailable:
+If a specialized tool, skill, or command is unavailable:
 - do not invent it
-- explain that runtime skills are group-specific
+- explain that runtime tools and skills are group-specific
 - check the group's configuration before treating it as a bug
 
 ## Memory
@@ -180,19 +180,26 @@ Fields:
 
 ### Adding a Group
 
-Before registering a new non-main group, ask the user which extra runtime skills they want there. Default to no extras unless they ask for them.
+Before registering a new non-main group, call `list_runtime_capabilities`. Show the user the numbered list of exact runtime tools and exact runtime skills that can be enabled there, then ask them which numbers they want. Use reply formats like:
+
+```text
+tools: 1,2,3
+skills: 1,2,3
+```
+
+If the user does not care, use the recommended defaults from `list_runtime_capabilities`.
 
 1. Query the database to find the group's JID
-2. Use the `register_group` MCP tool with the JID, name, folder, and trigger
+2. Use the `register_group` MCP tool with the JID, name, folder, trigger, and the exact selected `allowed_tools` and `enabled_skills`
 3. Optionally include `containerConfig` for additional mounts
 4. The group folder is created automatically: `/workspace/project/groups/{folder-name}/`
 5. Optionally create an initial `CLAUDE.md` for the group
 
-For the skill UX:
-- Main/private control chats typically use the full skill set
-- New secondary groups should default to base skills only
-- Ask which niche skills to enable for that group, if any
-- If the user does not request niche skills, leave `extra_skills` empty
+For the runtime-selection UX:
+- main/private control chats typically use the full tool and skill set
+- new secondary groups should use the exact numbered tool and skill lists from `list_runtime_capabilities`
+- ask the user which selections they want for that group
+- if the user does not request anything specific, use the recommended defaults from `list_runtime_capabilities`
 
 Folder naming convention — channel prefix with underscore separator:
 - WhatsApp "Family Chat" → `whatsapp_family-chat`
@@ -227,7 +234,7 @@ Groups can have extra directories mounted. Add `containerConfig` to their entry:
 
 The directory will appear at `/workspace/extra/webapp` in that group's container.
 
-Runtime skills can also be configured per group:
+Runtime tools and skills can also be configured per group:
 
 ```json
 {
@@ -237,18 +244,19 @@ Runtime skills can also be configured per group:
     "trigger": "@Andy",
     "added_at": "2026-01-31T12:00:00Z",
     "containerConfig": {
-      "skillMode": "base-plus-extras",
-      "extraSkills": ["polymarket"]
+      "allowedTools": ["Bash", "Read", "mcp__nanoclaw__schedule_task"],
+      "enabledSkills": ["agent-browser", "status"]
     }
   }
 }
 ```
 
 Notes:
-- Non-main groups default to `base-plus-extras`
-- Base skills are `agent-browser`, `capabilities`, and `status`
-- Main groups default to `all` for backwards compatibility
-- If a niche skill is missing in a group, check `containerConfig.extraSkills` before assuming it should be present
+- New non-main groups should prefer explicit `allowedTools` and `enabledSkills`
+- Recommended default secondary-group skills are `agent-browser`, `capabilities`, and `status`
+- If the user does not choose specific skills, use those recommended defaults
+- Main groups default to broad runtime access unless reconfigured
+- If a niche capability is missing in a group, check `containerConfig.allowedTools` and `containerConfig.enabledSkills` before assuming it should be present
 
 #### Sender Allowlist
 

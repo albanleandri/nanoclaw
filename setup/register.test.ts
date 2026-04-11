@@ -4,6 +4,10 @@ import path from 'path';
 import { afterEach, describe, it, expect, beforeEach } from 'vitest';
 
 import Database from 'better-sqlite3';
+import {
+  RECOMMENDED_SECONDARY_SKILLS,
+  RECOMMENDED_SECONDARY_TOOLS,
+} from '../container/agent-runner/src/runtime-capabilities.js';
 
 /**
  * Tests for the register step.
@@ -202,6 +206,62 @@ describe('parameterized SQL registration', () => {
       .get('skills@g.us') as { container_config: string };
 
     expect(JSON.parse(row.container_config)).toEqual(containerConfig);
+  });
+
+  it('stores exact runtime tools and skills in container_config JSON', () => {
+    const containerConfig = {
+      allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
+      enabledSkills: ['agent-browser', 'status'],
+    };
+
+    db.prepare(
+      `INSERT OR REPLACE INTO registered_groups
+       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'explicit@g.us',
+      'Explicit Group',
+      'explicit-group',
+      '@Andy',
+      '2024-01-01T00:00:00.000Z',
+      JSON.stringify(containerConfig),
+      1,
+    );
+
+    const row = db
+      .prepare('SELECT container_config FROM registered_groups WHERE jid = ?')
+      .get('explicit@g.us') as { container_config: string };
+
+    expect(JSON.parse(row.container_config)).toEqual(containerConfig);
+  });
+
+  it('keeps recommended defaults available for omitted secondary-group selections', () => {
+    expect(RECOMMENDED_SECONDARY_TOOLS).toEqual([
+      'Bash',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
+      'SendMessage',
+      'TodoWrite',
+      'ToolSearch',
+      'Skill',
+      'mcp__nanoclaw__send_message',
+      'mcp__nanoclaw__schedule_task',
+      'mcp__nanoclaw__list_tasks',
+      'mcp__nanoclaw__pause_task',
+      'mcp__nanoclaw__resume_task',
+      'mcp__nanoclaw__cancel_task',
+      'mcp__nanoclaw__update_task',
+    ]);
+    expect(RECOMMENDED_SECONDARY_SKILLS).toEqual([
+      'agent-browser',
+      'capabilities',
+      'status',
+    ]);
   });
 
   it('upserts on conflict', () => {
