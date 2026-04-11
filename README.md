@@ -43,6 +43,13 @@ claude
 
 Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup and service configuration.
 
+For direct terminal workflows, prefer the repo scripts:
+
+```bash
+npm run deps:install
+npm run dev
+```
+
 > **Note:** Commands prefixed with `/` (like `/setup`, `/add-whatsapp`) are [Claude Code skills](https://code.claude.com/docs/en/skills). Type them inside the `claude` CLI prompt, not in your regular terminal. If you don't have Claude Code installed, get it at [claude.com/product/claude-code](https://claude.com/product/claude-code).
 
 ## Philosophy

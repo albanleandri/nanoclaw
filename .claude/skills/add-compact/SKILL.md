@@ -46,14 +46,13 @@ npm run build
 ### Rebuild container
 
 ```bash
-./container/build.sh
+npm run container:build
 ```
 
 ### Restart service
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 3: Verify
@@ -106,7 +105,7 @@ cd /tmp/nanoclaw-test
 claude  # then run /add-compact
 npm run build
 npm test
-./container/build.sh
+npm run container:build
 # Manual: send /compact from main group, verify compaction + continuation
 # Manual: send @<assistant> /compact from non-main as non-admin, verify denial
 # Manual: send @<assistant> /compact from non-main as admin, verify allowed

@@ -54,7 +54,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/channels/slack.test.ts
 ```
@@ -99,7 +99,7 @@ The container reads environment from `data/env/env`, not `.env` directly.
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Registration
@@ -118,18 +118,18 @@ Wait for the user to provide the channel ID.
 
 ### Register the channel
 
-The channel ID, name, and folder name are needed. Use `npx tsx setup/index.ts --step register` with the appropriate flags.
+The channel ID, name, and folder name are needed. Use `npm run setup:step -- register` with the appropriate flags.
 
 For a main channel (responds to all messages):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_main" --trigger "@${ASSISTANT_NAME}" --channel slack --no-trigger-required --is-main
+npm run setup:step -- register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_main" --trigger "@${ASSISTANT_NAME}" --channel slack --no-trigger-required --is-main
 ```
 
 For additional channels (trigger-only):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel slack
+npm run setup:step -- register -- --jid "slack:<channel-id>" --name "<channel-name>" --folder "slack_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel slack
 ```
 
 ## Phase 5: Verify
@@ -157,7 +157,7 @@ tail -f logs/nanoclaw.log
 1. Check `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set in `.env` AND synced to `data/env/env`
 2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'slack:%'"`
 3. For non-main channels: message must include trigger pattern
-4. Service is running: `launchctl list | grep nanoclaw`
+4. Service is running: `npm run service:status`
 
 ### Bot connected but not receiving messages
 
@@ -180,7 +180,7 @@ If the bot logs `missing_scope` errors:
 3. **Reinstall the app** to your workspace — scope changes require reinstallation
 4. Copy the new Bot Token (it changes on reinstall) and update `.env`
 5. Sync: `mkdir -p data/env && cp .env data/env/env`
-6. Restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
+6. Restart: `npm run service:restart`
 
 ### Getting channel ID
 

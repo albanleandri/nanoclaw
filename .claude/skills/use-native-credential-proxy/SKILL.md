@@ -77,7 +77,7 @@ with:
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/credential-proxy.test.ts src/container-runner.test.ts
 ```
@@ -129,9 +129,7 @@ npm run build
 ```
 
 Then restart the service:
-- macOS: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-- Linux: `systemctl --user restart nanoclaw`
-- WSL/manual: stop and re-run `bash start-nanoclaw.sh`
+- Use `npm run service:restart`
 
 2. Check logs for successful proxy startup:
 
@@ -161,7 +159,7 @@ To revert to OneCLI gateway:
 
 1. Find the merge commit: `git log --oneline --merges -5`
 2. Revert it: `git revert <merge-commit> -m 1` (undoes the skill branch merge, keeps your other changes)
-3. `npm install` (re-adds `@onecli-sh/sdk`)
+3. `npm run deps:install` (re-adds `@onecli-sh/sdk`)
 4. `npm run build`
 5. Follow `/setup` step 4 to configure OneCLI credentials
 6. Remove `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from `.env`

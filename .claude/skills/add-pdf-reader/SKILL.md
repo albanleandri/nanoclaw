@@ -56,14 +56,13 @@ npx vitest run src/channels/whatsapp.test.ts
 ### Rebuild container
 
 ```bash
-./container/build.sh
+npm run container:build
 ```
 
 ### Restart service
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 3: Verify
@@ -93,7 +92,7 @@ Look for:
 
 ### Agent says pdf-reader command not found
 
-Container needs rebuilding. Run `./container/build.sh` and restart the service.
+Container needs rebuilding. Run `npm run container:build` and restart the service.
 
 ### PDF text extraction is empty
 

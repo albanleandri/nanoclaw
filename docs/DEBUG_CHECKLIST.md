@@ -1,5 +1,12 @@
 # NanoClaw Debug Checklist
 
+For routine operations, prefer the canonical repo commands in `docs/OPERATIONS.md`:
+- `npm run container:build`
+- `npm run service:status`
+- `npm run service:restart`
+- `npm run setup:bootstrap`
+- `npm run setup:step -- <step> [args...]`
+
 ## Known Issues (2026-02-08)
 
 ### 1. [FIXED] Resume branches from stale tree position
@@ -23,7 +30,7 @@ Both timers fire at the same time, so containers always exit via hard SIGKILL (c
 rdctl set --kubernetes-enabled=false
 
 # Then rebuild the container image
-./container/build.sh
+npm run container:build
 ```
 
 **Diagnosis**: Check the k3s log for image GC activity:
@@ -43,7 +50,7 @@ If you need Kubernetes enabled, set `CONTAINER_IMAGE` to an image stored in a re
 
 ```bash
 # 1. Is the service running?
-launchctl list | grep nanoclaw
+npm run service:status
 # Expected: PID  0  com.nanoclaw (PID = running, "-" = not running, non-zero exit = crashed)
 
 # 2. Any running containers?
@@ -155,7 +162,7 @@ npm run auth
 
 ```bash
 # Restart the service
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run service:restart
 
 # View live logs
 tail -f logs/nanoclaw.log
@@ -163,9 +170,9 @@ tail -f logs/nanoclaw.log
 # Stop the service (careful — running containers are detached, not killed)
 launchctl bootout gui/$(id -u)/com.nanoclaw
 
-# Start the service
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nanoclaw.plist
+# Start / status guidance
+npm run service:status
 
 # Rebuild after code changes
-npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run build && npm run service:restart
 ```

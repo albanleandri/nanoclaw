@@ -84,7 +84,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/channels/whatsapp.test.ts
 ```
@@ -104,7 +104,7 @@ rm -rf store/auth/
 For QR code in browser (recommended):
 
 ```bash
-npx tsx setup/index.ts --step whatsapp-auth -- --method qr-browser
+npm run setup:step -- whatsapp-auth -- --method qr-browser
 ```
 
 (Bash timeout: 150000ms)
@@ -120,7 +120,7 @@ Tell the user:
 For QR code in terminal:
 
 ```bash
-npx tsx setup/index.ts --step whatsapp-auth -- --method qr-terminal
+npm run setup:step -- whatsapp-auth -- --method qr-terminal
 ```
 
 Tell the user to run `npm run auth` in another terminal, then:
@@ -135,7 +135,7 @@ Tell the user to have WhatsApp open on **Settings > Linked Devices > Link a Devi
 Run the auth process in the background and poll `store/pairing-code.txt` for the code:
 
 ```bash
-rm -f store/pairing-code.txt && npx tsx setup/index.ts --step whatsapp-auth -- --method pairing-code --phone <their-phone-number> > /tmp/wa-auth.log 2>&1 &
+rm -f store/pairing-code.txt && npm run setup:step -- whatsapp-auth -- --method pairing-code --phone <their-phone-number> > /tmp/wa-auth.log 2>&1 &
 ```
 
 Then immediately poll for the code (do NOT wait for the background command to finish):
@@ -221,8 +221,8 @@ node -e "const c=JSON.parse(require('fs').readFileSync('store/auth/creds.json','
 **Group (solo, existing):** Run group sync and list available groups:
 
 ```bash
-npx tsx setup/index.ts --step groups
-npx tsx setup/index.ts --step groups --list
+npm run setup:step -- groups
+npm run setup:step -- groups --list
 ```
 
 The output shows `JID|GroupName` pairs. Present candidates as AskUserQuestion (names only, not JIDs).
@@ -230,7 +230,7 @@ The output shows `JID|GroupName` pairs. Present candidates as AskUserQuestion (n
 ### Register the chat
 
 ```bash
-npx tsx setup/index.ts --step register \
+npm run setup:step -- register -- \
   --jid "<jid>" \
   --name "<chat-name>" \
   --trigger "@<trigger>" \
@@ -244,7 +244,7 @@ npx tsx setup/index.ts --step register \
 For additional groups (trigger-required):
 
 ```bash
-npx tsx setup/index.ts --step register \
+npm run setup:step -- register -- \
   --jid "<group-jid>" \
   --name "<group-name>" \
   --trigger "@<trigger>" \
@@ -267,7 +267,7 @@ Restart the service:
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 
 # Linux (systemd)
-systemctl --user restart nanoclaw
+npm run service:restart
 
 # Linux (nohup fallback)
 bash start-nanoclaw.sh
@@ -315,7 +315,7 @@ Enter the code **immediately** when it appears. Also ensure:
 If pairing code keeps failing, switch to QR-browser auth instead:
 
 ```bash
-rm -rf store/auth/ && npx tsx setup/index.ts --step whatsapp-auth -- --method qr-browser
+rm -rf store/auth/ && npm run setup:step -- whatsapp-auth -- --method qr-browser
 ```
 
 ### "conflict" disconnection
@@ -332,7 +332,7 @@ pkill -f "node dist/index.js"
 Check:
 1. Auth credentials exist: `ls store/auth/creds.json`
 3. Chat is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE '%whatsapp%' OR jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net'"`
-4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
+4. Service is running: `npm run service:status`
 5. Logs: `tail -50 logs/nanoclaw.log`
 
 ### Group names not showing
@@ -340,7 +340,7 @@ Check:
 Run group metadata sync:
 
 ```bash
-npx tsx setup/index.ts --step groups
+npm run setup:step -- groups
 ```
 
 This fetches all group names from WhatsApp. Runs automatically every 24 hours.
@@ -369,4 +369,4 @@ To remove WhatsApp integration:
 1. Delete auth credentials: `rm -rf store/auth/`
 2. Remove WhatsApp registrations: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE '%@g.us' OR jid LIKE '%@s.whatsapp.net'"`
 3. Sync env: `mkdir -p data/env && cp .env data/env/env`
-4. Rebuild and restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)
+4. Rebuild and restart: `npm run build && npm run service:restart`

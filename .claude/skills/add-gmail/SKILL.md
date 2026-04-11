@@ -70,7 +70,7 @@ When you receive an email notification (messages starting with `[Email from ...`
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/channels/gmail.test.ts
 ```
@@ -136,15 +136,14 @@ rm -r data/sessions/*/agent-runner-src 2>/dev/null || true
 Rebuild the container (agent-runner changed):
 
 ```bash
-cd container && ./build.sh
+npm run container:build
 ```
 
 Then compile and restart:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Verify
@@ -206,7 +205,7 @@ npx -y @gongrzhe/server-gmail-autoauth-mcp
 2. Remove `gmail` MCP server and `mcp__gmail__*` from `container/agent-runner/src/index.ts`
 3. Rebuild and restart
 4. Clear stale agent-runner copies: `rm -r data/sessions/*/agent-runner-src 2>/dev/null || true`
-5. Rebuild: `cd container && ./build.sh && cd .. && npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux)
+5. Rebuild: `npm run container:build && npm run build && npm run service:restart`
 
 ### Channel mode
 
@@ -217,4 +216,4 @@ npx -y @gongrzhe/server-gmail-autoauth-mcp
 5. Uninstall: `npm uninstall googleapis`
 6. Rebuild and restart
 7. Clear stale agent-runner copies: `rm -r data/sessions/*/agent-runner-src 2>/dev/null || true`
-8. Rebuild: `cd container && ./build.sh && cd .. && npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux)
+8. Rebuild: `npm run container:build && npm run build && npm run service:restart`

@@ -76,12 +76,12 @@ npm run build
 
 Linux:
 ```bash
-systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 macOS:
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run service:restart
 ```
 
 ### Test receiving reactions
