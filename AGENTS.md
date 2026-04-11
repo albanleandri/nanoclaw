@@ -51,8 +51,9 @@
   - Keep this runtime on `@anthropic-ai/claude-agent-sdk`.
 - `container/skills/`
   - Skills and tools loaded inside agent containers.
-  - Groups do not all receive the same runtime skills. Non-main groups default to a small base set, while extra or niche skills are opt-in per group via `containerConfig.extraSkills`.
-  - Main groups keep legacy all-skills behavior unless explicitly reconfigured.
+  - Runtime tools and skills are group-specific.
+  - New non-main groups should be configured with explicit `containerConfig.allowedTools` and `containerConfig.enabledSkills` selections.
+  - Main groups keep legacy all-tools and all-skills behavior unless explicitly reconfigured.
 - `setup/`
   - Step-based setup workflow and setup tests.
   - `setup/index.ts` dispatches setup steps such as environment, container, groups, service, and verify.
@@ -83,7 +84,7 @@
 - Do not document or imply channels, services, or deployment units that are not present in the repo.
 - If you change setup steps, startup flow, secrets handling, mounts, or service behavior, update docs in the same patch.
 - Keep the tracked repo public-safe by default. Private or domain-specific personalization belongs in ignored local files or a private layer such as a private submodule.
-- Runtime skill availability is group-specific. If a niche skill seems missing, check that group's `containerConfig.skillMode` and `containerConfig.extraSkills` before assuming a bug.
+- Runtime tool and skill availability is group-specific. If a capability seems missing, check that group's `containerConfig.allowedTools`, `containerConfig.enabledSkills`, `containerConfig.skillMode`, and `containerConfig.extraSkills` before assuming a bug.
 
 ## Change rules
 - Do not silently change public interfaces.

@@ -41,6 +41,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  allowedTools?: string[];
 }
 
 export interface ContainerOutput {
@@ -62,11 +63,76 @@ const BASE_RUNTIME_SKILLS = new Set([
   'status',
 ]);
 
+const ALL_RUNTIME_TOOLS = [
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'TeamCreate',
+  'TeamDelete',
+  'SendMessage',
+  'TodoWrite',
+  'ToolSearch',
+  'Skill',
+  'NotebookEdit',
+  'mcp__nanoclaw__send_message',
+  'mcp__nanoclaw__schedule_task',
+  'mcp__nanoclaw__list_tasks',
+  'mcp__nanoclaw__pause_task',
+  'mcp__nanoclaw__resume_task',
+  'mcp__nanoclaw__cancel_task',
+  'mcp__nanoclaw__update_task',
+  'mcp__nanoclaw__register_group',
+  'mcp__nanoclaw__list_runtime_capabilities',
+];
+
+function resolveAllowedTools(group: RegisteredGroup): string[] {
+  if (!group.containerConfig?.allowedTools?.length) {
+    return ALL_RUNTIME_TOOLS;
+  }
+
+  const selected = new Set<string>();
+  for (const tool of group.containerConfig.allowedTools) {
+    if (ALL_RUNTIME_TOOLS.includes(tool)) {
+      selected.add(tool);
+    } else {
+      logger.warn(
+        { group: group.folder, tool },
+        'Configured runtime tool not found',
+      );
+    }
+  }
+
+  return Array.from(selected);
+}
+
 function resolveSyncedSkills(
   group: RegisteredGroup,
   isMain: boolean,
   availableSkills: string[],
 ): Set<string> {
+  if (group.containerConfig?.enabledSkills?.length) {
+    const selected = new Set<string>();
+    for (const skill of group.containerConfig.enabledSkills) {
+      if (availableSkills.includes(skill)) {
+        selected.add(skill);
+      } else {
+        logger.warn(
+          { group: group.folder, skill },
+          'Configured enabled runtime skill not found',
+        );
+      }
+    }
+    return selected;
+  }
+
   const requestedMode =
     group.containerConfig?.skillMode ?? (isMain ? 'all' : 'base-plus-extras');
 
@@ -407,6 +473,10 @@ export async function runContainerAgent(
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+  const resolvedInput: ContainerInput = {
+    ...input,
+    allowedTools: resolveAllowedTools(group),
+  };
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
@@ -420,7 +490,7 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    container.stdin.write(JSON.stringify(resolvedInput));
     container.stdin.end();
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive

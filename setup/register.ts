@@ -7,6 +7,10 @@
 import fs from 'fs';
 import path from 'path';
 
+import {
+  RECOMMENDED_SECONDARY_SKILLS,
+  RECOMMENDED_SECONDARY_TOOLS,
+} from '../container/agent-runner/src/runtime-capabilities.js';
 import { STORE_DIR } from '../src/config.ts';
 import { initDatabase, setRegisteredGroup } from '../src/db.ts';
 import { isValidGroupFolder } from '../src/group-folder.ts';
@@ -22,6 +26,8 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  allowedTools?: string[];
+  enabledSkills?: string[];
   skillMode?: 'all' | 'base-plus-extras';
   extraSkills?: string[];
 }
@@ -64,6 +70,18 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
+        break;
+      case '--allowed-tools':
+        result.allowedTools = (args[++i] || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        break;
+      case '--enabled-skills':
+        result.enabledSkills = (args[++i] || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
         break;
       case '--skill-mode': {
         const value = args[++i];
@@ -116,20 +134,38 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
+  const defaultNonMainConfig = !parsed.isMain
+    ? {
+        allowedTools: parsed.allowedTools ?? RECOMMENDED_SECONDARY_TOOLS,
+        enabledSkills: parsed.enabledSkills ?? RECOMMENDED_SECONDARY_SKILLS,
+      }
+    : undefined;
+
+  const containerConfig =
+    parsed.allowedTools ||
+    parsed.enabledSkills ||
+    parsed.skillMode ||
+    parsed.extraSkills?.length ||
+    defaultNonMainConfig
+      ? {
+          ...(defaultNonMainConfig ?? {}),
+          ...(parsed.allowedTools ? { allowedTools: parsed.allowedTools } : {}),
+          ...(parsed.enabledSkills
+            ? { enabledSkills: parsed.enabledSkills }
+            : {}),
+          ...(parsed.skillMode ? { skillMode: parsed.skillMode } : {}),
+          ...(parsed.extraSkills?.length
+            ? { extraSkills: parsed.extraSkills }
+            : {}),
+        }
+      : undefined;
+
   setRegisteredGroup(parsed.jid, {
     name: parsed.name,
     folder: parsed.folder,
     trigger: parsed.trigger,
     added_at: new Date().toISOString(),
-    containerConfig:
-      parsed.skillMode || parsed.extraSkills?.length
-        ? {
-            ...(parsed.skillMode ? { skillMode: parsed.skillMode } : {}),
-            ...(parsed.extraSkills?.length
-              ? { extraSkills: parsed.extraSkills }
-              : {}),
-          }
-        : undefined,
+    containerConfig,
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });
@@ -220,6 +256,8 @@ export async function run(args: string[]): Promise<void> {
     TRIGGER: parsed.trigger,
     REQUIRES_TRIGGER: parsed.requiresTrigger,
     ASSISTANT_NAME: parsed.assistantName,
+    ALLOWED_TOOLS: containerConfig?.allowedTools?.join(',') || '',
+    ENABLED_SKILLS: containerConfig?.enabledSkills?.join(',') || '',
     SKILL_MODE: parsed.skillMode || '',
     EXTRA_SKILLS: parsed.extraSkills?.join(',') || '',
     NAME_UPDATED: nameUpdated,

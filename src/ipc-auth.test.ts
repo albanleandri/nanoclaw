@@ -687,6 +687,32 @@ describe('register_group success', () => {
     });
   });
 
+  it('stores explicit runtime tools and skills when provided', async () => {
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'explicit@g.us',
+        name: 'Explicit Group',
+        folder: 'explicit-group',
+        trigger: '@Andy',
+        containerConfig: {
+          allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
+          enabledSkills: ['agent-browser', 'status'],
+        },
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const group = getRegisteredGroup('explicit@g.us');
+    expect(group).toBeDefined();
+    expect(group!.containerConfig).toEqual({
+      allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
+      enabledSkills: ['agent-browser', 'status'],
+    });
+  });
+
   it('register_group rejects request with missing fields', async () => {
     await processTaskIpc(
       {

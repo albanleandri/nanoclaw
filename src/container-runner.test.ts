@@ -462,4 +462,97 @@ describe('skills sync', () => {
       expect.objectContaining({ recursive: true, force: true }),
     );
   });
+
+  it('syncs exact enabled skills when configured', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => {
+      const str = String(p);
+      return str.endsWith('container/skills');
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((p) => {
+      if (String(p).endsWith('container/skills')) {
+        return [
+          'agent-browser',
+          'capabilities',
+          'status',
+          'polymarket',
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.statSync).mockReturnValue({
+      isDirectory: () => true,
+    } as ReturnType<typeof fs.statSync>);
+
+    const groupWithExactSkills: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: { enabledSkills: ['status'] },
+    };
+
+    vi.mocked(fs.cpSync).mockClear();
+
+    const resultPromise = runContainerAgent(
+      groupWithExactSkills,
+      testInput,
+      () => {},
+    );
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(fs.cpSync)).toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/status'),
+      expect.stringContaining('/skills/status'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    expect(vi.mocked(fs.cpSync)).not.toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/agent-browser'),
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(vi.mocked(fs.cpSync)).not.toHaveBeenCalledWith(
+      expect.stringContaining('container/skills/polymarket'),
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+});
+
+describe('tool selection', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('passes exact allowed tools into the container input when configured', async () => {
+    let writtenInput = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      writtenInput += chunk.toString();
+    });
+
+    const groupWithTools: RegisteredGroup = {
+      ...testGroup,
+      containerConfig: {
+        allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
+      },
+    };
+
+    const resultPromise = runContainerAgent(groupWithTools, testInput, () => {});
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(JSON.parse(writtenInput)).toMatchObject({
+      allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
+    });
+  });
 });

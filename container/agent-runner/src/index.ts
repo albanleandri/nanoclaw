@@ -33,6 +33,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  allowedTools?: string[];
 }
 
 interface ContainerOutput {
@@ -63,6 +64,35 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const FALLBACK_ALLOWED_TOOLS = [
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'TeamCreate',
+  'TeamDelete',
+  'SendMessage',
+  'TodoWrite',
+  'ToolSearch',
+  'Skill',
+  'NotebookEdit',
+  'mcp__nanoclaw__send_message',
+  'mcp__nanoclaw__schedule_task',
+  'mcp__nanoclaw__list_tasks',
+  'mcp__nanoclaw__pause_task',
+  'mcp__nanoclaw__resume_task',
+  'mcp__nanoclaw__cancel_task',
+  'mcp__nanoclaw__update_task',
+  'mcp__nanoclaw__register_group',
+  'mcp__nanoclaw__list_runtime_capabilities',
+];
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -448,27 +478,7 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-      ],
+      allowedTools: containerInput.allowedTools ?? FALLBACK_ALLOWED_TOOLS,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
