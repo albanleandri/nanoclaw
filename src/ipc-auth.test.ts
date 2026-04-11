@@ -661,6 +661,32 @@ describe('register_group success', () => {
     expect(group!.trigger).toBe('@Andy');
   });
 
+  it('stores runtime skill configuration when provided', async () => {
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'skills@g.us',
+        name: 'Skills Group',
+        folder: 'skills-group',
+        trigger: '@Andy',
+        containerConfig: {
+          skillMode: 'base-plus-extras',
+          extraSkills: ['polymarket'],
+        },
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const group = getRegisteredGroup('skills@g.us');
+    expect(group).toBeDefined();
+    expect(group!.containerConfig).toEqual({
+      skillMode: 'base-plus-extras',
+      extraSkills: ['polymarket'],
+    });
+  });
+
   it('register_group rejects request with missing fields', async () => {
     await processTaskIpc(
       {

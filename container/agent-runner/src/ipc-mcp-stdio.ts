@@ -446,7 +446,9 @@ server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 
-Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
+Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.
+
+By default, non-main groups only get the base runtime skills: agent-browser, capabilities, and status. Ask the user which extra niche skills they want enabled for the new group, if any.`,
   {
     jid: z
       .string()
@@ -460,6 +462,18 @@ Use available_groups.json to find the JID for a group. The folder name must be c
         'Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")',
       ),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    skill_mode: z
+      .enum(['all', 'base-plus-extras'])
+      .optional()
+      .describe(
+        'Optional runtime skill mode. Main groups normally use "all". Secondary groups normally use "base-plus-extras".',
+      ),
+    extra_skills: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Optional extra runtime skills for this group, beyond the base set (agent-browser, capabilities, status).',
+      ),
   },
   async (args) => {
     if (!isMain) {
@@ -480,6 +494,15 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       name: args.name,
       folder: args.folder,
       trigger: args.trigger,
+      containerConfig:
+        args.skill_mode || args.extra_skills?.length
+          ? {
+              ...(args.skill_mode ? { skillMode: args.skill_mode } : {}),
+              ...(args.extra_skills?.length
+                ? { extraSkills: args.extra_skills }
+                : {}),
+            }
+          : undefined,
       timestamp: new Date().toISOString(),
     };
 

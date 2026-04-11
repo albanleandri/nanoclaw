@@ -34,6 +34,15 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+## Runtime Skills
+
+Every group has a small base runtime skill set. Some groups also have extra niche skills enabled by the operator.
+
+If a specialized skill or command is unavailable in this group:
+- do not invent it
+- say it is not enabled for this group
+- suggest using a group where it is enabled or asking the operator to enable it
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.

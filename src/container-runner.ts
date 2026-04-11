@@ -56,6 +56,45 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+const BASE_RUNTIME_SKILLS = new Set([
+  'agent-browser',
+  'capabilities',
+  'status',
+]);
+
+function resolveSyncedSkills(
+  group: RegisteredGroup,
+  isMain: boolean,
+  availableSkills: string[],
+): Set<string> {
+  const requestedMode =
+    group.containerConfig?.skillMode ?? (isMain ? 'all' : 'base-plus-extras');
+
+  if (requestedMode === 'all') {
+    return new Set(availableSkills);
+  }
+
+  const selected = new Set<string>();
+  for (const skill of BASE_RUNTIME_SKILLS) {
+    if (availableSkills.includes(skill)) {
+      selected.add(skill);
+    }
+  }
+
+  for (const skill of group.containerConfig?.extraSkills ?? []) {
+    if (availableSkills.includes(skill)) {
+      selected.add(skill);
+    } else {
+      logger.warn(
+        { group: group.folder, skill },
+        'Configured extra runtime skill not found',
+      );
+    }
+  }
+
+  return selected;
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -151,10 +190,24 @@ function buildVolumeMounts(
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
+    const availableSkills = fs
+      .readdirSync(skillsSrc)
+      .filter((d) => fs.statSync(path.join(skillsSrc, d)).isDirectory())
+      .filter((d) => d !== 'agents');
+    const syncedSkills = resolveSyncedSkills(group, isMain, availableSkills);
+    logger.debug(
+      {
+        group: group.folder,
+        isMain,
+        skillMode:
+          group.containerConfig?.skillMode ??
+          (isMain ? 'all' : 'base-plus-extras'),
+        syncedSkills: Array.from(syncedSkills).sort(),
+      },
+      'Syncing runtime skills for group',
+    );
     const srcDirs = new Set(
-      fs
-        .readdirSync(skillsSrc)
-        .filter((d) => fs.statSync(path.join(skillsSrc, d)).isDirectory()),
+      fs.readdirSync(skillsSrc).filter((d) => syncedSkills.has(d)),
     );
     // Remove stale skill folders
     if (fs.existsSync(skillsDst)) {

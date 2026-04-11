@@ -16,6 +16,12 @@ Keep this layer generic. It should not reveal private use cases, local environme
 
 Personal forks may back `container/skills/` with a private submodule or another private distribution path. The tracked `.gitmodules` entry in the public repo is intentionally a placeholder.
 
+## Runtime skill loading
+- Non-main groups default to a base runtime skill set: `agent-browser`, `capabilities`, and `status`.
+- Additional runtime skills can be enabled per group with `containerConfig.extraSkills`.
+- Main groups keep legacy all-skills behavior by default for backwards compatibility, but can also be moved to `skillMode: "base-plus-extras"` later if you want stricter isolation and lower inference cost.
+- If a niche skill is unavailable in one group but present in another, check that group's `containerConfig.skillMode` and `containerConfig.extraSkills` before treating it as a runtime bug.
+
 ## Local-only layer
 - `.env`
 - `data/`, `logs/`, `store/`, `dist/`

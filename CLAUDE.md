@@ -5,6 +5,7 @@
 - Prefer repo scripts and `package.json` commands over repeating long shell snippets in Claude-only instructions.
 - For dependency installation, use `npm run deps:install` instead of separate root and `container/agent-runner` install commands.
 - For handoff context, prefer `docs/HANDOFF.local.md` when present; otherwise use the tracked `docs/HANDOFF.md`.
+- Runtime skills are group-specific. Non-main groups usually get only base skills unless `containerConfig.extraSkills` enables more.
 
 # NanoClaw
 
