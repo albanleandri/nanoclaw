@@ -51,7 +51,7 @@
   - Keep this runtime on `@anthropic-ai/claude-agent-sdk`.
 - `container/skills/`
   - Skills and tools loaded inside agent containers.
-  - Includes built-in capabilities such as `agent-browser`, `capabilities`, `polymarket`, `status`, and stock-market-related skills.
+  - Includes built-in capabilities such as browsing, status reporting, formatting, and any private domain-specific skills kept outside the public repo surface.
 - `setup/`
   - Step-based setup workflow and setup tests.
   - `setup/index.ts` dispatches setup steps such as environment, container, groups, service, and verify.
@@ -67,7 +67,7 @@
   - `src/config.ts` resolves runtime configuration from `.env` and process env.
 - Tests
   - Root/unit tests live alongside source as `src/*.test.ts` and `setup/*.test.ts`.
-  - Container skill tests exist under skill directories such as `container/skills/stock-market-investing/test_*.py`.
+  - Container skill tests live alongside the corresponding skill directories under `container/skills/`.
 - Deployment / ops
   - `start-nanoclaw.sh` starts the built app without systemd.
   - `container/build.sh` builds the agent container image.
@@ -81,6 +81,7 @@
 - Prefer repo-level scripts and `package.json` scripts over ad hoc shell snippets when documenting or automating common operations.
 - Do not document or imply channels, services, or deployment units that are not present in the repo.
 - If you change setup steps, startup flow, secrets handling, mounts, or service behavior, update docs in the same patch.
+- Keep the tracked repo public-safe by default. Private or domain-specific personalization belongs in ignored local files or a private layer such as a private submodule.
 
 ## Change rules
 - Do not silently change public interfaces.
