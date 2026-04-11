@@ -58,7 +58,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/channels/telegram.test.ts
 ```
@@ -115,8 +115,7 @@ Tell the user:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Registration
@@ -133,18 +132,18 @@ Wait for the user to provide the chat ID (format: `tg:123456789` or `tg:-1001234
 
 ### Register the chat
 
-The chat ID, name, and folder name are needed. Use `npx tsx setup/index.ts --step register` with the appropriate flags.
+The chat ID, name, and folder name are needed. Use `npm run setup:step -- register` with the appropriate flags.
 
 For a main chat (responds to all messages):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --no-trigger-required --is-main
+npm run setup:step -- register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_main" --trigger "@${ASSISTANT_NAME}" --channel telegram --no-trigger-required --is-main
 ```
 
 For additional chats (trigger-only):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
+npm run setup:step -- register -- --jid "tg:<chat-id>" --name "<chat-name>" --folder "telegram_<group-name>" --trigger "@${ASSISTANT_NAME}" --channel telegram
 ```
 
 ## Phase 5: Verify
@@ -173,7 +172,7 @@ Check:
 1. `TELEGRAM_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
 2. Chat is registered in SQLite (check with: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'tg:%'"`)
 3. For non-main chats: message includes trigger pattern
-4. Service is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
+4. Service is running: `npm run service:status`
 
 ### Bot only responds to @mentions in groups
 
@@ -211,4 +210,4 @@ To remove Telegram integration:
 3. Remove `TELEGRAM_BOT_TOKEN` from `.env`
 4. Remove Telegram registrations from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid LIKE 'tg:%'"`
 5. Uninstall: `npm uninstall grammy`
-6. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)
+6. Rebuild: `npm run build && npm run service:restart`

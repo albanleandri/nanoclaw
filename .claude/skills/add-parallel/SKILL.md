@@ -219,7 +219,7 @@ AskUserQuestion: I can do deep research on [topic] using Parallel's Task API. Th
 Build the container with updated agent runner:
 
 ```bash
-./container/build.sh
+npm run container:build
 ```
 
 Verify the build:
@@ -233,15 +233,13 @@ Rebuild the main app and restart:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 Wait 3 seconds for service to start, then verify:
 ```bash
 sleep 3
-launchctl list | grep nanoclaw  # macOS
-# Linux: systemctl --user status nanoclaw
+npm run service:status
 ```
 
 ### 8. Test Integration
@@ -286,5 +284,5 @@ To remove Parallel AI integration:
 1. Remove from .env: `sed -i.bak '/PARALLEL_API_KEY/d' .env`
 2. Revert changes to container-runner.ts and agent-runner/src/index.ts
 3. Remove Web Research Tools section from groups/main/CLAUDE.md
-4. Rebuild: `./container/build.sh && npm run build`
-5. Restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux)
+4. Rebuild: `npm run container:build && npm run build`
+5. Restart: `npm run service:restart`

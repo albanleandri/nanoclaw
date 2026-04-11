@@ -97,7 +97,7 @@ container system status || container system start
 ### Build the container image
 
 ```bash
-./container/build.sh
+npm run container:build
 ```
 
 ### Test basic execution
@@ -158,7 +158,7 @@ container system status
 ```bash
 # Clean rebuild — Apple Container caches aggressively
 container builder stop && container builder rm && container builder start
-./container/build.sh
+npm run container:build
 ```
 
 **Container can't write to mounted directories:**

@@ -60,7 +60,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install --legacy-peer-deps
+npm run deps:install
 npm run build
 npx vitest run src/channels/whatsapp.test.ts
 ```
@@ -104,8 +104,7 @@ The container reads environment from `data/env/env`, not `.env` directly.
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Verify

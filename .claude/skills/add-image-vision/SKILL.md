@@ -52,7 +52,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/image.test.ts
 ```
@@ -63,7 +63,7 @@ All tests must pass and build must be clean before proceeding.
 
 1. Rebuild the container (agent-runner changes need a rebuild):
    ```bash
-   ./container/build.sh
+   npm run container:build
    ```
 
 2. Sync agent-runner source to group caches:
@@ -75,7 +75,7 @@ All tests must pass and build must be clean before proceeding.
 
 3. Restart the service:
    ```bash
-   launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+   npm run service:restart
    ```
 
 ## Phase 4: Verify

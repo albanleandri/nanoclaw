@@ -44,14 +44,14 @@ npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
 # Verify: data/x-auth.json should exist after successful login
 
 # 2. Rebuild container to include skill
-./container/build.sh
+npm run container:build
 # Verify: Output shows "COPY .claude/skills/x-integration/agent.ts"
 
 # 3. Rebuild host and restart service
 npm run build
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
-# Verify: launchctl list | grep nanoclaw (macOS) or systemctl --user status nanoclaw (Linux)
+npm run service:restart
+# Verify: npm run service:status
 ```
 
 ## Configuration
@@ -260,12 +260,12 @@ cat data/x-auth.json  # Should show {"authenticated": true, ...}
 ### 3. Rebuild Container
 
 ```bash
-./container/build.sh
+npm run container:build
 ```
 
 **Verify success:**
 ```bash
-./container/build.sh 2>&1 | grep -i "agent.ts"  # Should show COPY line
+npm run container:build 2>&1 | grep -i "agent.ts"  # Should show COPY line
 ```
 
 ### 4. Restart Service
@@ -273,13 +273,12 @@ cat data/x-auth.json  # Should show {"authenticated": true, ...}
 ```bash
 npm run build
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 **Verify success:**
 ```bash
-launchctl list | grep nanoclaw  # macOS — should show PID and exit code 0 or -
-# Linux: systemctl --user status nanoclaw
+npm run service:status
 ```
 
 ## Usage via WhatsApp
@@ -346,7 +345,7 @@ echo '{"content":"Test"}' | npx tsx .claude/skills/x-integration/scripts/post.ts
 ```bash
 npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ### Browser Lock Files
@@ -403,7 +402,7 @@ If MCP tools not found in container:
 
 ```bash
 # Verify build copies skill
-./container/build.sh 2>&1 | grep -i skill
+npm run container:build 2>&1 | grep -i skill
 
 # Check container has the file
 docker run nanoclaw-agent ls -la /app/src/skills/

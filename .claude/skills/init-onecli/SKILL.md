@@ -240,12 +240,10 @@ Ask them to let you know when done.
 npm run build
 ```
 
-If build fails, diagnose and fix. Common issue: `@onecli-sh/sdk` not installed — run `npm install` first.
+If build fails, diagnose and fix. Common issue: `@onecli-sh/sdk` not installed — run `npm run deps:install` first.
 
 Restart the service:
-- macOS (launchd): `launchctl kickstart -k gui/$(id -u)/com.nanoclaw`
-- Linux (systemd): `systemctl --user restart nanoclaw`
-- WSL/manual: stop and re-run `bash start-nanoclaw.sh`
+- Use `npm run service:restart`
 
 ## Phase 5: Verify
 

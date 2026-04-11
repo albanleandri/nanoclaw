@@ -1,3 +1,10 @@
+@AGENTS.md
+
+## Claude-only note
+- Use `AGENTS.md` as the shared repo instruction source. Keep Claude-specific additions here small and non-conflicting.
+- Prefer repo scripts and `package.json` commands over repeating long shell snippets in Claude-only instructions.
+- For dependency installation, use `npm run deps:install` instead of separate root and `container/agent-runner` install commands.
+
 # NanoClaw
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
@@ -53,28 +60,22 @@ Before creating a PR, adding a skill, or preparing any contribution, you MUST re
 Run commands directly—don't tell the user to run them.
 
 ```bash
+npm run deps:install  # Install root and container-side dependencies
 npm run dev          # Run with hot reload
 npm run build        # Compile TypeScript
-./container/build.sh # Rebuild agent container
+npm run container:build # Rebuild agent container
 ```
 
 Service management:
 ```bash
-# macOS (launchd)
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
-
-# Linux (systemd)
-systemctl --user start nanoclaw
-systemctl --user stop nanoclaw
-systemctl --user restart nanoclaw
+npm run service:status
+npm run service:restart
 ```
 
 ## Troubleshooting
 
-**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+**WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp`, then rebuild and restart with `npm run build` and `npm run service:restart` if needed. Existing auth credentials and groups are preserved.
 
 ## Container Build Cache
 
-The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `npm run container:build`.

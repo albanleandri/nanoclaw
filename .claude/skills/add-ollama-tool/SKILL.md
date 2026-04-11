@@ -88,7 +88,7 @@ done
 
 ```bash
 npm run build
-./container/build.sh
+npm run container:build
 ```
 
 Build must be clean before proceeding.
@@ -123,8 +123,7 @@ OLLAMA_HOST=http://your-ollama-host:11434
 ### Restart the service
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Verify
@@ -172,7 +171,7 @@ Look for:
 The agent is trying to run `ollama` CLI inside the container instead of using the MCP tools. This means:
 1. The MCP server wasn't registered — check `container/agent-runner/src/index.ts` has the `ollama` entry in `mcpServers`
 2. The per-group source wasn't updated — re-copy files (see Phase 2)
-3. The container wasn't rebuilt — run `./container/build.sh`
+3. The container wasn't rebuilt — run `npm run container:build`
 
 ### "Failed to connect to Ollama"
 

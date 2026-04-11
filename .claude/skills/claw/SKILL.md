@@ -112,7 +112,7 @@ The script auto-detects your NanoClaw directory and reads `.env` from it. Check 
 
 ### Container times out
 
-The default timeout is 300 seconds. For longer tasks, pass `--timeout 600` (or higher). If the container consistently hangs, check that your `nanoclaw-agent:latest` image is up to date by running `./container/build.sh`.
+The default timeout is 300 seconds. For longer tasks, pass `--timeout 600` (or higher). If the container consistently hangs, check that your `nanoclaw-agent:latest` image is up to date by running `npm run container:build`.
 
 ### "group not found"
 
@@ -120,7 +120,7 @@ Run `claw --list-groups` to see what's registered. Group lookup does a fuzzy par
 
 ### Container crashes mid-stream
 
-Containers run with `--rm` so they are automatically removed. If the agent crashes before emitting the output sentinel, `claw` falls back to printing raw stdout. Use `-v` to see what the container produced. Rebuild the image with `./container/build.sh` if crashes are consistent.
+Containers run with `--rm` so they are automatically removed. If the agent crashes before emitting the output sentinel, `claw` falls back to printing raw stdout. Use `-v` to see what the container produced. Rebuild the image with `npm run container:build` if crashes are consistent.
 
 ### Override the NanoClaw directory
 

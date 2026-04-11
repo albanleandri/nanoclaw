@@ -234,11 +234,11 @@ query({
 npm run build
 
 # Rebuild container (use --no-cache for clean rebuild)
-./container/build.sh
+npm run container:build
 
 # Or force full rebuild
 docker builder prune -af
-./container/build.sh
+npm run container:build
 ```
 
 ## Checking Container Image
@@ -332,7 +332,7 @@ echo -e "\n3. Container runtime running?"
 docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker Desktop (macOS) or sudo systemctl start docker (Linux)"
 
 echo -e "\n4. Container image exists?"
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
+echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run npm run container:build"
 
 echo -e "\n5. Session mount path correct?"
 grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"

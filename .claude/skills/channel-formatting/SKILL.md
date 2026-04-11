@@ -74,7 +74,7 @@ This merge adds:
 ### Validate
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/formatting.test.ts
 ```
@@ -87,8 +87,7 @@ All 73 tests should pass and the build should be clean before continuing.
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ### Spot-check formatting

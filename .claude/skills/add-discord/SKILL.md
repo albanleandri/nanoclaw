@@ -58,7 +58,7 @@ If the merge reports conflicts, resolve them by reading the conflicted files and
 ### Validate code changes
 
 ```bash
-npm install
+npm run deps:install
 npm run build
 npx vitest run src/channels/discord.test.ts
 ```
@@ -109,7 +109,7 @@ The container reads environment from `data/env/env`, not `.env` directly.
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Registration
@@ -130,18 +130,18 @@ Wait for the user to provide the channel ID (format: `dc:1234567890123456`).
 
 ### Register the channel
 
-The channel ID, name, and folder name are needed. Use `npx tsx setup/index.ts --step register` with the appropriate flags.
+The channel ID, name, and folder name are needed. Use `npm run setup:step -- register` with the appropriate flags.
 
 For a main channel (responds to all messages):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_main" --trigger "@${ASSISTANT_NAME}" --channel discord --no-trigger-required --is-main
+npm run setup:step -- register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_main" --trigger "@${ASSISTANT_NAME}" --channel discord --no-trigger-required --is-main
 ```
 
 For additional channels (trigger-only):
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel discord
+npm run setup:step -- register -- --jid "dc:<channel-id>" --name "<server-name> #<channel-name>" --folder "discord_<channel-name>" --trigger "@${ASSISTANT_NAME}" --channel discord
 ```
 
 ## Phase 5: Verify
@@ -169,7 +169,7 @@ tail -f logs/nanoclaw.log
 1. Check `DISCORD_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
 2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'dc:%'"`
 3. For non-main channels: message must include trigger pattern (@mention the bot)
-4. Service is running: `launchctl list | grep nanoclaw`
+4. Service is running: `npm run service:status`
 5. Verify the bot has been invited to the server (check OAuth2 URL was used)
 
 ### Bot only responds to @mentions

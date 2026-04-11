@@ -159,8 +159,7 @@ If `EMACS_CHANNEL_PORT` was changed from the default, also add:
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Phase 4: Verify
@@ -218,7 +217,7 @@ Or change the port in `.env` (`EMACS_CHANNEL_PORT=8767`) and update `nanoclaw-po
 ### No response from agent
 
 Check:
-1. NanoClaw is running: `launchctl list | grep nanoclaw` (macOS) or `systemctl --user status nanoclaw` (Linux)
+1. NanoClaw is running: `npm run service:status`
 2. Emacs group is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid = 'emacs:default'"`
 3. Logs show activity: `tail -50 logs/nanoclaw.log`
 
@@ -286,4 +285,4 @@ To remove the Emacs channel:
 3. Remove the NanoClaw block from your Emacs config file
 4. Remove Emacs registration from SQLite: `sqlite3 store/messages.db "DELETE FROM registered_groups WHERE jid = 'emacs:default'"`
 5. Remove `EMACS_CHANNEL_PORT` and `EMACS_AUTH_TOKEN` from `.env` if set
-6. Rebuild: `npm run build && launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `npm run build && systemctl --user restart nanoclaw` (Linux)
+6. Rebuild: `npm run build && npm run service:restart`
