@@ -6,7 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "echo 'No standalone tests — run npm test from repo root' && exit 0",
+    "lint": "echo 'No standalone lint — run npm run lint from repo root' && exit 0"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.76",
