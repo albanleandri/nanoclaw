@@ -74,6 +74,13 @@ import {
 import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import {
+  detectUsageLimitError,
+  formatUsageLimitMessage,
+  isUsageLimitActive,
+  UsageLimitDetection,
+  UsageLimitState,
+} from './usage-limit.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -83,6 +90,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let usageLimitState: Record<string, UsageLimitState> = {};
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -96,6 +104,13 @@ function loadState(): void {
   } catch {
     logger.warn('Corrupted last_agent_timestamp in DB, resetting');
     lastAgentTimestamp = {};
+  }
+  const limitState = getRouterState('usage_limit_state');
+  try {
+    usageLimitState = limitState ? JSON.parse(limitState) : {};
+  } catch {
+    logger.warn('Corrupted usage_limit_state in DB, resetting');
+    usageLimitState = {};
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
@@ -129,6 +144,26 @@ function getOrRecoverCursor(chatJid: string): string {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+  setRouterState('usage_limit_state', JSON.stringify(usageLimitState));
+}
+
+function getActiveUsageLimitState(
+  chatJid: string,
+  now: Date = new Date(),
+): UsageLimitState | null {
+  const state = usageLimitState[chatJid];
+  if (!state) return null;
+  if (isUsageLimitActive(state, now)) return state;
+
+  delete usageLimitState[chatJid];
+  saveState();
+  return null;
+}
+
+function clearUsageLimitState(chatJid: string): void {
+  if (!usageLimitState[chatJid]) return;
+  delete usageLimitState[chatJid];
+  saveState();
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -237,7 +272,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       setTyping: (typing) =>
         channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
       runAgent: (prompt, onOutput) =>
-        runAgent(group, prompt, chatJid, onOutput),
+        runAgent(group, prompt, chatJid, onOutput).then((result) => result.status),
       closeStdin: () => queue.closeStdin(chatJid),
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
@@ -276,6 +311,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  const activeUsageLimit = getActiveUsageLimitState(chatJid);
+  if (activeUsageLimit) {
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    usageLimitState[chatJid] = activeUsageLimit;
+    saveState();
+    logger.info(
+      {
+        group: group.name,
+        chatJid,
+        retryAt: activeUsageLimit.retryAt,
+        ignoredCount: missedMessages.length,
+      },
+      'Ignored messages while usage-limit cooldown is active',
+    );
+    return true;
+  }
+
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -307,7 +360,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const runResult = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -337,7 +390,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
+  if (runResult.status === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
@@ -347,6 +400,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
+
+    if (runResult.usageLimit) {
+      const nowIso = new Date().toISOString();
+      usageLimitState[chatJid] = {
+        detectedAt: nowIso,
+        suppressUntil: runResult.usageLimit.suppressUntil,
+        retryAt: runResult.usageLimit.retryAt,
+        lastNotifiedAt: nowIso,
+        lastError: runResult.error || 'Usage limit reached',
+      };
+      saveState();
+      await channel.sendMessage(
+        chatJid,
+        formatUsageLimitMessage(usageLimitState[chatJid], TIMEZONE),
+      );
+      logger.warn(
+        { group: group.name, chatJid, retryAt: runResult.usageLimit.retryAt },
+        'Usage limit reached; notified user and skipped retry',
+      );
+      return true;
+    }
+
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
@@ -357,7 +432,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
+  clearUsageLimitState(chatJid);
+
   return true;
+}
+
+interface AgentRunResult {
+  status: 'success' | 'error';
+  error?: string;
+  usageLimit?: UsageLimitDetection;
 }
 
 async function runAgent(
@@ -365,9 +448,10 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
-): Promise<'success' | 'error'> {
+): Promise<AgentRunResult> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
+  let lastError: string | undefined;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -401,6 +485,9 @@ async function runAgent(
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+        }
+        if (output.status === 'error') {
+          lastError = output.error;
         }
         await onOutput(output);
       }
@@ -452,13 +539,23 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
-      return 'error';
+      const error = output.error || lastError;
+      return {
+        status: 'error',
+        error,
+        usageLimit: detectUsageLimitError(error) ?? undefined,
+      };
     }
 
-    return 'success';
+    return { status: 'success' };
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    return 'error';
+    const error = err instanceof Error ? err.message : String(err);
+    return {
+      status: 'error',
+      error,
+      usageLimit: detectUsageLimitError(error) ?? undefined,
+    };
   }
 }
 
