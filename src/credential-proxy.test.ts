@@ -141,7 +141,9 @@ describe('credential-proxy', () => {
     );
 
     expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
-    expect(lastUpstreamHeaders['authorization']).toBe('Bearer real-oauth-token');
+    expect(lastUpstreamHeaders['authorization']).toBe(
+      'Bearer real-oauth-token',
+    );
   });
 
   it('strips hop-by-hop headers', async () => {
