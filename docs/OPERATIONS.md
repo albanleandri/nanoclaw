@@ -39,3 +39,9 @@ npm run service:restart
 - Keep the Telegram runtime on the Anthropic Agent SDK.
 - Do not migrate orchestration to OpenAI Agents SDK, LangGraph, or another framework unless explicitly requested.
 - Do not replace the current Telegram agent architecture during routine collaboration cleanup.
+
+## Usage-Limit Replies
+
+- If the provider returns a usage-limit or rate-limit error before the agent sends any reply, NanoClaw now sends a short user-facing message instead of failing silently.
+- When the upstream error exposes a reset or retry time, the reply includes that time in the configured `TZ` timezone.
+- While the temporary cooldown is active, later messages in that chat are silently consumed so they do not queue up behind the limit window.

@@ -4,7 +4,7 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 
 ## Current objective
 - Keep the public fork generic and upstream-friendly while preserving a private personalization layer.
-- Tighten dual-agent friendliness so Codex and Claude Code follow the same docs, wrappers, and scoped instructions.
+- Surface provider usage-limit failures to chats with a short retry message, then silently drop later messages during the cooldown window.
 
 ## Quick context
 - Single Node.js process (`src/index.ts`) routes messages to Claude Agent SDK containers.
@@ -18,26 +18,25 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 - Keep private or domain-specific notes out of the tracked repo when possible.
 
 ## Files changed
-- `.claude/rules/shared-workflow.md`
-- `.claude/rules/skill-maintenance.md`
-- `.claude/skills/migrate-from-openclaw/SKILL.md`
-- `.claude/skills/add-karpathy-llm-wiki/SKILL.md`
-- `.claude/skills/add-whatsapp/SKILL.md`
-- `.claude/skills/update-nanoclaw/SKILL.md`
-- `.claude/skills/customize/SKILL.md`
-- `docs/docker-sandboxes.md`
-- `docs/skills-as-branches.md`
-- `src/channels/AGENTS.override.md`
+- `src/index.ts`
+- `src/usage-limit.ts`
+- `src/usage-limit.test.ts`
+- `docs/OPERATIONS.md`
 - `docs/HANDOFF.md`
 
 ## Commands run
-- Read repo docs, manifests, override files, and scoped Claude rules.
-- Searched for stale helper-script references and non-canonical setup/service commands.
+- Read runtime, DB, and error-path files.
+- Added a usage-limit helper and host-side notification flow.
+- Added unit tests for detection, cooldown, and message formatting.
+- Ran `npm test -- --run src/usage-limit.test.ts src/container-runner.test.ts src/task-scheduler.test.ts`
+- Ran `npm run typecheck`
+- Ran `npm test`
+- Validated the live Telegram path and adjusted cooldown behavior to ignore later messages after the first limit notice.
 
 ## Test/lint status
-- No code-path tests run; changes are limited to documentation and instruction files.
-- Follow-up verification should be a quick pass for markdown accuracy and command consistency.
+- `npm run typecheck` passed.
+- `npm test` passed (`23` files, `351` tests).
 
 ## Open issues / next steps
-- Review remaining skill docs periodically for raw platform-specific commands that should stay only in fallback/troubleshooting sections.
-- Keep private container skills and other sensitive customization layers outside the public repo surface.
+- Verify the exact provider error strings seen in production and extend parsing if Anthropic returns a different reset-time format.
+- Consider applying the same short notification pattern to scheduled-task failures if operator visibility there becomes important.
