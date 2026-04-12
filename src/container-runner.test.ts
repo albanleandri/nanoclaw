@@ -544,7 +544,11 @@ describe('tool selection', () => {
       },
     };
 
-    const resultPromise = runContainerAgent(groupWithTools, testInput, () => {});
+    const resultPromise = runContainerAgent(
+      groupWithTools,
+      testInput,
+      () => {},
+    );
     emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
