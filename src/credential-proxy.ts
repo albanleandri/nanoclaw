@@ -21,7 +21,11 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import { getValidClaudeOAuthToken } from './claude-credentials.js';
 
-type AuthMode = 'api-key' | 'oauth';
+export type AuthMode = 'api-key' | 'oauth';
+
+export interface ProxyConfig {
+  authMode: AuthMode;
+}
 
 export function startCredentialProxy(
   port: number,
@@ -149,4 +153,10 @@ export function startCredentialProxy(
 
     server.on('error', reject);
   });
+}
+
+/** Detect which auth mode the host is configured for. */
+export function detectAuthMode(): AuthMode {
+  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
+  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 }
