@@ -96,7 +96,8 @@ export function detectUsageLimitError(
     return null;
   }
 
-  const retryAt = parseExplicitRetryAt(error) ?? parseRelativeRetryAt(error, now);
+  const retryAt =
+    parseExplicitRetryAt(error) ?? parseRelativeRetryAt(error, now);
   const suppressUntil =
     retryAt ??
     new Date(now.getTime() + DEFAULT_USAGE_LIMIT_SUPPRESS_MS).toISOString();
@@ -122,7 +123,11 @@ export function formatUsageLimitMessage(
   }
 
   const retryAt = new Date(state.retryAt);
-  const options: Intl.DateTimeFormatOptions = sameLocalDay(retryAt, now, timeZone)
+  const options: Intl.DateTimeFormatOptions = sameLocalDay(
+    retryAt,
+    now,
+    timeZone,
+  )
     ? {
         timeZone,
         hour: '2-digit',
