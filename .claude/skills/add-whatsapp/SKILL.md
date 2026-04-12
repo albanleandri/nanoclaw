@@ -263,14 +263,7 @@ npm run build
 Restart the service:
 
 ```bash
-# macOS (launchd)
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
-
-# Linux (systemd)
 npm run service:restart
-
-# Linux (nohup fallback)
-bash start-nanoclaw.sh
 ```
 
 ### Test the connection

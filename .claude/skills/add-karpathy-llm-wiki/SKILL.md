@@ -19,7 +19,7 @@ AskUserQuestion: "Which group should have the wiki?"
 2. **Dedicated group** — create a new group just for the wiki
 3. **Other** — pick an existing group
 
-If dedicated: ask which channel and chat, then register with `npx tsx setup/index.ts --step register`.
+If dedicated: ask which channel and chat, then register with `npm run setup:step -- register -- ...`.
 
 ## Step 3: Design collaboratively
 
@@ -102,9 +102,8 @@ Use the group's `folder` and `chat_jid` from the registered groups table. Cron e
 
 ```bash
 npm run build
-./container/build.sh
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
+npm run container:build
+npm run service:restart
 ```
 
 Tell the user to test by sending a source to the wiki group.

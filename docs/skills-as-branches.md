@@ -599,6 +599,8 @@ The following can be removed:
 
 Operational skills (`setup`, `debug`, `update-nanoclaw`, `customize`, `update-skills`) remain on main in `.claude/skills/`.
 
+Current workflow note: those helper scripts are intentionally gone. Do not document `scripts/apply-skill.ts` or related wrappers as active repo commands; use the current Claude skill workflow or direct git branch workflow instead.
+
 ### New infrastructure
 
 - **Marketplace repo** (`qwibitai/nanoclaw-skills`) — single Claude Code plugin bundling SKILL.md files for all feature skills
