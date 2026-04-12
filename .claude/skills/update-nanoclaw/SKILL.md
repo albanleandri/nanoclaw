@@ -232,9 +232,8 @@ Show:
 Tell the user:
 - To rollback: `git reset --hard <backup-tag-from-step-1>`
 - Backup branch also exists: `backup/pre-update-<HASH>-<TIMESTAMP>`
-- Restart the service to apply changes:
-  - If using launchd: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist && launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist`
-  - If running manually: restart `npm run dev`
+- Restart the service to apply changes with `npm run service:restart`
+- If they are running in a foreground dev session instead of the service wrapper, restart `npm run dev`
 
 
 ## Diagnostics

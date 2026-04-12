@@ -92,11 +92,7 @@ Always tell the user:
 ```bash
 # Rebuild and restart
 npm run build
-# macOS:
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-# Linux:
-# systemctl --user restart nanoclaw
+npm run service:restart
 ```
 
 ## Example Interaction

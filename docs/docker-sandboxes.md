@@ -186,7 +186,7 @@ Patch `setup/container.ts` to pass the same proxy `--build-arg` flags as `build.
 
 ```bash
 npm run build
-bash container/build.sh
+npm run container:build
 ```
 
 ## Step 6: Add a Channel
@@ -194,11 +194,12 @@ bash container/build.sh
 ### Telegram
 
 ```bash
-# Apply the Telegram skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-telegram
+# Open Claude Code in the repo and run /add-telegram
+claude
 
 # Rebuild after applying the skill
 npm run build
+npm run container:build
 
 # Configure .env
 cat > .env << EOF
@@ -209,7 +210,7 @@ EOF
 mkdir -p data/env && cp .env data/env/env
 
 # Register your chat
-npx tsx setup/index.ts --step register \
+npm run setup:step -- register -- \
   --jid "tg:<your-chat-id>" \
   --name "My Chat" \
   --trigger "@nanoclaw" \
@@ -234,11 +235,12 @@ curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | 
 Make sure you configured proxy bypass in [Step 1](#step-1-create-the-sandbox) first.
 
 ```bash
-# Apply the WhatsApp skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp
+# Open Claude Code in the repo and run /add-whatsapp
+claude
 
 # Rebuild
 npm run build
+npm run container:build
 
 # Configure .env
 cat > .env << EOF
@@ -256,7 +258,7 @@ npx tsx src/whatsapp-auth.ts
 npx tsx src/whatsapp-auth.ts --pairing-code --phone <phone-number-no-plus>
 
 # Register your chat (JID = your phone number + @s.whatsapp.net)
-npx tsx setup/index.ts --step register \
+npm run setup:step -- register -- \
   --jid "<phone>@s.whatsapp.net" \
   --name "My Chat" \
   --trigger "@nanoclaw" \

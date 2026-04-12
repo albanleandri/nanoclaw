@@ -106,7 +106,7 @@ The discovery script provides detected groups in the GROUPS field (format: `chan
 For each group the user wants to bring over, pre-register it:
 
 ```bash
-npx tsx setup/index.ts --step register -- --jid "<nanoclaw_jid>" --name "<group_name>" --folder "<channel>_<slug>" --trigger "@<confirmed_name>" --channel <channel> --assistant-name "<confirmed_name>"
+npm run setup:step -- register -- --jid "<nanoclaw_jid>" --name "<group_name>" --folder "<channel>_<slug>" --trigger "@<confirmed_name>" --channel <channel> --assistant-name "<confirmed_name>"
 ```
 
 Only pass `--assistant-name` on the first registration (it updates all CLAUDE.md templates globally).
@@ -115,7 +115,7 @@ Folder naming: `<channel>_<name-slug>` (e.g. `whatsapp_family-chat`, `telegram_d
 
 For the first/primary group, add `--is-main --no-trigger-required`. Other groups default to requiring a trigger prefix.
 
-**Important:** Registration requires the database to exist. If the environment step hasn't been run yet, run it first: `npx tsx setup/index.ts --step environment`. Registration also creates the group folder under `groups/` and copies the CLAUDE.md template.
+**Important:** Registration requires the database to exist. If the environment step hasn't been run yet, run it first: `npm run setup:step -- environment`. Registration also creates the group folder under `groups/` and copies the CLAUDE.md template.
 
 Register groups from all channels — including channels NanoClaw doesn't yet support (signal, matrix, etc.). The registration stores the JID and metadata in the database, ready for when that channel is added later. Groups won't receive messages until their channel code is installed, but the registration, group folder, and CLAUDE.md will be ready.
 
