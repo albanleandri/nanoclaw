@@ -509,6 +509,12 @@ Before registering a new secondary group, call list_runtime_capabilities and sho
       .describe(
         'Optional extra runtime skills for this group, beyond the base set (agent-browser, capabilities, status).',
       ),
+    requiresTrigger: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether messages must start with the trigger word. Default: false (respond to all messages). Set to true for busy groups with many participants where you only want the agent to respond when explicitly mentioned.',
+      ),
   },
   async (args) => {
     if (!isMain) {
@@ -537,6 +543,7 @@ Before registering a new secondary group, call list_runtime_capabilities and sho
           ? { extraSkills: args.extra_skills }
           : {}),
       },
+      requiresTrigger: args.requiresTrigger ?? false,
       timestamp: new Date().toISOString(),
     };
 
