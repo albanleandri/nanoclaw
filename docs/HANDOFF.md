@@ -7,6 +7,12 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 - Make runtime skill loading group-aware: main control chats keep the full skill set, while new secondary groups default to base skills and explicitly opt into extras.
 - Make new group registration enumerate exact runtime tools and skills, so selections can be made by numbered list and stored explicitly per group.
 
+## Quick context
+- Single Node.js process (`src/index.ts`) routes messages to Claude Agent SDK containers.
+- Each group has isolated memory (`groups/{name}/CLAUDE.md`) and filesystem.
+- Container skills (`container/skills/`) are loaded at container start; changes require a rebuild and container kill.
+- Secrets route through OneCLI Agent Vault; agents never receive raw keys.
+
 ## Shared conventions
 - Keep the Telegram runtime on the Anthropic Agent SDK.
 - Prefer repo scripts and `package.json` commands over ad hoc operational commands.
