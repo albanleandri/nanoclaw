@@ -14,7 +14,10 @@ import {
   TELEGRAM_BOT_POOL,
   TIMEZONE,
 } from './config.js';
-import { closeCredentialProxy, startCredentialProxy } from './credential-proxy.js';
+import {
+  closeCredentialProxy,
+  startCredentialProxy,
+} from './credential-proxy.js';
 import { initBotPool } from './channels/telegram.js';
 import './channels/index.js';
 import {
