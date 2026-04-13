@@ -14,7 +14,7 @@ import {
   TELEGRAM_BOT_POOL,
   TIMEZONE,
 } from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
+import { closeCredentialProxy, startCredentialProxy } from './credential-proxy.js';
 import { initBotPool } from './channels/telegram.js';
 import './channels/index.js';
 import {
@@ -738,8 +738,8 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    proxyServer.close();
     await queue.shutdown(10000);
+    await closeCredentialProxy(proxyServer);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };

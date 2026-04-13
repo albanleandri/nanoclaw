@@ -11,7 +11,7 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 
-import { startCredentialProxy } from './credential-proxy.js';
+import { startCredentialProxy, closeCredentialProxy } from './credential-proxy.js';
 
 function makeRequest(
   port: number,
@@ -65,7 +65,9 @@ describe('credential-proxy', () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((r) => proxyServer?.close(() => r()));
+    if (proxyServer?.listening) {
+      await new Promise<void>((r) => proxyServer.close(() => r()));
+    }
     await new Promise<void>((r) => upstreamServer?.close(() => r()));
     for (const key of Object.keys(mockEnv)) delete mockEnv[key];
   });
@@ -170,6 +172,31 @@ describe('credential-proxy', () => {
     expect(lastUpstreamHeaders['keep-alive']).toBeUndefined();
     expect(lastUpstreamHeaders['transfer-encoding']).toBeUndefined();
   });
+
+  it('closeCredentialProxy resolves promptly even with an open keep-alive connection', async () => {
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+
+    // Make a request via a keep-alive agent so the TCP connection stays open
+    const agent = new http.Agent({ keepAlive: true });
+    await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+        agent,
+      },
+      '{}',
+    );
+
+    // Must resolve in under 500 ms — not wait for keep-alive timeout (~5 s)
+    const start = Date.now();
+    await closeCredentialProxy(proxyServer);
+    agent.destroy();
+    expect(Date.now() - start).toBeLessThan(500);
+
+    // proxyServer.listening is now false; afterEach will skip the redundant close
+  }, 3000);
 
   it('returns 502 when upstream is unreachable', async () => {
     Object.assign(mockEnv, {
