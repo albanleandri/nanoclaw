@@ -18,18 +18,18 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 - Keep private or domain-specific notes out of the tracked repo when possible.
 
 ## Files changed (latest)
-- `src/credential-proxy.ts` — added `closeCredentialProxy()` export (calls `closeAllConnections()` + awaits `close` event)
-- `src/index.ts` — shutdown handler now `await closeCredentialProxy(proxyServer)` instead of fire-and-forget `proxyServer.close()`
-- `src/credential-proxy.test.ts` — new test verifying prompt close under keep-alive connection; `afterEach` guarded with `.listening` check
-- `~/.config/systemd/user/nanoclaw.service` — user-level systemd unit created by `npm run setup:step -- service`; linger enabled
+- `src/env.ts` — added `readEnvFileByPrefix(prefix)` export; reads `.env` and returns all keys matching the given prefix
+- `src/env.test.ts` — new unit tests for `readEnvFileByPrefix`
+- `src/container-runner.ts` — imports `readEnvFileByPrefix`; `buildContainerArgs` now forwards all `CONTAINER_SECRET_*` vars from `.env` as `-e` flags to the container
+- `src/container-runner.test.ts` — two new tests verifying `CONTAINER_SECRET_*` forwarding behaviour
+- `container/skills/calendar-morning/SKILL.md` — new container skill: fetches Proton Calendar via iCal URL, parses next 2-3 days, sends a morning briefing
+- `.env.example` — documents `CONTAINER_SECRET_PROTON_ICAL_URL`
 
 ## Commands run
-- `npm test` → 352 tests, all pass
-- `npm run build`
-- `npm run setup:step -- service` (created + enabled + started systemd user unit)
+- `npm test` → 362 tests, all pass
 
 ## Test/lint status
-- `npm test` passed (23 files, 352 tests).
+- `npm test` passed (24 files, 362 tests).
 
 ## Context: 2026-04-13 outage
 - Service was down from ~midnight Apr 11→12.
@@ -40,3 +40,6 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 ## Open issues / next steps
 - Verify the exact provider error strings seen in production and extend parsing if Anthropic returns a different reset-time format.
 - Consider applying the same short notification pattern to scheduled-task failures if operator visibility there becomes important.
+- Calendar morning briefing: user needs to (1) add `CONTAINER_SECRET_PROTON_ICAL_URL=<url>` to `.env`, (2) restart the service, (3) tell the assistant `@Andy every day at 7am, run the calendar morning briefing using the calendar-morning skill`
+- Recurring events (RRULE) are skipped in the calendar skill v1 — revisit if needed
+- Future: add work calendar via `CONTAINER_SECRET_WORK_ICAL_URL`
