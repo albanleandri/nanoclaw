@@ -69,6 +69,11 @@ vi.mock('./credential-proxy.js', () => ({
   detectAuthMode: vi.fn(() => 'api-key'),
 }));
 
+// Mock env.ts prefix reader — returns no secrets by default
+vi.mock('./env.js', () => ({
+  readEnvFileByPrefix: vi.fn(() => ({})),
+}));
+
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -106,6 +111,8 @@ vi.mock('child_process', async () => {
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
+import { spawn } from 'child_process';
+import { readEnvFileByPrefix } from './env.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -552,5 +559,71 @@ describe('tool selection', () => {
     expect(JSON.parse(writtenInput)).toMatchObject({
       allowedTools: ['Bash', 'Read', 'mcp__nanoclaw__schedule_task'],
     });
+  });
+});
+
+describe('CONTAINER_SECRET_* env var forwarding', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    vi.mocked(spawn).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(readEnvFileByPrefix).mockReturnValue({});
+  });
+
+  it('forwards CONTAINER_SECRET_* vars as -e flags to the container', async () => {
+    vi.mocked(readEnvFileByPrefix).mockReturnValue({
+      CONTAINER_SECRET_PROTON_ICAL_URL: 'https://calendar.example.com/ical',
+    });
+
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      vi.fn(),
+      onOutput,
+    );
+
+    // spawn is called synchronously inside runContainerAgent — check args now
+    const spawnArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+    const secretIdx = spawnArgs.indexOf(
+      'CONTAINER_SECRET_PROTON_ICAL_URL=https://calendar.example.com/ical',
+    );
+    expect(secretIdx).toBeGreaterThan(0);
+    expect(spawnArgs[secretIdx - 1]).toBe('-e');
+
+    // Clean up: resolve the promise so no leak
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('does not add -e flags when no CONTAINER_SECRET_* vars are set', async () => {
+    vi.mocked(readEnvFileByPrefix).mockReturnValue({});
+
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      vi.fn(),
+      onOutput,
+    );
+
+    const spawnArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+    const hasContainerSecret = spawnArgs.some((a) =>
+      String(a).startsWith('CONTAINER_SECRET_'),
+    );
+    expect(hasContainerSecret).toBe(false);
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
   });
 });

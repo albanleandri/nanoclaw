@@ -27,6 +27,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFileByPrefix } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -433,6 +434,14 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // Forward CONTAINER_SECRET_* vars from .env to the container.
+  // Explicitly opt-in (prefix required) — no other .env vars are forwarded.
+  // The .env file itself is shadowed (/dev/null) inside containers.
+  const containerSecrets = readEnvFileByPrefix('CONTAINER_SECRET_');
+  for (const [key, value] of Object.entries(containerSecrets)) {
+    args.push('-e', `${key}=${value}`);
   }
 
   // Runtime-specific args for host gateway resolution
