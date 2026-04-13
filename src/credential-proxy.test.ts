@@ -11,7 +11,10 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 
-import { startCredentialProxy, closeCredentialProxy } from './credential-proxy.js';
+import {
+  startCredentialProxy,
+  closeCredentialProxy,
+} from './credential-proxy.js';
 
 function makeRequest(
   port: number,
