@@ -155,6 +155,19 @@ export function startCredentialProxy(
   });
 }
 
+/**
+ * Gracefully close the credential proxy server.
+ * Calls closeAllConnections() so keep-alive sockets are torn down immediately,
+ * then waits for the 'close' event before resolving — ensuring the port is
+ * fully released before the caller continues (e.g. before process.exit).
+ */
+export function closeCredentialProxy(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    server.closeAllConnections();
+    server.close(() => resolve());
+  });
+}
+
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
