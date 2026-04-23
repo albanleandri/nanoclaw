@@ -80,7 +80,8 @@ function createFakeProcess() {
 let fakeProc: ReturnType<typeof createFakeProcess>;
 
 vi.mock('child_process', async () => {
-  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  const actual =
+    await vi.importActual<typeof import('child_process')>('child_process');
   return {
     ...actual,
     spawn: vi.fn(() => fakeProc),
@@ -120,7 +121,12 @@ function captureSpawnArgs(): string[] {
 }
 
 async function runAndCapture(): Promise<string[]> {
-  const resultPromise = runContainerAgent(testGroup, testInput, () => {}, vi.fn());
+  const resultPromise = runContainerAgent(
+    testGroup,
+    testInput,
+    () => {},
+    vi.fn(),
+  );
   const args = captureSpawnArgs();
 
   const output: ContainerOutput = { status: 'success', result: 'done' };
@@ -159,7 +165,9 @@ describe('credential leak prevention: container args', () => {
     it('does not pass CLAUDE_CODE_OAUTH_TOKEN', async () => {
       vi.mocked(detectAuthMode).mockReturnValue('api-key');
       const args = await runAndCapture();
-      expect(args.every((a) => !a.startsWith('CLAUDE_CODE_OAUTH_TOKEN='))).toBe(true);
+      expect(args.every((a) => !a.startsWith('CLAUDE_CODE_OAUTH_TOKEN='))).toBe(
+        true,
+      );
     });
   });
 
@@ -232,13 +240,17 @@ describe('credential leak prevention: container args', () => {
 
     it('readEnvFileByPrefix is called with the strict CONTAINER_SECRET_ prefix', async () => {
       await runAndCapture();
-      expect(vi.mocked(readEnvFileByPrefix)).toHaveBeenCalledWith('CONTAINER_SECRET_');
+      expect(vi.mocked(readEnvFileByPrefix)).toHaveBeenCalledWith(
+        'CONTAINER_SECRET_',
+      );
     });
 
     it('TELEGRAM_BOT_TOKEN is never forwarded to containers', async () => {
       // Simulate the prefix gate returning nothing (default mock)
       const args = await runAndCapture();
-      expect(args.every((a) => !a.startsWith('TELEGRAM_BOT_TOKEN='))).toBe(true);
+      expect(args.every((a) => !a.startsWith('TELEGRAM_BOT_TOKEN='))).toBe(
+        true,
+      );
     });
 
     it('ONECLI_URL is never forwarded to containers', async () => {
