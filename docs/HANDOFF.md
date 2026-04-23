@@ -17,16 +17,27 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 - Prefer repo scripts and `package.json` commands over ad hoc operational commands.
 - Keep private or domain-specific notes out of the tracked repo when possible.
 
-## Files changed (latest)
-- `src/env.ts` — added `readEnvFileByPrefix(prefix)` export; reads `.env` and returns all keys matching the given prefix
-- `src/env.test.ts` — new unit tests for `readEnvFileByPrefix`
-- `src/container-runner.ts` — imports `readEnvFileByPrefix`; `buildContainerArgs` now forwards all `CONTAINER_SECRET_*` vars from `.env` as `-e` flags to the container
-- `src/container-runner.test.ts` — two new tests verifying `CONTAINER_SECRET_*` forwarding behaviour
-- `container/skills/calendar-morning/SKILL.md` — new container skill: fetches Proton Calendar via iCal URL, parses next 2-3 days, sends a morning briefing
-- `.env.example` — documents `CONTAINER_SECRET_PROTON_ICAL_URL`
+## Files changed (latest) — macro analyst feature
+
+Container skills (`container/skills` submodule):
+- `agents/macro-analyst.md` — new standalone macro environment agent
+- `stock-market-investing/references/macro-analysis-checklist.md` — macro analysis logic (evolvable)
+- `stock-market-investing/templates/macro-template.md` — Telegram output format for macro reports
+- `stock-market-investing/SKILL.md` — coordinator: macro routing, standalone macro section, DD pre-flight steps (2-3)
+- `agents/stock-dd-writer.md` — accepts optional `MACRO_SNAPSHOT:` input, renders 🌍 MACRO CONTEXT section
+- `stock-market-investing/templates/due-diligence-template.md` — added macro context section placeholder
+- `stock-market-investing-reference/SKILL.md` — added macro checklist + template paths
+- `stock-market-investing/save_report.py` — added `macro_context` to `VALID_TYPES`
+- `stock-market-investing/test_save_report.py` — new; tests save_report with macro_context type
+
+Main repo:
+- `docs/superpowers/specs/2026-04-15-macro-analyst-design.md` — design spec
+- `docs/superpowers/plans/2026-04-15-macro-analyst.md` — implementation plan
 
 ## Commands run
-- `npm test` → 362 tests, all pass
+- `npm test` → 362 tests, all pass (pre- and post-merge)
+- `npm run container:build` → build complete
+- `npm run service:restart` → PID 1249758
 
 ## Test/lint status
 - `npm test` passed (24 files, 362 tests).
