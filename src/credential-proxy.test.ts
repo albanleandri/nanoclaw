@@ -14,6 +14,7 @@ vi.mock('./logger.js', () => ({
 import {
   startCredentialProxy,
   closeCredentialProxy,
+  detectAuthMode,
 } from './credential-proxy.js';
 
 function makeRequest(
@@ -221,5 +222,14 @@ describe('credential-proxy', () => {
 
     expect(res.statusCode).toBe(502);
     expect(res.body).toBe('Bad Gateway');
+  });
+
+  it('detectAuthMode honors ANTHROPIC_AUTH_MODE when raw creds are absent', () => {
+    Object.assign(mockEnv, {
+      ONECLI_URL: 'http://127.0.0.1:10254',
+      ANTHROPIC_AUTH_MODE: 'api-key',
+    });
+
+    expect(detectAuthMode()).toBe('api-key');
   });
 });

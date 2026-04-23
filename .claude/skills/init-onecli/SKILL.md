@@ -134,13 +134,15 @@ For each credential found, migrate it to OneCLI:
 ```bash
 onecli secrets create --name Anthropic --type anthropic --value <key> --host-pattern api.anthropic.com
 ```
+Set `ANTHROPIC_AUTH_MODE=api-key` in `.env` so NanoClaw knows to boot the Anthropic SDK in API-key mode after the raw key is removed.
 
 **Claude OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN=...` or `ANTHROPIC_AUTH_TOKEN=...`):
 ```bash
 onecli secrets create --name Anthropic --type anthropic --value <token> --host-pattern api.anthropic.com
 ```
+Set `ANTHROPIC_AUTH_MODE=oauth` in `.env` so NanoClaw knows to boot the Anthropic SDK in OAuth mode after the raw token is removed.
 
-After successful migration, remove the credential lines from `.env`. Use the Edit tool to remove only the credential variable lines (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`). Keep all other `.env` entries intact (e.g. `ONECLI_URL`, `TELEGRAM_BOT_TOKEN`, channel tokens).
+After successful migration, remove the raw credential lines from `.env`. Use the Edit tool to remove only `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_AUTH_TOKEN`. Keep `ONECLI_URL`, `ANTHROPIC_AUTH_MODE`, channel tokens, and other non-Anthropic settings intact.
 
 Verify the secret was registered:
 ```bash
@@ -149,40 +151,9 @@ onecli secrets list
 
 Tell the user: "Migrated your Anthropic credentials from `.env` to the OneCLI Agent Vault. The raw keys have been removed from `.env` — they're now managed by OneCLI and will be injected at request time without entering containers."
 
-### Offer to migrate other container-facing credentials
+### Scope note for other credentials
 
-After handling Anthropic credentials (whether migrated or freshly registered), scan `.env` again for remaining credential variables that containers use for outbound API calls.
-
-**Important:** Only migrate credentials that containers use via outbound HTTPS. Channel tokens (`TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `DISCORD_BOT_TOKEN`) are used by the NanoClaw host process to connect to messaging platforms — they must stay in `.env`.
-
-Known container-facing credentials:
-
-| .env variable | Secret name | Host pattern |
-|---|---|---|
-| `OPENAI_API_KEY` | `OpenAI` | `api.openai.com` |
-| `PARALLEL_API_KEY` | `Parallel` | `api.parallel.ai` |
-
-If any of these are found with non-empty values, present them to the user:
-
-AskUserQuestion (multiSelect): "These credentials are used by container agents for outbound API calls. Moving them to the vault means agents never see the raw keys, and you can apply rate limits and policies."
-
-- One option per credential found (e.g., "OPENAI_API_KEY" — description: "Used by voice transcription and other OpenAI integrations inside containers")
-- **Skip — keep them in .env** — description: "Leave these in .env for now. You can move them later."
-
-For each credential the user selects:
-
-```bash
-onecli secrets create --name <SecretName> --type api_key --value <value> --host-pattern <host>
-```
-
-If there are credential variables not in the table above that look container-facing (i.e. not a channel token), ask the user: "Is `<VARIABLE_NAME>` used by agents inside containers? If so, what API host does it authenticate against? (e.g., `api.example.com`)" — then migrate accordingly.
-
-After migration, remove the migrated lines from `.env` using the Edit tool. Keep channel tokens and any credentials the user chose not to migrate.
-
-Verify all secrets were registered:
-```bash
-onecli secrets list
-```
+Do **not** automatically migrate arbitrary container env vars like `OPENAI_API_KEY` or `PARALLEL_API_KEY` as part of this skill. Many SDKs require those values locally in the process environment before any HTTPS request is made, so moving them to OneCLI without code changes can break the integration. Handle Anthropic here; leave other integrations unchanged unless the codebase has been explicitly updated to support proxy-only auth for that service.
 
 ### If no credentials found in .env
 
@@ -208,8 +179,10 @@ Tell the user to run `claude setup-token` in another terminal and copy the token
 
 Once they have the token, AskUserQuestion with two options:
 
-1. **Dashboard** — description: "Best if you have a browser on this machine. Open ${ONECLI_URL} and add the secret in the UI. Use type 'anthropic' and paste your token as the value."
+1. **Dashboard** — description: "Best if you have a browser on this machine. Open ${ONECLI_URL} and add the secret in the UI. Use type 'anthropic' and paste your token as the value, then set `ANTHROPIC_AUTH_MODE=oauth` in `.env`."
 2. **CLI** — description: "Best for remote/headless servers. Run: `onecli secrets create --name Anthropic --type anthropic --value YOUR_TOKEN --host-pattern api.anthropic.com`"
+
+After the secret is registered, ensure `.env` contains `ANTHROPIC_AUTH_MODE=oauth`.
 
 #### API key path
 
@@ -217,8 +190,10 @@ Tell the user to get an API key from https://console.anthropic.com/settings/keys
 
 AskUserQuestion with two options:
 
-1. **Dashboard** — description: "Best if you have a browser on this machine. Open ${ONECLI_URL} and add the secret in the UI."
+1. **Dashboard** — description: "Best if you have a browser on this machine. Open ${ONECLI_URL} and add the secret in the UI, then set `ANTHROPIC_AUTH_MODE=api-key` in `.env`."
 2. **CLI** — description: "Best for remote/headless servers. Run: `onecli secrets create --name Anthropic --type anthropic --value YOUR_KEY --host-pattern api.anthropic.com`"
+
+After the secret is registered, ensure `.env` contains `ANTHROPIC_AUTH_MODE=api-key`.
 
 #### After either path
 
@@ -253,7 +228,8 @@ If the service is running and a channel is configured, tell the user to send a t
 
 Tell the user:
 - OneCLI Agent Vault is now managing credentials
-- Agents never see raw API keys — credentials are injected at the gateway level
+- Anthropic credentials no longer need to live in `.env`; set `ANTHROPIC_AUTH_MODE` to `oauth` or `api-key` so NanoClaw knows which placeholder auth flow to use
+- Explicit `CONTAINER_SECRET_*` values are still passed into containers as environment variables by design; they are not managed by OneCLI automatically
 - To manage secrets: `onecli secrets list`, or open ${ONECLI_URL}
 - To add rate limits or policies: `onecli rules create --help`
 
@@ -261,7 +237,7 @@ Tell the user:
 
 **"OneCLI gateway not reachable" in logs:** The gateway isn't running. Check with `curl -sf ${ONECLI_URL}/health`. Start it with `onecli start` if needed.
 
-**Container gets no credentials:** Verify `ONECLI_URL` is set in `.env` and the gateway has an Anthropic secret (`onecli secrets list`).
+**Container gets no credentials:** Verify `ONECLI_URL` is set in `.env`, `ANTHROPIC_AUTH_MODE` matches the registered secret type (`oauth` or `api-key`), and the gateway has an Anthropic secret (`onecli secrets list`).
 
 **Old .env credentials still present:** This skill should have removed them. Double-check `.env` for `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_AUTH_TOKEN` and remove them manually if still present.
 

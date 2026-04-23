@@ -66,16 +66,20 @@ Messages and task operations are verified against group identity:
 
 ### 5. Credential Isolation (OneCLI Agent Vault)
 
-Real API credentials **never enter containers**. NanoClaw uses [OneCLI's Agent Vault](https://github.com/onecli/onecli) to proxy outbound requests and inject credentials at the gateway level.
+Anthropic credentials do not need to enter containers when NanoClaw is configured to use [OneCLI's Agent Vault](https://github.com/onecli/onecli). NanoClaw requests OneCLI gateway config at container startup and routes outbound Anthropic traffic through that gateway.
 
 **How it works:**
 1. Credentials are registered once with `onecli secrets create`, stored and managed by OneCLI
-2. When NanoClaw spawns a container, it calls `applyContainerConfig()` to route outbound HTTPS through the OneCLI gateway
-3. The gateway matches requests by host and path, injects the real credential, and forwards
-4. Agents cannot discover real credentials — not in environment, stdin, files, or `/proc`
+2. When `ONECLI_URL` is configured, NanoClaw calls `applyContainerConfig()` before `docker run`
+3. The gateway returns proxy env vars and CA mounts, and NanoClaw uses `ANTHROPIC_AUTH_MODE` to choose the SDK placeholder auth flow (`api-key` or `oauth`)
+4. The gateway matches requests by host and path, injects the real Anthropic credential, and forwards
+5. Agents cannot discover the real Anthropic credential in environment, stdin, files, or `/proc`
 
-**Per-agent policies:**
-Each NanoClaw group gets its own OneCLI agent identity. This allows different credential policies per group (e.g. your sales agent vs. support agent). OneCLI supports rate limits, and time-bound access and approval flows are on the roadmap.
+**Per-group policy hook:**
+NanoClaw requests OneCLI container config using the group folder as the agent identifier. This gives OneCLI a stable per-group hook for policy when configured on the gateway side.
+
+**Explicit exception:**
+Variables forwarded with the `CONTAINER_SECRET_*` prefix are still injected directly into the container environment by design. They are an explicit opt-in escape hatch for non-proxied secrets such as calendar URLs, and agents can read them.
 
 **NOT Mounted:**
 - Channel auth sessions (`store/auth/`) — host only

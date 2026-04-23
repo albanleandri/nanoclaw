@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
-import fs from 'fs';
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -61,6 +60,11 @@ vi.mock('./env.js', () => ({
   readEnvFileByPrefix: vi.fn(() => ({})),
 }));
 
+vi.mock('./onecli.js', () => ({
+  isOneCliConfigured: vi.fn(() => false),
+  applyOneCliContainerConfig: vi.fn(async () => false),
+}));
+
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
     stdin: PassThrough;
@@ -99,6 +103,7 @@ import type { RegisteredGroup } from './types.js';
 import { spawn } from 'child_process';
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFileByPrefix } from './env.js';
+import { applyOneCliContainerConfig, isOneCliConfigured } from './onecli.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -118,6 +123,11 @@ const testInput = {
 // so args are available immediately after calling runContainerAgent.
 function captureSpawnArgs(): string[] {
   return (vi.mocked(spawn).mock.calls[0]?.[1] as string[]) ?? [];
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 async function runAndCapture(): Promise<string[]> {
@@ -147,6 +157,8 @@ describe('credential leak prevention: container args', () => {
     fakeProc = createFakeProcess();
     vi.mocked(detectAuthMode).mockReturnValue('api-key');
     vi.mocked(readEnvFileByPrefix).mockReturnValue({});
+    vi.mocked(isOneCliConfigured).mockReturnValue(false);
+    vi.mocked(applyOneCliContainerConfig).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -224,6 +236,35 @@ describe('credential leak prevention: container args', () => {
       const args = await runAndCapture();
       const baseUrl = args.find((a) => a.startsWith('ANTHROPIC_BASE_URL='));
       expect(baseUrl).toMatch(/ANTHROPIC_BASE_URL=http:\/\/.+:\d+/);
+    });
+
+    it('OneCLI mode omits native ANTHROPIC_BASE_URL rewrites', async () => {
+      vi.mocked(isOneCliConfigured).mockReturnValue(true);
+      vi.mocked(applyOneCliContainerConfig).mockImplementation(async (args) => {
+        args.push('-e', 'HTTPS_PROXY=http://host.docker.internal:10254');
+        return true;
+      });
+
+      const resultPromise = runContainerAgent(
+        testGroup,
+        testInput,
+        () => {},
+        vi.fn(),
+      );
+      await flushMicrotasks();
+      const args = captureSpawnArgs();
+
+      const output: ContainerOutput = { status: 'success', result: 'done' };
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${JSON.stringify(output)}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+      await resultPromise;
+
+      expect(args.some((a) => a.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
+      expect(args).toContain('HTTPS_PROXY=http://host.docker.internal:10254');
     });
   });
 

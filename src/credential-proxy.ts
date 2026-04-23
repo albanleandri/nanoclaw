@@ -4,6 +4,8 @@
  * The proxy injects real credentials so containers never see them.
  *
  * Auth mode priority (first match wins):
+ *   0. Explicit mode: ANTHROPIC_AUTH_MODE in .env — used for OneCLI installs
+ *      after raw Anthropic credentials have been removed from .env.
  *   1. API key:    ANTHROPIC_API_KEY in .env — injects x-api-key on every request.
  *   2. .env OAuth: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_AUTH_TOKEN in .env.
  *   3. Host OAuth: ~/.claude/.credentials.json — uses the host Claude Code token,
@@ -33,14 +35,13 @@ export function startCredentialProxy(
 ): Promise<Server> {
   // Read once at startup for the upstream URL and initial log
   const initialSecrets = readEnvFile([
+    'ANTHROPIC_AUTH_MODE',
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
   ]);
-  const initialAuthMode: AuthMode = initialSecrets.ANTHROPIC_API_KEY
-    ? 'api-key'
-    : 'oauth';
+  const initialAuthMode = detectAuthModeFromSecrets(initialSecrets);
   const upstreamUrl = new URL(
     initialSecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
   );
@@ -52,14 +53,13 @@ export function startCredentialProxy(
       // Re-read credentials on every request so updates to .env take effect
       // immediately without restarting NanoClaw.
       const secrets = readEnvFile([
+        'ANTHROPIC_AUTH_MODE',
         'ANTHROPIC_API_KEY',
         'CLAUDE_CODE_OAUTH_TOKEN',
         'ANTHROPIC_AUTH_TOKEN',
         'ANTHROPIC_BASE_URL',
       ]);
-      const authMode: AuthMode = secrets.ANTHROPIC_API_KEY
-        ? 'api-key'
-        : 'oauth';
+      const authMode = detectAuthModeFromSecrets(secrets);
       const oauthToken =
         secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
 
@@ -82,7 +82,14 @@ export function startCredentialProxy(
         if (authMode === 'api-key') {
           // API key mode: inject x-api-key on every request
           delete headers['x-api-key'];
-          headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
+          if (secrets.ANTHROPIC_API_KEY) {
+            headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
+          } else {
+            logger.warn(
+              { url: req.url },
+              'API-key mode: no key available — request will reach upstream unauthenticated',
+            );
+          }
         } else {
           // OAuth mode: inject Bearer token and ensure the oauth-2025-04-20 beta
           // flag is present. Without that flag the API returns 401 "OAuth
@@ -170,6 +177,22 @@ export function closeCredentialProxy(server: Server): Promise<void> {
 
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
-  return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+  return detectAuthModeFromSecrets(
+    readEnvFile([
+      'ANTHROPIC_AUTH_MODE',
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_AUTH_TOKEN',
+    ]),
+  );
+}
+
+function detectAuthModeFromSecrets(secrets: Record<string, string>): AuthMode {
+  if (secrets.ANTHROPIC_AUTH_MODE === 'api-key') return 'api-key';
+  if (secrets.ANTHROPIC_AUTH_MODE === 'oauth') return 'oauth';
+  if (secrets.ANTHROPIC_API_KEY) return 'api-key';
+  if (secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN) {
+    return 'oauth';
+  }
+  return 'oauth';
 }

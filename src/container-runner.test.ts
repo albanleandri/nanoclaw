@@ -74,6 +74,11 @@ vi.mock('./env.js', () => ({
   readEnvFileByPrefix: vi.fn(() => ({})),
 }));
 
+vi.mock('./onecli.js', () => ({
+  isOneCliConfigured: vi.fn(() => false),
+  applyOneCliContainerConfig: vi.fn(async () => false),
+}));
+
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -113,6 +118,7 @@ import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 import { spawn } from 'child_process';
 import { readEnvFileByPrefix } from './env.js';
+import { applyOneCliContainerConfig, isOneCliConfigured } from './onecli.js';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -136,10 +142,17 @@ function emitOutputMarker(
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    vi.mocked(isOneCliConfigured).mockReturnValue(false);
+    vi.mocked(applyOneCliContainerConfig).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -240,6 +253,8 @@ describe('agents sync', () => {
     fakeProc = createFakeProcess();
     vi.mocked(fs.existsSync).mockReturnValue(false);
     vi.mocked(fs.readdirSync).mockReturnValue([]);
+    vi.mocked(isOneCliConfigured).mockReturnValue(false);
+    vi.mocked(applyOneCliContainerConfig).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -321,6 +336,8 @@ describe('skills sync', () => {
     fakeProc = createFakeProcess();
     vi.mocked(fs.existsSync).mockReturnValue(false);
     vi.mocked(fs.readdirSync).mockReturnValue([]);
+    vi.mocked(isOneCliConfigured).mockReturnValue(false);
+    vi.mocked(applyOneCliContainerConfig).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -525,6 +542,8 @@ describe('tool selection', () => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
     vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(isOneCliConfigured).mockReturnValue(false);
+    vi.mocked(applyOneCliContainerConfig).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -619,6 +638,40 @@ describe('CONTAINER_SECRET_* env var forwarding', () => {
       String(a).startsWith('CONTAINER_SECRET_'),
     );
     expect(hasContainerSecret).toBe(false);
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('applies OneCLI gateway config and skips native proxy routing when configured', async () => {
+    vi.mocked(isOneCliConfigured).mockReturnValue(true);
+    vi.mocked(applyOneCliContainerConfig).mockImplementation(async (args) => {
+      args.push('-e', 'HTTPS_PROXY=http://host.docker.internal:10254');
+      return true;
+    });
+
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      vi.fn(),
+      onOutput,
+    );
+
+    await flushMicrotasks();
+
+    const spawnArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain(
+      'HTTPS_PROXY=http://host.docker.internal:10254',
+    );
+    expect(
+      spawnArgs.some((a) =>
+        String(a).startsWith('ANTHROPIC_BASE_URL=http://host.docker.internal:'),
+      ),
+    ).toBe(false);
 
     emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
     await vi.advanceTimersByTimeAsync(10);
