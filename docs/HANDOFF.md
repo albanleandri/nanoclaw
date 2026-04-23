@@ -3,44 +3,48 @@
 Use `docs/HANDOFF.local.md` for detailed local notes when available.
 
 ## Current objective
-- Keep the public fork generic and upstream-friendly while preserving a private personalization layer.
-- Surface provider usage-limit failures to chats with a short retry message, then silently drop later messages during the cooldown window.
+- Wire actual OneCLI gateway support into the runtime while preserving the native credential-proxy fallback.
+- Align setup, verification, and docs with the real Anthropic auth model (`ONECLI_URL` + `ANTHROPIC_AUTH_MODE`) and the explicit `CONTAINER_SECRET_*` escape hatch.
 
 ## Quick context
 - Single Node.js process (`src/index.ts`) routes messages to Claude Agent SDK containers.
 - Each group has isolated memory (`groups/{name}/CLAUDE.md`) and filesystem.
 - Container skills (`container/skills/`) are loaded at container start; changes require a rebuild and container kill.
-- Secrets route through OneCLI Agent Vault; agents never receive raw keys.
+- Anthropic credentials can route through OneCLI Agent Vault; explicit `CONTAINER_SECRET_*` vars are still opt-in raw container secrets.
 
 ## Shared conventions
 - Keep the Telegram runtime on the Anthropic Agent SDK.
 - Prefer repo scripts and `package.json` commands over ad hoc operational commands.
 - Keep private or domain-specific notes out of the tracked repo when possible.
 
-## Files changed (latest) — macro analyst feature
+## Files changed (latest) — OneCLI runtime alignment
 
-Container skills (`container/skills` submodule):
-- `agents/macro-analyst.md` — new standalone macro environment agent
-- `stock-market-investing/references/macro-analysis-checklist.md` — macro analysis logic (evolvable)
-- `stock-market-investing/templates/macro-template.md` — Telegram output format for macro reports
-- `stock-market-investing/SKILL.md` — coordinator: macro routing, standalone macro section, DD pre-flight steps (2-3)
-- `agents/stock-dd-writer.md` — accepts optional `MACRO_SNAPSHOT:` input, renders 🌍 MACRO CONTEXT section
-- `stock-market-investing/templates/due-diligence-template.md` — added macro context section placeholder
-- `stock-market-investing-reference/SKILL.md` — added macro checklist + template paths
-- `stock-market-investing/save_report.py` — added `macro_context` to `VALID_TYPES`
-- `stock-market-investing/test_save_report.py` — new; tests save_report with macro_context type
+Runtime / setup:
+- `src/onecli.ts` — new helper to read local OneCLI config and apply container gateway args
+- `src/container-runner.ts` — applies OneCLI gateway config per group when `ONECLI_URL` is set; falls back to the native credential proxy otherwise
+- `src/credential-proxy.ts` — supports explicit `ANTHROPIC_AUTH_MODE` and warns cleanly when raw native creds are absent
+- `setup/verify.ts` — treats OneCLI-only installs as configured instead of requiring raw Anthropic creds in `.env`
 
-Main repo:
-- `docs/superpowers/specs/2026-04-15-macro-analyst-design.md` — design spec
-- `docs/superpowers/plans/2026-04-15-macro-analyst.md` — implementation plan
+Tests / lint cleanup:
+- `src/container-runner.test.ts` — covers active OneCLI gateway config vs native fallback
+- `src/credential-leak.test.ts` — verifies OneCLI mode skips native `ANTHROPIC_BASE_URL` rewrites
+- `src/credential-proxy.test.ts` — covers explicit `ANTHROPIC_AUTH_MODE`
+- `src/index.ts`, `src/session-commands.test.ts` — lint cleanup for unused symbols
+
+Docs / skills:
+- `.claude/skills/init-onecli/SKILL.md`, `.claude/skills/setup/SKILL.md` — document `ANTHROPIC_AUTH_MODE`, remove over-broad generic secret migration claims
+- `README.md`, `docs/SECURITY.md`, `CLAUDE.md`, `.env.example` — scope OneCLI claims accurately and document the `CONTAINER_SECRET_*` exception
 
 ## Commands run
-- `npm test` → 362 tests, all pass (pre- and post-merge)
-- `npm run container:build` → build complete
-- `npm run service:restart` → PID 1249758
+- `npm test`
+- `npm run typecheck`
+- `npm run lint`
+- `npm test -- --run src/container-runner.test.ts src/credential-leak.test.ts`
 
 ## Test/lint status
-- `npm test` passed (24 files, 362 tests).
+- `npm test` passed (26 files, 385 tests).
+- `npm run typecheck` passed.
+- `npm run lint` still returns non-zero on the pre-existing warning backlog in `src/`; there are no new lint errors from this patch.
 
 ## Context: 2026-04-13 outage
 - Service was down from ~midnight Apr 11→12.
@@ -49,8 +53,8 @@ Main repo:
 - Fixed by: (1) proper `closeCredentialProxy` shutdown, (2) systemd user service with `Restart=always`.
 
 ## Open issues / next steps
-- Verify the exact provider error strings seen in production and extend parsing if Anthropic returns a different reset-time format.
-- Consider applying the same short notification pattern to scheduled-task failures if operator visibility there becomes important.
+- If an existing OneCLI install uses Anthropic API keys, ensure `.env` contains `ANTHROPIC_AUTH_MODE=api-key`; OAuth-based installs should use `ANTHROPIC_AUTH_MODE=oauth`.
+- Generic third-party API env vars such as `OPENAI_API_KEY` are still service-specific and are not automatically safe to migrate to OneCLI without code changes in the consuming integration.
 - Calendar morning briefing: user needs to (1) add `CONTAINER_SECRET_PROTON_ICAL_URL=<url>` to `.env`, (2) restart the service, (3) tell the assistant `@Andy every day at 7am, run the calendar morning briefing using the calendar-morning skill`
 - Recurring events (RRULE) are skipped in the calendar skill v1 — revisit if needed
 - Future: add work calendar via `CONTAINER_SECRET_WORK_ICAL_URL`

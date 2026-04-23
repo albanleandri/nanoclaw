@@ -29,6 +29,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFileByPrefix } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { applyOneCliContainerConfig, isOneCliConfigured } from './onecli.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -95,6 +96,14 @@ const ALL_RUNTIME_TOOLS = [
   'mcp__nanoclaw__register_group',
   'mcp__nanoclaw__list_runtime_capabilities',
 ];
+
+const SAFE_LOGGED_ENV_VARS = new Set([
+  'TZ',
+  'HOME',
+  'OLLAMA_ADMIN_TOOLS',
+  'ANTHROPIC_BASE_URL',
+  'SSL_CERT_FILE',
+]);
 
 function resolveAllowedTools(group: RegisteredGroup): string[] {
   if (!group.containerConfig?.allowedTools?.length) {
@@ -405,10 +414,7 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(
-  mounts: VolumeMount[],
-  containerName: string,
-): string[] {
+function buildContainerArgs(containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
@@ -418,34 +424,6 @@ function buildContainerArgs(
   if (OLLAMA_ADMIN_TOOLS) {
     args.push('-e', 'OLLAMA_ADMIN_TOOLS=true');
   }
-
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-  }
-
-  // Forward CONTAINER_SECRET_* vars from .env to the container.
-  // Explicitly opt-in (prefix required) — no other .env vars are forwarded.
-  // The .env file itself is shadowed (/dev/null) inside containers.
-  const containerSecrets = readEnvFileByPrefix('CONTAINER_SECRET_');
-  for (const [key, value] of Object.entries(containerSecrets)) {
-    args.push('-e', `${key}=${value}`);
-  }
-
-  // Runtime-specific args for host gateway resolution
-  args.push(...hostGatewayArgs());
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -457,6 +435,43 @@ function buildContainerArgs(
     args.push('-e', 'HOME=/home/node');
   }
 
+  return args;
+}
+
+function addNativeCredentialProxyConfig(args: string[]): void {
+  // Route API traffic through the native credential proxy
+  args.push(
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+  );
+  args.push(...hostGatewayArgs());
+}
+
+function addAnthropicPlaceholderAuth(args: string[]): void {
+  // Mirror the host's auth method with a placeholder value.
+  // API key mode: SDK sends x-api-key, proxy/gateway replaces with the real key.
+  // OAuth mode:   SDK sends Bearer or runs the OAuth exchange flow using a
+  //               placeholder token, and the selected credential gateway
+  //               injects the real OAuth credential.
+  const authMode = detectAuthMode();
+  if (authMode === 'api-key') {
+    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  } else {
+    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+}
+
+function addContainerSecrets(args: string[]): void {
+  // Forward CONTAINER_SECRET_* vars from .env to the container.
+  // Explicitly opt-in (prefix required) — no other .env vars are forwarded.
+  // The .env file itself is shadowed (/dev/null) inside containers.
+  const containerSecrets = readEnvFileByPrefix('CONTAINER_SECRET_');
+  for (const [key, value] of Object.entries(containerSecrets)) {
+    args.push('-e', `${key}=${value}`);
+  }
+}
+
+function addVolumeMountArgs(args: string[], mounts: VolumeMount[]): void {
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
@@ -464,10 +479,36 @@ function buildContainerArgs(
       args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
     }
   }
+}
 
-  args.push(CONTAINER_IMAGE);
+function sanitizeContainerArgsForLogs(args: string[]): string[] {
+  const sanitized = [...args];
+  for (let i = 1; i < sanitized.length; i++) {
+    if (sanitized[i - 1] !== '-e') continue;
+    const match = /^([A-Z0-9_]+)=/.exec(sanitized[i]);
+    if (!match) continue;
+    const key = match[1];
+    if (SAFE_LOGGED_ENV_VARS.has(key)) continue;
+    sanitized[i] = `${key}=<redacted>`;
+  }
+  return sanitized;
+}
 
-  return args;
+async function configureCredentialGateway(
+  args: string[],
+  group: RegisteredGroup,
+): Promise<boolean> {
+  const oneCliActive = await applyOneCliContainerConfig(args, group.folder);
+  if (oneCliActive) {
+    logger.info({ group: group.folder }, 'OneCLI gateway config applied');
+  } else {
+    logger.warn(
+      { group: group.folder },
+      'OneCLI gateway unavailable, falling back to native credential proxy',
+    );
+  }
+
+  return oneCliActive;
 }
 
 export async function runContainerAgent(
@@ -484,17 +525,29 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(containerName);
+  const oneCliActive = isOneCliConfigured()
+    ? await configureCredentialGateway(containerArgs, group)
+    : false;
+  if (!oneCliActive) {
+    addNativeCredentialProxyConfig(containerArgs);
+  }
+  addAnthropicPlaceholderAuth(containerArgs);
+  addContainerSecrets(containerArgs);
+  addVolumeMountArgs(containerArgs, mounts);
+  containerArgs.push(CONTAINER_IMAGE);
+  const loggedContainerArgs = sanitizeContainerArgsForLogs(containerArgs);
 
   logger.debug(
     {
       group: group.name,
       containerName,
+      oneCliActive,
       mounts: mounts.map(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: loggedContainerArgs.join(' '),
     },
     'Container mount configuration',
   );
@@ -728,7 +781,7 @@ export async function runContainerAgent(
         }
         logLines.push(
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          loggedContainerArgs.join(' '),
           ``,
           `=== Mounts ===`,
           mounts

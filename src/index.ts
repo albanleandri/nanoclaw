@@ -10,7 +10,6 @@ import {
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   POLL_INTERVAL,
-  TRIGGER_PATTERN,
   TELEGRAM_BOT_POOL,
   TIMEZONE,
 } from './config.js';
@@ -46,7 +45,6 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
-  getDb,
   setRegisteredGroup,
   setRouterState,
   setSession,

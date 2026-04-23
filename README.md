@@ -79,7 +79,7 @@ npm run dev
 - **Scheduled tasks** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
 - **Container isolation** - Agents are sandboxed in Docker (macOS/Linux), [Docker Sandboxes](docs/docker-sandboxes.md) (micro VM isolation), or Apple Container (macOS)
-- **Credential security** - Agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
+- **Credential security** - Anthropic credentials can be kept out of containers entirely by routing outbound requests through [OneCLI's Agent Vault](https://github.com/onecli/onecli). Explicit `CONTAINER_SECRET_*` vars remain an opt-in raw-secret path for cases that are not proxy-managed.
 - **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks
 - **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
 
@@ -168,7 +168,7 @@ Yes. Docker is the default runtime and works on macOS, Linux, and Windows (via W
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Credentials never enter the container — outbound API requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects authentication at the proxy level and supports rate limits and access policies. You should still review what you're running, but the codebase is small enough that you actually can. See the [security documentation](https://docs.nanoclaw.dev/concepts/security) for the full security model.
+Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Anthropic credentials can stay outside the container entirely by routing outbound API requests through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects authentication at the proxy level and supports rate limits and access policies. Explicit `CONTAINER_SECRET_*` values are still visible to the agent by design. You should still review what you're running, but the codebase is small enough that you actually can. See the [security documentation](https://docs.nanoclaw.dev/concepts/security) for the full security model.
 
 **Why no configuration files?**
 
