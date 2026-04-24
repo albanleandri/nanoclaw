@@ -3,8 +3,7 @@
 Use `docs/HANDOFF.local.md` for detailed local notes when available.
 
 ## Current objective
-- Wire actual OneCLI gateway support into the runtime while preserving the native credential-proxy fallback.
-- Align setup, verification, and docs with the real Anthropic auth model (`ONECLI_URL` + `ANTHROPIC_AUTH_MODE`) and the explicit `CONTAINER_SECRET_*` escape hatch.
+- Improve the Polymarket researcher skill with decomposition-first web research for plausible edges while preserving token-efficient screening.
 
 ## Quick context
 - Single Node.js process (`src/index.ts`) routes messages to Claude Agent SDK containers.
@@ -17,34 +16,24 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 - Prefer repo scripts and `package.json` commands over ad hoc operational commands.
 - Keep private or domain-specific notes out of the tracked repo when possible.
 
-## Files changed (latest) — OneCLI runtime alignment
+## Files changed (latest) — Polymarket researcher sharpening
 
-Runtime / setup:
-- `src/onecli.ts` — new helper to read local OneCLI config and apply container gateway args
-- `src/container-runner.ts` — applies OneCLI gateway config per group when `ONECLI_URL` is set; falls back to the native credential proxy otherwise
-- `src/credential-proxy.ts` — supports explicit `ANTHROPIC_AUTH_MODE` and warns cleanly when raw native creds are absent
-- `setup/verify.ts` — treats OneCLI-only installs as configured instead of requiring raw Anthropic creds in `.env`
-
-Tests / lint cleanup:
-- `src/container-runner.test.ts` — covers active OneCLI gateway config vs native fallback
-- `src/credential-leak.test.ts` — verifies OneCLI mode skips native `ANTHROPIC_BASE_URL` rewrites
-- `src/credential-proxy.test.ts` — covers explicit `ANTHROPIC_AUTH_MODE`
-- `src/index.ts`, `src/session-commands.test.ts` — lint cleanup for unused symbols
-
-Docs / skills:
-- `.claude/skills/init-onecli/SKILL.md`, `.claude/skills/setup/SKILL.md` — document `ANTHROPIC_AUTH_MODE`, remove over-broad generic secret migration claims
-- `README.md`, `docs/SECURITY.md`, `CLAUDE.md`, `.env.example` — scope OneCLI claims accurately and document the `CONTAINER_SECRET_*` exception
+Nested `container/skills` repo:
+- `polymarket/polymarket_researcher.py` — adds a crowd-inefficiency prior, caps cold AI evaluations per scan, excludes very high-volume recent markets, shrinks AI probabilities toward market odds for ranking/sizing, reports risk-adjusted EV/Kelly, and appends positive evaluations to `evaluation_history`.
+- `polymarket/polymarket_researcher.py` — now routes meaningful Haiku edges through factor decomposition, targeted snippet search, and Sonnet evidence adjudication before final probability/EV/Kelly.
+- `polymarket/test_polymarket_researcher.py` — covers conservative shrinkage, recent-volume cap, candidate prioritization, and AI-evaluation deferral.
+- `polymarket/test_polymarket_researcher.py` — updated edge-routing tests to require factor research for meaningful/large Haiku edges.
+- `polymarket/SKILL.md`, `polymarket/DOCS.md` — document the strengthened methodology, risk-adjusted math, token controls, and learning/history loop.
+- `polymarket/SKILL.md`, `polymarket/DOCS.md` — document factor-based research, research triggers, evidence adjudication, and search budget caps.
 
 ## Commands run
-- `npm test`
-- `npm run typecheck`
-- `npm run lint`
-- `npm test -- --run src/container-runner.test.ts src/credential-leak.test.ts`
+- `python3 -m pytest container/skills/polymarket/ -v`
+- `python3 -m py_compile container/skills/polymarket/polymarket_researcher.py`
 
 ## Test/lint status
-- `npm test` passed (26 files, 385 tests).
-- `npm run typecheck` passed.
-- `npm run lint` still returns non-zero on the pre-existing warning backlog in `src/`; there are no new lint errors from this patch.
+- Polymarket skill tests passed: 74 tests.
+- Python bytecode compilation passed for `polymarket_researcher.py`.
+- Full repo `npm test`, `npm run typecheck`, and `npm run lint` were not rerun for this Python/doc-only nested skill change.
 
 ## Context: 2026-04-13 outage
 - Service was down from ~midnight Apr 11→12.
@@ -53,6 +42,9 @@ Docs / skills:
 - Fixed by: (1) proper `closeCredentialProxy` shutdown, (2) systemd user service with `Restart=always`.
 
 ## Open issues / next steps
+- Polymarket learning is now recorded with evidence metadata, but resolved-outcome ingestion is still missing. Next improvement: fetch settled outcomes, compute calibration curves/Brier/log loss/realized P&L, and tune shrinkage + thresholds from actual history.
+- Search currently uses DuckDuckGo's HTML endpoint for keyless snippet retrieval. This keeps setup simple but is less robust than a paid search API or domain-specific feeds.
+- The local task/group database did not show an active Polymarket scheduled task or a Polymarket-enabled registered group at the time of inspection.
 - If an existing OneCLI install uses Anthropic API keys, ensure `.env` contains `ANTHROPIC_AUTH_MODE=api-key`; OAuth-based installs should use `ANTHROPIC_AUTH_MODE=oauth`.
 - Generic third-party API env vars such as `OPENAI_API_KEY` are still service-specific and are not automatically safe to migrate to OneCLI without code changes in the consuming integration.
 - Calendar morning briefing: user needs to (1) add `CONTAINER_SECRET_PROTON_ICAL_URL=<url>` to `.env`, (2) restart the service, (3) tell the assistant `@Andy every day at 7am, run the calendar morning briefing using the calendar-morning skill`
