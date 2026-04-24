@@ -25,10 +25,12 @@ Nested `container/skills` repo:
 - `polymarket/test_polymarket_researcher.py` — updated edge-routing tests to require factor research for meaningful/large Haiku edges.
 - `polymarket/SKILL.md`, `polymarket/DOCS.md` — document the strengthened methodology, risk-adjusted math, token controls, and learning/history loop.
 - `polymarket/SKILL.md`, `polymarket/DOCS.md` — document factor-based research, research triggers, evidence adjudication, and search budget caps.
+- `polymarket/DOCS.md` — added a durable future-improvement roadmap covering outcome ingestion, calibration, domain adapters, live odds recheck, category-aware decomposition, evidence quality, portfolio controls, watchlists, resolution audits, and execution feedback.
 
 ## Commands run
 - `python3 -m pytest container/skills/polymarket/ -v`
 - `python3 -m py_compile container/skills/polymarket/polymarket_researcher.py`
+- `python3 -m pytest container/skills/polymarket/ -v`
 
 ## Test/lint status
 - Polymarket skill tests passed: 74 tests.
