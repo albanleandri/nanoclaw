@@ -3,7 +3,7 @@
 Use `docs/HANDOFF.local.md` for detailed local notes when available.
 
 ## Current objective
-- Improve the Polymarket researcher skill with decomposition-first web research for plausible edges while preserving token-efficient screening.
+- Make the Polymarket researcher volume ceiling configurable per run while raising the default sweet-spot ceiling to $5,000.
 
 ## Quick context
 - Single Node.js process (`src/index.ts`) routes messages to Claude Agent SDK containers.
@@ -19,6 +19,9 @@ Use `docs/HANDOFF.local.md` for detailed local notes when available.
 ## Files changed (latest) — Polymarket researcher sharpening
 
 Nested `container/skills` repo:
+- `polymarket/polymarket_researcher.py` — raises default `MAX_VOLUME` to `$5,000`, adds `--max-volume`/`--volume-ceiling` and prompt/env ceiling parsing, and treats explicit ceilings as hard caps for recent and non-recent markets.
+- `polymarket/test_polymarket_researcher.py` — covers amount parsing, prompt extraction, default `$5,000` behavior, and custom hard-cap filtering.
+- `polymarket/SKILL.md`, `polymarket/DOCS.md` — document per-run ceiling prompts and the new default.
 - `polymarket/polymarket_researcher.py` — adds a crowd-inefficiency prior, caps cold AI evaluations per scan, excludes very high-volume recent markets, shrinks AI probabilities toward market odds for ranking/sizing, reports risk-adjusted EV/Kelly, and appends positive evaluations to `evaluation_history`.
 - `polymarket/polymarket_researcher.py` — now routes meaningful Haiku edges through factor decomposition, targeted snippet search, and Sonnet evidence adjudication before final probability/EV/Kelly.
 - `polymarket/test_polymarket_researcher.py` — covers conservative shrinkage, recent-volume cap, candidate prioritization, and AI-evaluation deferral.
@@ -28,13 +31,20 @@ Nested `container/skills` repo:
 - `polymarket/DOCS.md` — added a durable future-improvement roadmap covering outcome ingestion, calibration, domain adapters, live odds recheck, category-aware decomposition, evidence quality, portfolio controls, watchlists, resolution audits, and execution feedback.
 
 ## Commands run
+- `npm run container:build`
+- `npm run service:restart`
+- `npm run service:status`
+- `python3 -m py_compile container/skills/polymarket/polymarket_researcher.py`
+- `python3 -m pytest container/skills/polymarket/ -v`
 - `python3 -m pytest container/skills/polymarket/ -v`
 - `python3 -m py_compile container/skills/polymarket/polymarket_researcher.py`
 - `python3 -m pytest container/skills/polymarket/ -v`
 
 ## Test/lint status
-- Polymarket skill tests passed: 74 tests.
+- Polymarket skill tests passed: 80 tests.
 - Python bytecode compilation passed for `polymarket_researcher.py`.
+- Agent container image rebuilt successfully as `nanoclaw-agent:latest`.
+- `nanoclaw.service` restarted and verified active on 2026-04-26.
 - Full repo `npm test`, `npm run typecheck`, and `npm run lint` were not rerun for this Python/doc-only nested skill change.
 
 ## Context: 2026-04-13 outage
