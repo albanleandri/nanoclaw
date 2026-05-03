@@ -17,6 +17,8 @@ groups/*
 groups/main/*
 groups/global/*
 !groups/main/CLAUDE.md
+!groups/main/GROUP_MANAGEMENT.md
+!groups/main/TASK_SCRIPTS.md
 !groups/global/CLAUDE.md
 
 # Secrets
