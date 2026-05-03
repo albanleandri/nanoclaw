@@ -91,9 +91,10 @@ export async function sendPoolMessage(
   const key = `${groupFolder}:${sender}`;
   let idx = senderBotMap.get(key);
   if (idx === undefined) {
-    idx = pinnedIndex !== undefined
-      ? pinnedIndex % poolApis.length
-      : nextPoolIndex % poolApis.length;
+    idx =
+      pinnedIndex !== undefined
+        ? pinnedIndex % poolApis.length
+        : nextPoolIndex % poolApis.length;
     if (pinnedIndex === undefined) nextPoolIndex++;
     senderBotMap.set(key, idx);
     try {
