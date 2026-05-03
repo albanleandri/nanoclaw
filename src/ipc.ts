@@ -88,6 +88,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.text,
                       data.sender,
                       sourceGroup,
+                      typeof data.botIndex === 'number' ? data.botIndex : undefined,
                     );
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);

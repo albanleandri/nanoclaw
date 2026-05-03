@@ -81,6 +81,7 @@ export async function sendPoolMessage(
   text: string,
   sender: string,
   groupFolder: string,
+  pinnedIndex?: number,
 ): Promise<void> {
   if (poolApis.length === 0) {
     // No pool bots — fall back to main bot (caller handles this)
@@ -90,8 +91,10 @@ export async function sendPoolMessage(
   const key = `${groupFolder}:${sender}`;
   let idx = senderBotMap.get(key);
   if (idx === undefined) {
-    idx = nextPoolIndex % poolApis.length;
-    nextPoolIndex++;
+    idx = pinnedIndex !== undefined
+      ? pinnedIndex % poolApis.length
+      : nextPoolIndex % poolApis.length;
+    if (pinnedIndex === undefined) nextPoolIndex++;
     senderBotMap.set(key, idx);
     try {
       await poolApis[idx].setMyName(sender);

@@ -57,13 +57,22 @@ server.tool(
       .describe(
         'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
       ),
+    bot_index: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        'Pin this message to a specific pool bot by 0-based index (0 = swarm_1, 1 = swarm_2, etc.). Overrides round-robin assignment and persists across restarts.',
+      ),
   },
   async (args) => {
-    const data: Record<string, string | undefined> = {
+    const data: Record<string, string | number | undefined> = {
       type: 'message',
       chatJid,
       text: args.text,
       sender: args.sender || undefined,
+      botIndex: args.bot_index,
       groupFolder,
       timestamp: new Date().toISOString(),
     };
