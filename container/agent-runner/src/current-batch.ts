@@ -26,3 +26,4 @@ export function clearCurrentInReplyTo(): void {
 export function getCurrentInReplyTo(): string | null {
   return currentInReplyTo;
 }
+
