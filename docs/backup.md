@@ -15,14 +15,14 @@ NanoClaw automatically backs up its databases and configuration to a local direc
     polymarket_cache.db      ← Polymarket market data
     stock_screener.db        ← screener results
     tips.db                  ← tips data
-    env                      ← .env (contains credentials — protected)
-    container-env            ← container environment file
     available_groups.json    ← group configuration
     current_tasks.json       ← in-progress task state
     tips_config.json         ← tips service config
     backup.log               ← manifest of this snapshot
   latest -> 2026-05-08T03-00-00Z   ← symlink to most recent
 ```
+
+Credentials (`.env`, container env) are **not** included — recover them from OneCLI Agent Vault after a restore.
 
 The directory is created automatically on first run. To change the location, set `NANOCLAW_BACKUP_DIR` in your environment.
 
@@ -54,11 +54,11 @@ This runs at 03:00 UTC daily. Check the log at `~/nanoclaw-backups/cron.log`.
 | `polymarket_cache.db` | Polymarket market cache |
 | `stock_screener.db` | Screener scan results |
 | `tips.db` | Tips service data |
-| `env` | `.env` file (API keys, bot tokens) |
-| `container-env` | Container environment file |
 | `available_groups.json` | Group definitions |
 | `current_tasks.json` | Active agent task state |
 | `tips_config.json` | Tips service configuration |
+
+**Credentials are intentionally excluded.** `.env` and the container environment file contain API keys and bot tokens — these are managed by OneCLI Agent Vault and should be recovered from there after a restore, not from a backup file.
 
 The databases are backed up using the [better-sqlite3 online backup API](https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#backupdestination-options---promise), which is safe to run while the service is live.
 
@@ -91,9 +91,17 @@ The restore script will:
 
 The pre-restore snapshot is kept so you can undo a bad restore by running restore again pointing to it.
 
-### Step 3 — Verify
+### Step 3 — Re-inject credentials
 
-After restore, confirm the service is healthy:
+Credentials were not included in the backup. After restore, ensure OneCLI Agent Vault is available and re-inject secrets if needed:
+
+```bash
+onecli --help
+```
+
+### Step 4 — Verify
+
+Confirm the service is healthy:
 
 ```bash
 npm run service:status
@@ -111,4 +119,4 @@ The 3 most recent timestamped directories are kept. Older ones are deleted autom
 
 ## Security note
 
-Backup directories are created with `chmod 700` and files with `chmod 600` because they contain API keys and bot tokens from `.env`. Do not change these permissions or store backups in a world-readable location.
+Backup directories are created with `chmod 700` and files with `chmod 600`. Credentials are excluded from backups by design — recover them from OneCLI Agent Vault after a restore.

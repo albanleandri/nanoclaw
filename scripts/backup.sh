@@ -6,13 +6,15 @@
 #
 # What is backed up:
 #   - All SQLite databases (hot-backup via Node, safe while the service is live)
-#   - .env and container env file
 #   - JSON state files (available_groups, current_tasks)
 #   - Tips config
 #
+# Credentials (.env, container env) are intentionally excluded — they are
+# managed by OneCLI Agent Vault and do not need to be in the backup.
+#
 # Backup location (override with NANOCLAW_BACKUP_DIR):
 #   ~/nanoclaw-backups/
-#     <timestamp>/   (chmod 700 — contains credentials)
+#     <timestamp>/   (chmod 700)
 #     latest         (symlink to most recent)
 #
 # Up to 3 backups are kept. The oldest is removed automatically.
@@ -60,8 +62,6 @@ copy_if_exists() {
   fi
 }
 
-copy_if_exists "$PROJECT_ROOT/.env"                                              "env"
-copy_if_exists "$PROJECT_ROOT/data/env/env"                                     "container-env"
 copy_if_exists "$PROJECT_ROOT/data/ipc/telegram_main/available_groups.json"     "available_groups.json"
 copy_if_exists "$PROJECT_ROOT/data/ipc/telegram_main/current_tasks.json"        "current_tasks.json"
 copy_if_exists "$PROJECT_ROOT/groups/telegram_main/tips/config.json"            "tips_config.json"

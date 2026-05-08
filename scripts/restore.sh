@@ -137,8 +137,6 @@ restore_file() {
   fi
 }
 
-restore_file "env"                 "$PROJECT_ROOT/.env"
-restore_file "container-env"       "$PROJECT_ROOT/data/env/env"
 restore_file "available_groups.json" "$PROJECT_ROOT/data/ipc/telegram_main/available_groups.json"
 restore_file "current_tasks.json"  "$PROJECT_ROOT/data/ipc/telegram_main/current_tasks.json"
 restore_file "tips_config.json"    "$PROJECT_ROOT/groups/telegram_main/tips/config.json"
