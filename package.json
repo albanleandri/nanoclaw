@@ -24,7 +24,8 @@
     "test:watch": "vitest",
     "container:build": "bash scripts/build-agent-image.sh",
     "service:restart": "bash scripts/service-restart.sh",
-    "service:status": "bash scripts/service-status.sh"
+    "service:status": "bash scripts/service-status.sh",
+    "backup": "bash scripts/backup.sh"
   },
   "dependencies": {
     "@onecli-sh/sdk": "^0.2.0",
