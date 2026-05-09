@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { sanitizeTelegramText } from './telegram.js';
 
 // vi.hoisted runs before vi.mock factories, making createdApis available inside the factory
 const { createdApis } = vi.hoisted(() => {
@@ -160,5 +161,60 @@ describe('sendPoolMessage', () => {
     await send('tg:123', 'msg1', 'Alice', 'grp');
     await send('tg:123', 'msg2', 'Alice', 'grp');
     expect(createdApis[0].setMyName).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sanitizeTelegramText', () => {
+  it('converts double-asterisk bold to single-asterisk', () => {
+    expect(sanitizeTelegramText('**bold**')).toBe('*bold*');
+  });
+
+  it('converts double-underscore italic to single-underscore', () => {
+    expect(sanitizeTelegramText('__italic__')).toBe('_italic_');
+  });
+
+  it('strips ## header prefixes leaving the text', () => {
+    expect(sanitizeTelegramText('## Header')).toBe('Header');
+  });
+
+  it('strips ### and deeper header prefixes', () => {
+    expect(sanitizeTelegramText('### Deep header')).toBe('Deep header');
+  });
+
+  it('removes --- horizontal rule lines entirely', () => {
+    expect(sanitizeTelegramText('before\n---\nafter')).toBe('before\nafter');
+  });
+
+  it('strips code fence markers preserving the content inside', () => {
+    expect(sanitizeTelegramText('```\ncode here\n```')).toBe('code here\n');
+  });
+
+  it('strips language-tagged code fence openers', () => {
+    expect(sanitizeTelegramText('```python\nprint("hi")\n```')).toBe(
+      'print("hi")\n',
+    );
+  });
+
+  it('collapses 3 consecutive blank lines to 2', () => {
+    expect(sanitizeTelegramText('a\n\n\n\nb')).toBe('a\n\n\nb');
+  });
+
+  it('collapses 4 consecutive blank lines to 2', () => {
+    expect(sanitizeTelegramText('a\n\n\n\n\nb')).toBe('a\n\n\nb');
+  });
+
+  it('leaves 1 and 2 consecutive blank lines unchanged', () => {
+    expect(sanitizeTelegramText('a\n\nb')).toBe('a\n\nb');
+    expect(sanitizeTelegramText('a\n\n\nb')).toBe('a\n\n\nb');
+  });
+
+  it('handles combined patterns in one pass', () => {
+    const input = '## Title\n**bold** and __italic__\n---\n```\ncode\n```';
+    const expected = 'Title\n*bold* and _italic_\ncode\n';
+    expect(sanitizeTelegramText(input)).toBe(expected);
+  });
+
+  it('returns plain text unchanged', () => {
+    expect(sanitizeTelegramText('hello world')).toBe('hello world');
   });
 });

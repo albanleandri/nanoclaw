@@ -19,6 +19,20 @@ export interface TelegramChannelOpts {
 }
 
 /**
+ * Normalize agent Markdown output to Telegram Markdown v1 before sending.
+ * Agents produce GitHub-flavoured Markdown; Telegram uses a strict subset.
+ */
+export function sanitizeTelegramText(text: string): string {
+  return text
+    .replace(/\*\*/g, '*')
+    .replace(/_{2}/g, '_')
+    .replace(/^#{2,}\s*/gm, '')
+    .replace(/^[ \t]*---+[ \t]*\n?/gm, '')
+    .replace(/^```[^\n]*\n?/gm, '')
+    .replace(/\n{4,}/g, '\n\n\n');
+}
+
+/**
  * Send a message with Telegram Markdown parse mode, falling back to plain text.
  * Claude's output naturally matches Telegram's Markdown v1 format:
  *   *bold*, _italic_, `code`, ```code blocks```, [links](url)
@@ -29,15 +43,16 @@ async function sendTelegramMessage(
   text: string,
   options: { message_thread_id?: number } = {},
 ): Promise<void> {
+  const sanitized = sanitizeTelegramText(text);
   try {
-    await api.sendMessage(chatId, text, {
+    await api.sendMessage(chatId, sanitized, {
       ...options,
       parse_mode: 'Markdown',
     });
   } catch (err) {
     // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    await api.sendMessage(chatId, text, options);
+    await api.sendMessage(chatId, sanitized, options);
   }
 }
 
