@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { sanitizeTelegramText } from './telegram.js';
+import { sanitizeTelegramText, splitAtBoundary } from './telegram.js';
 
 // vi.hoisted runs before vi.mock factories, making createdApis available inside the factory
 const { createdApis } = vi.hoisted(() => {
@@ -216,5 +216,79 @@ describe('sanitizeTelegramText', () => {
 
   it('returns plain text unchanged', () => {
     expect(sanitizeTelegramText('hello world')).toBe('hello world');
+  });
+});
+
+describe('splitAtBoundary', () => {
+  it('returns the text as single element when under the limit', () => {
+    expect(splitAtBoundary('hello world', 100)).toEqual(['hello world']);
+  });
+
+  it('returns the text as single element when exactly at the limit', () => {
+    const text = 'a'.repeat(100);
+    expect(splitAtBoundary(text, 100)).toEqual([text]);
+  });
+
+  it('splits at a paragraph boundary (\\n\\n) before the limit', () => {
+    const part1 = 'a'.repeat(3000) + '\n\n';
+    const part2 = 'b'.repeat(2000);
+    expect(splitAtBoundary(part1 + part2, 4096)).toEqual([part1, part2]);
+  });
+
+  it('splits at a line boundary (\\n) when no paragraph break fits before the limit', () => {
+    const part1 = 'a'.repeat(3000) + '\n';
+    const part2 = 'b'.repeat(2000); // no \n\n anywhere
+    expect(splitAtBoundary(part1 + part2, 4096)).toEqual([part1, part2]);
+  });
+
+  it('splits at a word boundary (space) when no newline fits before the limit', () => {
+    const part1 = 'a'.repeat(3000) + ' ';
+    const part2 = 'b'.repeat(2000);
+    expect(splitAtBoundary(part1 + part2, 4096)).toEqual([part1, part2]);
+  });
+
+  it('falls back to hard character split when no boundary exists in the window', () => {
+    const text = 'a'.repeat(5000);
+    expect(splitAtBoundary(text, 4096)).toEqual([
+      'a'.repeat(4096),
+      'a'.repeat(904),
+    ]);
+  });
+
+  it('produces multiple chunks when text requires more than one split', () => {
+    // part1 = 3002 chars; part2 = 4002 chars; part3 = 500 chars
+    // After first split: remaining = part2+part3 = 4502 > 4096 → needs second split
+    const part1 = 'a'.repeat(3000) + '\n\n';
+    const part2 = 'b'.repeat(4000) + '\n\n';
+    const part3 = 'c'.repeat(500);
+    const result = splitAtBoundary(part1 + part2 + part3, 4096);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toBe(part1);
+    expect(result[1]).toBe(part2);
+    expect(result[2]).toBe(part3);
+  });
+
+  it('never produces a chunk exceeding the limit', () => {
+    // Simulate a real long report with paragraph breaks scattered throughout
+    const text =
+      'Intro paragraph.\n\n' +
+      'x'.repeat(3800) +
+      '\n\nSection two content.\n\n' +
+      'y'.repeat(3600) +
+      '\n\nFinal section.';
+    const chunks = splitAtBoundary(text, 4096);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(4096);
+    }
+  });
+
+  it('rejoining chunks reconstructs the original text exactly', () => {
+    const original =
+      'First part.\n\n' +
+      'x'.repeat(3800) +
+      '\n\nSecond part.\n\n' +
+      'y'.repeat(1000);
+    const chunks = splitAtBoundary(original, 4096);
+    expect(chunks.join('')).toBe(original);
   });
 });

@@ -19,6 +19,43 @@ export interface TelegramChannelOpts {
 }
 
 /**
+ * Split text into chunks no larger than maxLength, preferring paragraph, line,
+ * or word boundaries over arbitrary character splits to keep Markdown balanced.
+ */
+export function splitAtBoundary(text: string, maxLength: number): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxLength) {
+    const paraBreak = remaining.lastIndexOf('\n\n', maxLength);
+    if (paraBreak > 0) {
+      chunks.push(remaining.slice(0, paraBreak + 2));
+      remaining = remaining.slice(paraBreak + 2);
+      continue;
+    }
+    const lineBreak = remaining.lastIndexOf('\n', maxLength);
+    if (lineBreak > 0) {
+      chunks.push(remaining.slice(0, lineBreak + 1));
+      remaining = remaining.slice(lineBreak + 1);
+      continue;
+    }
+    const wordBreak = remaining.lastIndexOf(' ', maxLength);
+    if (wordBreak > 0) {
+      chunks.push(remaining.slice(0, wordBreak + 1));
+      remaining = remaining.slice(wordBreak + 1);
+      continue;
+    }
+    chunks.push(remaining.slice(0, maxLength));
+    remaining = remaining.slice(maxLength);
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
+
+/**
  * Normalize agent Markdown output to Telegram Markdown v1 before sending.
  * Agents produce GitHub-flavoured Markdown; Telegram uses a strict subset.
  */
@@ -130,17 +167,8 @@ export async function sendPoolMessage(
   const api = poolApis[idx];
   try {
     const numericId = chatId.replace(/^tg:/, '');
-    const MAX_LENGTH = 4096;
-    if (text.length <= MAX_LENGTH) {
-      await sendTelegramMessage(api, numericId, text);
-    } else {
-      for (let i = 0; i < text.length; i += MAX_LENGTH) {
-        await sendTelegramMessage(
-          api,
-          numericId,
-          text.slice(i, i + MAX_LENGTH),
-        );
-      }
+    for (const chunk of splitAtBoundary(text, 4096)) {
+      await sendTelegramMessage(api, numericId, chunk);
     }
     logger.info(
       { chatId, sender, poolIndex: idx, length: text.length },
@@ -355,19 +383,8 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-
-      // Telegram has a 4096 character limit per message — split if needed
-      const MAX_LENGTH = 4096;
-      if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text);
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await sendTelegramMessage(
-            this.bot.api,
-            numericId,
-            text.slice(i, i + MAX_LENGTH),
-          );
-        }
+      for (const chunk of splitAtBoundary(text, 4096)) {
+        await sendTelegramMessage(this.bot.api, numericId, chunk);
       }
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
