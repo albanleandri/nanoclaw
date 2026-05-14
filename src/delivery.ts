@@ -24,6 +24,7 @@ import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
+import { hasPoolBots, deliverViaPool } from './channels/telegram-pool.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
 
@@ -352,6 +353,21 @@ async function deliverMessage(
     Array.isArray(content.files) && content.files.length > 0
       ? readOutboxFiles(session.agent_group_id, session.id, msg.id, content.files as string[])
       : undefined;
+
+  // Route Telegram messages through pool bots only when the message explicitly
+  // requests a specific identity via `sender` or `bot_index`. Plain conversational
+  // replies go through the main bot — pool bots are for agent-swarm / scheduled tasks
+  // that need a distinct sender identity.
+  if (
+    msg.channel_type === 'telegram' &&
+    msg.platform_id &&
+    hasPoolBots() &&
+    msg.kind !== 'system' &&
+    (typeof content.sender === 'string' || typeof content.bot_index === 'number')
+  ) {
+    const poolMsgId = await deliverViaPool(session.agent_group_id, msg.platform_id, content);
+    if (poolMsgId !== undefined) return poolMsgId;
+  }
 
   const platformMsgId = await deliveryAdapter.deliver(
     msg.channel_type,
