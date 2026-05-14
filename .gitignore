@@ -19,6 +19,8 @@ groups/*
 **/CLAUDE.local.md
 # Local handoff notes (may contain personal context)
 docs/HANDOFF.local.md
+# Work artifacts (plans, specs, etc.) generated during sessions — ephemeral, not tracked
+docs/superpowers/
 **/.claude-shared.md
 **/.claude-fragments/
 
