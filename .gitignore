@@ -43,3 +43,6 @@ docs/superpowers/
 .nanoclaw/
 
 agents-sdk-docs
+
+# Coverage output
+coverage/

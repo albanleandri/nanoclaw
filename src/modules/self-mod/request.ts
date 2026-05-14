@@ -40,13 +40,13 @@ export async function handleInstallPackages(content: Record<string, unknown>, se
     return;
   }
   const invalidApt = apt.find((p) => !APT_RE.test(p));
-  if (invalidApt) {
+  if (invalidApt !== undefined) {
     notifyAgent(session, `install_packages failed: invalid apt package name "${invalidApt}".`);
     log.warn('install_packages: invalid apt package rejected', { pkg: invalidApt });
     return;
   }
   const invalidNpm = npm.find((p) => !NPM_RE.test(p));
-  if (invalidNpm) {
+  if (invalidNpm !== undefined) {
     notifyAgent(session, `install_packages failed: invalid npm package name "${invalidNpm}".`);
     log.warn('install_packages: invalid npm package rejected', { pkg: invalidNpm });
     return;
