@@ -61,19 +61,16 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
     : {};
   const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
 
-  // Skill fragments — every skill that ships an `instructions.md`.
-  // TODO (shared-source refactor): respect `container.json` skill selection.
-  const skillsHostDir = path.join(process.cwd(), 'container', 'skills');
-  if (fs.existsSync(skillsHostDir)) {
-    for (const skillName of fs.readdirSync(skillsHostDir)) {
-      const hostFragment = path.join(skillsHostDir, skillName, 'instructions.md');
-      if (fs.existsSync(hostFragment)) {
-        desired.set(`skill-${skillName}.md`, {
-          type: 'symlink',
-          content: `${SHARED_SKILLS_CONTAINER_BASE}/${skillName}/instructions.md`,
-        });
-      }
-    }
+  // Skill fragments — only for skills selected in container_configs.skills.
+  // The actual runtime skill symlinks are synced from the same selection in
+  // container-runner.ts; keeping instructions aligned prevents the agent from
+  // being taught about skills it cannot load.
+  const selectedSkills = parseSkillSelection(configRow?.skills);
+  for (const fragment of collectSkillInstructionFragments(process.cwd(), selectedSkills)) {
+    desired.set(`skill-${fragment.name}.md`, {
+      type: 'symlink',
+      content: fragment.containerPath,
+    });
   }
 
   // Built-in module fragments — every MCP tool source file that ships a
@@ -208,4 +205,77 @@ function writeAtomic(filePath: string, content: string): void {
   const tmp = `${filePath}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, filePath);
+}
+
+type SkillSelection = string[] | 'all';
+
+interface SkillInstructionFragment {
+  name: string;
+  containerPath: string;
+}
+
+function parseSkillSelection(raw: string | undefined): SkillSelection {
+  if (!raw) return 'all';
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === 'all') return 'all';
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+  } catch {
+    /* fall through */
+  }
+  return 'all';
+}
+
+/**
+ * Discover selected skill instruction fragments. Built-in skills live under
+ * container/skills/<name>; custom skills under container/skills/custom/<name>.
+ * Custom wins on name collision, matching container-runner.ts symlink sync.
+ */
+export function collectSkillInstructionFragments(
+  projectRoot: string,
+  selection: SkillSelection,
+): SkillInstructionFragment[] {
+  const sharedSkillsDir = path.join(projectRoot, 'container', 'skills');
+  const customSkillsDir = path.join(sharedSkillsDir, 'custom');
+  const available = new Map<string, SkillInstructionFragment>();
+
+  function addSkill(name: string, hostDir: string, containerBase: string): void {
+    const hostFragment = path.join(hostDir, name, 'instructions.md');
+    if (!fs.existsSync(hostFragment)) return;
+    available.set(name, {
+      name,
+      containerPath: `${containerBase}/${name}/instructions.md`,
+    });
+  }
+
+  if (fs.existsSync(sharedSkillsDir)) {
+    for (const entry of fs.readdirSync(sharedSkillsDir)) {
+      if (entry === 'custom') continue;
+      try {
+        if (fs.statSync(path.join(sharedSkillsDir, entry)).isDirectory()) {
+          addSkill(entry, sharedSkillsDir, SHARED_SKILLS_CONTAINER_BASE);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  if (fs.existsSync(customSkillsDir)) {
+    for (const entry of fs.readdirSync(customSkillsDir)) {
+      try {
+        if (fs.statSync(path.join(customSkillsDir, entry)).isDirectory()) {
+          addSkill(entry, customSkillsDir, `${SHARED_SKILLS_CONTAINER_BASE}/custom`);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  const names = selection === 'all' ? [...available.keys()] : selection;
+  return names
+    .map((name) => available.get(name))
+    .filter((fragment): fragment is SkillInstructionFragment => fragment !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
