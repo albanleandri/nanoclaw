@@ -51,10 +51,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         tini \
         unzip \
+        python3 \
+        python3-pip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
     && rm -rf /var/lib/apt/lists/*
+
+# ---- Python financial data packages ------------------------------------------
+# yfinance: Yahoo Finance data. curl_cffi: anti-bot HTTP for Yahoo Finance.
+# financedatabase: security metadata. pandas: data manipulation.
+RUN pip3 install --break-system-packages \
+    requests anthropic yfinance pandas financedatabase curl_cffi
 
 # Chromium path for agent-browser / Playwright consumers
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium

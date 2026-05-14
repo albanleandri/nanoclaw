@@ -104,6 +104,14 @@ export const sendMessage: McpToolDefinition = {
           description: 'Destination name (e.g., "family", "worker-1"). Optional if you have only one destination.',
         },
         text: { type: 'string', description: 'Message content' },
+        sender: {
+          type: 'string',
+          description: 'Agent identity to show in Telegram (uses a pool bot renamed to this value). Optional.',
+        },
+        bot_index: {
+          type: 'number',
+          description: 'Pin to a specific pool bot by 0-based index. Overrides automatic assignment. Optional.',
+        },
       },
       required: ['text'],
     },
@@ -116,6 +124,10 @@ export const sendMessage: McpToolDefinition = {
     if ('error' in routing) return err(routing.error);
 
     const id = generateId();
+    const contentObj: Record<string, unknown> = { text };
+    if (args.sender !== undefined) contentObj.sender = args.sender as string;
+    if (args.bot_index !== undefined) contentObj.bot_index = args.bot_index as number;
+
     const seq = writeMessageOut({
       id,
       in_reply_to: getCurrentInReplyTo(),
@@ -123,7 +135,7 @@ export const sendMessage: McpToolDefinition = {
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
       thread_id: routing.thread_id,
-      content: JSON.stringify({ text }),
+      content: JSON.stringify(contentObj),
     });
 
     log(`send_message: #${seq} → ${routing.resolvedName}`);

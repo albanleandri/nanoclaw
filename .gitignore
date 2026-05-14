@@ -17,6 +17,8 @@ groups/*
 # Composer-managed CLAUDE.md artifacts (regenerated every spawn) and
 # per-group memory (CLAUDE.local.md) must never be committed.
 **/CLAUDE.local.md
+# Local handoff notes (may contain personal context)
+docs/HANDOFF.local.md
 **/.claude-shared.md
 **/.claude-fragments/
 
