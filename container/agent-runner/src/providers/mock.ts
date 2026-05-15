@@ -9,9 +9,15 @@ export class MockProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
 
   private responseFactory: (prompt: string) => string;
+  private quotaError: boolean;
 
-  constructor(_options: ProviderOptions = {}, responseFactory?: (prompt: string) => string) {
+  constructor(
+    _options: ProviderOptions = {},
+    responseFactory?: (prompt: string) => string,
+    quotaError = false,
+  ) {
     this.responseFactory = responseFactory ?? ((prompt) => `Mock response to: ${prompt.slice(0, 100)}`);
+    this.quotaError = quotaError;
   }
 
   isSessionInvalid(_err: unknown): boolean {
@@ -25,10 +31,17 @@ export class MockProvider implements AgentProvider {
     let aborted = false;
     const responseFactory = this.responseFactory;
 
+    const quotaError = this.quotaError;
     const events: AsyncIterable<ProviderEvent> = {
       async *[Symbol.asyncIterator]() {
         yield { type: 'activity' };
         yield { type: 'init', continuation: `mock-session-${Date.now()}` };
+
+        if (quotaError) {
+          yield { type: 'activity' };
+          yield { type: 'error', message: 'Rate limit', retryable: false, classification: 'quota' };
+          return;
+        }
 
         // Process initial prompt
         yield { type: 'activity' };
