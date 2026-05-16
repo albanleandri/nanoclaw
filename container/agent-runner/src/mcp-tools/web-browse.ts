@@ -121,22 +121,8 @@ export async function browseWebHandler(args: {
       const snapshot = await $`agent-browser snapshot -c`.nothrow().text();
       await $`agent-browser close`.nothrow().quiet();
 
-      const { clean, flagged } = sanitize(snapshot);
-
-      const fields: Record<string, string> = {};
-      fields.content = clean;
-      if (fieldsToExtract.includes('summary')) {
-        fields.summary = clean.slice(0, 1200).trim();
-      }
-
-      const result: Record<string, unknown> = { url, domain, trusted, fields };
-      if (flagged.length > 0) {
-        result.flagged = `Injection patterns detected and removed: ${flagged.join('; ')}`;
-        log(`flagged injection patterns at ${url}: ${flagged.join(', ')}`);
-      }
-
-      log(`done url=${url} snapshot_len=${snapshot.length} flagged=${flagged.length}`);
-      return ok(JSON.stringify(result, null, 2));
+      log(`done url=${url} snapshot_len=${snapshot.length}`);
+      return buildBrowseResult(url, domain, trusted, snapshot, fieldsToExtract);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log(`error url=${url}: ${msg}`);
@@ -144,4 +130,32 @@ export async function browseWebHandler(args: {
       return err(`Failed to browse ${url}: ${msg}`);
     }
   });
+}
+
+/**
+ * Build the structured MCP response from a raw browser snapshot.
+ * Pure function — no I/O. Exported for testing.
+ */
+export function buildBrowseResult(
+  url: string,
+  domain: string,
+  trusted: boolean,
+  snapshot: string,
+  fieldsToExtract: string[],
+) {
+  const { clean, flagged } = sanitize(snapshot);
+
+  const fields: Record<string, string> = {};
+  fields.content = clean;
+  if (fieldsToExtract.includes('summary')) {
+    fields.summary = clean.slice(0, 1200).trim();
+  }
+
+  const result: Record<string, unknown> = { url, domain, trusted, fields };
+  if (flagged.length > 0) {
+    result.flagged = `Injection patterns detected and removed: ${flagged.join('; ')}`;
+    log(`flagged injection patterns at ${url}: ${flagged.join(', ')}`);
+  }
+
+  return ok(JSON.stringify(result, null, 2));
 }
