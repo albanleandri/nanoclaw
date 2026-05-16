@@ -355,15 +355,15 @@ async function deliverMessage(
       : undefined;
 
   // Route Telegram messages through pool bots only when the message explicitly
-  // requests a specific identity via `sender` or `bot_index`. Plain conversational
-  // replies go through the main bot — pool bots are for agent-swarm / scheduled tasks
-  // that need a distinct sender identity.
+  // requests a specific bot via `bot_index`. Plain conversational replies and messages
+  // with only a `sender` label go through the main bot — callers must pin a specific
+  // pool slot; discovery-by-sender is intentionally not supported.
   if (
     msg.channel_type === 'telegram' &&
     msg.platform_id &&
     hasPoolBots() &&
     msg.kind !== 'system' &&
-    (typeof content.sender === 'string' || typeof content.bot_index === 'number')
+    typeof content.bot_index === 'number'
   ) {
     const poolMsgId = await deliverViaPool(session.agent_group_id, msg.platform_id, content);
     if (poolMsgId !== undefined) return poolMsgId;

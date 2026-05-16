@@ -76,12 +76,13 @@ export function hasPoolBots(): boolean {
 /**
  * Deliver a message via a pool bot assigned to the given agent group.
  *
- * Bot selection priority:
- *   1. Explicit `bot_index` in content JSON — pinned to that slot (no rename).
- *   2. `sender` in content JSON — assigned per sender name (stable), bot renamed on first use.
- *   3. `agentGroupId` — fallback, assigned per agent group (stable), bot renamed on first use.
+ * Callers MUST supply an explicit `bot_index` in `parsedContent`. Without it the
+ * function falls back to round-robin per sender/group, which is non-persistent
+ * across restarts and produces inconsistent identities. The delivery.ts guard
+ * enforces this: it only calls this function when `bot_index` is a number.
  *
- * Returns the first message ID on success, undefined if pool is not configured.
+ * Returns the first message ID on success, undefined if pool is not configured
+ * or if the content has no text.
  */
 export async function deliverViaPool(
   agentGroupId: string,
@@ -107,22 +108,11 @@ export async function deliverViaPool(
       existing = nextPoolIndex % poolBots.length;
       nextPoolIndex++;
       agentBotMap.set(assignmentKey, existing);
-
-      // Rename the bot to match the sender/agent identity on first assignment.
-      const displayName = sender ?? agentGroupId;
-      const bot = poolBots[existing];
-      try {
-        await tgFetch(bot.token, 'setMyName', { name: displayName });
-        await new Promise((r) => setTimeout(r, 2000));
-        log.info('Pool bot assigned and renamed', {
-          assignmentKey,
-          displayName,
-          poolIndex: existing,
-          bot: bot.username,
-        });
-      } catch (err) {
-        log.warn('Failed to rename pool bot', { assignmentKey, err });
-      }
+      log.info('Pool bot assigned', {
+        assignmentKey,
+        poolIndex: existing,
+        bot: poolBots[existing].username,
+      });
     }
     idx = existing;
   }
