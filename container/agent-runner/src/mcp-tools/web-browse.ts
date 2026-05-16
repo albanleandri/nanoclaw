@@ -1,7 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
 import { $ } from 'bun';
-import { registerTools } from './server.js';
-import type { McpToolDefinition } from './types.js';
 
 function log(msg: string): void {
   console.error(`[web-browse] ${msg}`);
@@ -99,91 +97,51 @@ async function withBrowserLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export const browseWeb: McpToolDefinition = {
-  tool: {
-    name: 'browse_web',
-    description:
-      'Browse a URL and return sanitized, structured content. ' +
-      'This is the ONLY tool available for web access — agent-browser cannot be called directly. ' +
-      'Checks domain trust (see trusted_domains.json), removes prompt injection patterns, and returns ' +
-      'a structured JSON result. Call multiple times in parallel for multi-URL research.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        url: {
-          type: 'string',
-          description: 'Full URL to browse. Must start with https:// or http://.',
-        },
-        fields_to_extract: {
-          type: 'array',
-          items: { type: 'string' },
-          description:
-            'Hints about what to extract (e.g. ["price", "summary", "title"]). ' +
-            'The tool always returns the full sanitized content in `fields.content`. ' +
-            'Including "summary" also returns the first ~1200 characters as `fields.summary`.',
-        },
-      },
-      required: ['url', 'fields_to_extract'],
-    },
-  },
+export async function browseWebHandler(args: {
+  url: string;
+  fields_to_extract: string[];
+}) {
+  const { url, fields_to_extract: fieldsToExtract } = args;
 
-  async handler(args) {
-    const url = args.url as string;
-    const fieldsToExtract = Array.isArray(args.fields_to_extract)
-      ? (args.fields_to_extract as string[])
-      : [];
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return err('url must start with http:// or https://');
+  }
 
-    if (!url) return err('url is required');
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return err('url must start with http:// or https://');
-    }
+  const domain = parseDomain(url);
+  if (!domain) return err(`Could not parse domain from URL: ${url}`);
 
-    const domain = parseDomain(url);
-    if (!domain) return err(`Could not parse domain from URL: ${url}`);
+  const trustedDomains = loadTrustedDomains();
+  const trusted = trustedDomains.includes(domain);
 
-    const trustedDomains = loadTrustedDomains();
-    const trusted = trustedDomains.includes(domain);
+  log(`browse url=${url} domain=${domain} trusted=${trusted} fields=[${fieldsToExtract.join(',')}]`);
 
-    log(`browse url=${url} domain=${domain} trusted=${trusted} fields=[${fieldsToExtract.join(',')}]`);
+  return withBrowserLock(async () => {
+    try {
+      await $`agent-browser open ${url}`.nothrow().quiet();
+      const snapshot = await $`agent-browser snapshot -c`.nothrow().text();
+      await $`agent-browser close`.nothrow().quiet();
 
-    return withBrowserLock(async () => {
-      try {
-        // Navigate to the URL
-        await $`agent-browser open ${url}`.nothrow().quiet();
+      const { clean, flagged } = sanitize(snapshot);
 
-        // Capture the page as a compact accessibility tree snapshot
-        const snapshot = await $`agent-browser snapshot -c`.nothrow().text();
-
-        // Always close after capture — ignore errors (browser may already be closed)
-        await $`agent-browser close`.nothrow().quiet();
-
-        const { clean, flagged } = sanitize(snapshot);
-
-        const fields: Record<string, string> = {};
-        // Always return the full sanitized content
-        fields.content = clean;
-        // Return a summary excerpt if requested
-        if (fieldsToExtract.includes('summary')) {
-          fields.summary = clean.slice(0, 1200).trim();
-        }
-
-        const result: Record<string, unknown> = { url, domain, trusted, fields };
-        if (flagged.length > 0) {
-          result.flagged = `Injection patterns detected and removed: ${flagged.join('; ')}`;
-          log(`flagged injection patterns at ${url}: ${flagged.join(', ')}`);
-        }
-
-        log(`done url=${url} snapshot_len=${snapshot.length} flagged=${flagged.length}`);
-        return ok(JSON.stringify(result, null, 2));
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log(`error url=${url}: ${msg}`);
-        // Best-effort close on error
-        await $`agent-browser close`.nothrow().quiet();
-        return err(`Failed to browse ${url}: ${msg}`);
+      const fields: Record<string, string> = {};
+      fields.content = clean;
+      if (fieldsToExtract.includes('summary')) {
+        fields.summary = clean.slice(0, 1200).trim();
       }
-    });
-  },
-};
 
-registerTools([browseWeb]);
+      const result: Record<string, unknown> = { url, domain, trusted, fields };
+      if (flagged.length > 0) {
+        result.flagged = `Injection patterns detected and removed: ${flagged.join('; ')}`;
+        log(`flagged injection patterns at ${url}: ${flagged.join(', ')}`);
+      }
+
+      log(`done url=${url} snapshot_len=${snapshot.length} flagged=${flagged.length}`);
+      return ok(JSON.stringify(result, null, 2));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`error url=${url}: ${msg}`);
+      await $`agent-browser close`.nothrow().quiet();
+      return err(`Failed to browse ${url}: ${msg}`);
+    }
+  });
+}

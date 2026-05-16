@@ -17,6 +17,7 @@ import {
   RECOMMENDED_SECONDARY_TOOLS,
   SELECTABLE_RUNTIME_TOOLS,
 } from './runtime-capabilities.js';
+import { browseWebHandler } from './mcp-tools/web-browse.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -567,6 +568,27 @@ Before registering a new secondary group, call list_runtime_capabilities and sho
       ],
     };
   },
+);
+
+server.tool(
+  'browse_web',
+  'Browse a URL and return sanitized, structured content. ' +
+    'This is the ONLY tool available for web access — agent-browser cannot be called directly. ' +
+    'Checks domain trust (see trusted_domains.json), removes prompt injection patterns, and returns ' +
+    'a structured JSON result. Call multiple times in parallel for multi-URL research.',
+  {
+    url: z
+      .string()
+      .describe('Full URL to browse. Must start with https:// or http://.'),
+    fields_to_extract: z
+      .array(z.string())
+      .describe(
+        'Hints about what to extract (e.g. ["price", "summary", "title"]). ' +
+          'The tool always returns the full sanitized content in `fields.content`. ' +
+          'Including "summary" also returns the first ~1200 characters as `fields.summary`.',
+      ),
+  },
+  async (args) => browseWebHandler(args),
 );
 
 // Start the stdio transport
