@@ -357,6 +357,49 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
 
+    this.bot.on('poll_answer', (ctx) => {
+      const { poll_id, option_ids, user } = (ctx as any).pollAnswer;
+      const pending = this.pendingPolls.get(poll_id);
+      if (!pending) return;
+      this.pendingPolls.delete(poll_id);
+      const { chatJid, options } = pending;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+      const selected = option_ids.map((i: number) => options[i]).join(', ');
+      this.opts.onMessage(chatJid, {
+        id: `poll-${poll_id}`,
+        chat_jid: chatJid,
+        sender: user.id.toString(),
+        sender_name: user.first_name || 'User',
+        content: `[Poll response: ${selected}]`,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+      });
+      logger.info({ chatJid, pollId: poll_id }, 'Poll answer routed to group');
+    });
+
+    this.bot.on('callback_query:data', async (ctx) => {
+      await (ctx as any).answerCallbackQuery();
+      const msgId = (ctx as any).callbackQuery.message?.message_id;
+      if (msgId === undefined) return;
+      const pending = this.pendingKeyboards.get(msgId);
+      if (!pending) return;
+      this.pendingKeyboards.delete(msgId);
+      const { chatJid } = pending;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+      this.opts.onMessage(chatJid, {
+        id: `btn-${msgId}`,
+        chat_jid: chatJid,
+        sender: (ctx as any).callbackQuery.from.id.toString(),
+        sender_name: (ctx as any).callbackQuery.from.first_name || 'User',
+        content: `[Choice: ${(ctx as any).callbackQuery.data}]`,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+      });
+      logger.info({ chatJid, msgId }, 'Keyboard choice routed to group');
+    });
+
     // Handle errors gracefully
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
