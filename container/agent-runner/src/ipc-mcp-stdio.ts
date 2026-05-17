@@ -85,6 +85,45 @@ server.tool(
 );
 
 server.tool(
+  'ask_user',
+  "Send an interactive question to the user via Telegram. Use multiple=true for checkbox-style multi-select (Telegram poll), or multiple=false for single-tap button selection (inline keyboard). Returns immediately — the user's answer arrives as the next message in the conversation, formatted as '[Poll response: A, B]' or '[Choice: A]'. Telegram polls support 2–10 options maximum.",
+  {
+    question: z.string().describe('The question text shown to the user'),
+    options: z
+      .array(z.string())
+      .min(2)
+      .max(10)
+      .describe('Answer choices — 2 to 10 items'),
+    multiple: z
+      .boolean()
+      .describe(
+        'true = Telegram poll with checkboxes (multi-select); false = inline keyboard buttons (single choice)',
+      ),
+  },
+  async (args) => {
+    const data = {
+      type: 'ask_user',
+      chatJid,
+      question: args.question,
+      options: args.options,
+      multiple: args.multiple,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: "Question sent. The user's answer will arrive as the next message.",
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'list_runtime_capabilities',
   'List the exact runtime tools and skills that can be enabled for a group, with numbered selections and recommended defaults for secondary groups.',
   {},

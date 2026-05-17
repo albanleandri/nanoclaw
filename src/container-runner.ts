@@ -87,6 +87,7 @@ const ALL_RUNTIME_TOOLS = [
   'Skill',
   'NotebookEdit',
   'mcp__nanoclaw__send_message',
+  'mcp__nanoclaw__ask_user',
   'mcp__nanoclaw__schedule_task',
   'mcp__nanoclaw__list_tasks',
   'mcp__nanoclaw__pause_task',
