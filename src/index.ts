@@ -115,10 +115,52 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
-  logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
-    'State loaded',
+  const groupCount = Object.keys(registeredGroups).length;
+  if (groupCount === 0) {
+    logger.warn(
+      'No registered groups — incoming messages will be received but not processed. ' +
+        'Run: npm run setup:step -- register --jid <jid> --name <name> --trigger @Andy --folder <folder> --channel <channel> [--is-main]',
+      'State loaded',
+    );
+    checkGroupFolderIntegrity();
+  } else {
+    logger.info({ groupCount }, 'State loaded');
+  }
+}
+
+export function findUnregisteredGroupFolders(
+  groupsDir: string,
+  registeredFolders: Set<string>,
+): string[] {
+  if (!fs.existsSync(groupsDir)) return [];
+  const SKIP = new Set(['main', 'global']);
+  const unregistered: string[] = [];
+  for (const entry of fs.readdirSync(groupsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const folder = entry.name;
+    if (SKIP.has(folder)) continue;
+    const claudeMd = path.join(groupsDir, folder, 'CLAUDE.md');
+    if (fs.existsSync(claudeMd) && !registeredFolders.has(folder)) {
+      unregistered.push(folder);
+    }
+  }
+  return unregistered;
+}
+
+function checkGroupFolderIntegrity(): void {
+  const registeredFolders = new Set(
+    Object.values(registeredGroups).map((g) => g.folder),
   );
+  for (const folder of findUnregisteredGroupFolders(
+    GROUPS_DIR,
+    registeredFolders,
+  )) {
+    logger.warn(
+      { folder },
+      `Group folder '${folder}' has a CLAUDE.md but is not registered. ` +
+        `Re-register with: npm run setup:step -- register --jid <jid> --name <name> --trigger @Andy --folder ${folder} --channel <channel> [--is-main]`,
+    );
+  }
 }
 
 /**
@@ -906,6 +948,21 @@ async function main(): Promise<void> {
       for (const group of Object.values(registeredGroups)) {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
+    },
+    askUser: async (jid, question, options, multiple) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn({ jid }, 'No channel owns JID, cannot send poll');
+        return;
+      }
+      if (!channel.sendPoll) {
+        logger.warn(
+          { jid, channel: channel.name },
+          'Channel does not support interactive polls',
+        );
+        return;
+      }
+      await channel.sendPoll(jid, question, options, multiple);
     },
   });
   startSessionCleanup();
