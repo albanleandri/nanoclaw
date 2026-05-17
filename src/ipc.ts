@@ -24,6 +24,7 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+  askUser?: (jid: string, question: string, options: string[], multiple: boolean) => Promise<void>;
 }
 
 let ipcWatcherRunning = false;
@@ -103,6 +104,32 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'ask_user' &&
+                data.chatJid &&
+                data.question &&
+                Array.isArray(data.options)
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (isMain || (targetGroup && targetGroup.folder === sourceGroup)) {
+                  if (deps.askUser) {
+                    await deps.askUser(
+                      data.chatJid as string,
+                      data.question as string,
+                      data.options as string[],
+                      Boolean(data.multiple),
+                    );
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC ask_user dispatched',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC ask_user attempt blocked',
                   );
                 }
               }
