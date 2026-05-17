@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { $ } from 'bun';
+import { execFile } from 'child_process';
 
 function log(msg: string): void {
   console.error(`[web-browse] ${msg}`);
@@ -78,6 +78,16 @@ export function sanitize(text: string): { clean: string; flagged: string[] } {
   return { clean, flagged };
 }
 
+// Run an agent-browser subcommand, ignoring non-zero exit codes.
+// Returns stdout as a string (empty on error).
+function runBrowser(args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('agent-browser', args, { timeout: 30_000 }, (_err, stdout) => {
+      resolve(stdout || '');
+    });
+  });
+}
+
 // Module-level promise chain ensures only one agent-browser session runs at a time.
 // agent-browser manages a single browser process per container.
 let browserLock: Promise<void> = Promise.resolve();
@@ -117,16 +127,16 @@ export async function browseWebHandler(args: {
 
   return withBrowserLock(async () => {
     try {
-      await $`agent-browser open ${url}`.nothrow().quiet();
-      const snapshot = await $`agent-browser snapshot -c`.nothrow().text();
-      await $`agent-browser close`.nothrow().quiet();
+      await runBrowser(['open', url]);
+      const snapshot = await runBrowser(['snapshot', '-c']);
+      await runBrowser(['close']);
 
       log(`done url=${url} snapshot_len=${snapshot.length}`);
       return buildBrowseResult(url, domain, trusted, snapshot, fieldsToExtract);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       log(`error url=${url}: ${msg}`);
-      await $`agent-browser close`.nothrow().quiet();
+      await runBrowser(['close']);
       return err(`Failed to browse ${url}: ${msg}`);
     }
   });
