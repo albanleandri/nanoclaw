@@ -101,7 +101,12 @@ export interface Channel {
   syncGroups?(force: boolean): Promise<void>;
   // Optional: send an interactive question via Telegram poll or inline keyboard.
   // Returns after sending; the user's answer arrives as a regular inbound message.
-  sendPoll?(jid: string, question: string, options: string[], multiple: boolean): Promise<void>;
+  sendPoll?(
+    jid: string,
+    question: string,
+    options: string[],
+    multiple: boolean,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

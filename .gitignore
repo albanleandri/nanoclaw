@@ -46,3 +46,4 @@ docs/HANDOFF.local.md
 
 agents-sdk-docs
 .worktrees/
+coverage/

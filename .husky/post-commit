@@ -1,0 +1,10 @@
+#!/bin/sh
+# Push main repo to origin after every commit
+git push origin HEAD:main --quiet \
+  || echo "[post-commit] push to origin failed — run 'git push origin HEAD:main' manually"
+
+# Push submodule only if it has commits ahead of origin/main
+if git -C container/skills/custom log origin/main..HEAD --oneline 2>/dev/null | grep -q .; then
+  git -C container/skills/custom push origin HEAD:main --quiet \
+    || echo "[post-commit] skills submodule push failed — run 'git -C container/skills/custom push origin HEAD:main' manually"
+fi
