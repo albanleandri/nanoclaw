@@ -185,7 +185,10 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
-  private pendingPolls = new Map<string, { chatJid: string; options: string[] }>();
+  private pendingPolls = new Map<
+    string,
+    { chatJid: string; options: string[] }
+  >();
   private pendingKeyboards = new Map<number, { chatJid: string }>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
@@ -418,11 +421,16 @@ export class TelegramChannel implements Channel {
       } else {
         const keyboard = new InlineKeyboard();
         options.forEach((opt) => keyboard.text(opt, opt).row());
-        const msg = await this.bot.api.sendMessage(numericId, question, {
-          reply_markup: keyboard,
-        });
+        const msg = await this.bot.api.sendMessage(
+          numericId,
+          sanitizeTelegramText(question),
+          { reply_markup: keyboard },
+        );
         this.pendingKeyboards.set(msg.message_id, { chatJid: jid });
-        logger.info({ jid, messageId: msg.message_id }, 'Telegram keyboard sent');
+        logger.info(
+          { jid, messageId: msg.message_id },
+          'Telegram keyboard sent',
+        );
       }
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram poll/keyboard');

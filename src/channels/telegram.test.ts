@@ -314,10 +314,16 @@ describe('TelegramChannel.sendPoll', () => {
       }),
       command: vi.fn(),
       catch: vi.fn(),
-      start: vi.fn(({ onStart }: { onStart: (info: { username: string; id: number }) => void }) => {
-        onStart({ username: 'testbot', id: 1 });
-        return Promise.resolve();
-      }),
+      start: vi.fn(
+        ({
+          onStart,
+        }: {
+          onStart: (info: { username: string; id: number }) => void;
+        }) => {
+          onStart({ username: 'testbot', id: 1 });
+          return Promise.resolve();
+        },
+      ),
       stop: vi.fn(),
       _handlers: handlers,
     };
@@ -333,15 +339,25 @@ describe('TelegramChannel.sendPoll', () => {
         this.token = token;
         this.sendMessage = vi.fn().mockResolvedValue({});
         this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi.fn().mockResolvedValue({ username: `bot_${token}`, id: 1 });
+        this.getMe = vi
+          .fn()
+          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
       }
       function BotMock(this: Record<string, unknown>) {
         Object.assign(this, mockBot);
       }
-      return { Api, Bot: BotMock, InlineKeyboard: class InlineKeyboard {
-        text() { return this; }
-        row() { return this; }
-      }};
+      return {
+        Api,
+        Bot: BotMock,
+        InlineKeyboard: class InlineKeyboard {
+          text() {
+            return this;
+          }
+          row() {
+            return this;
+          }
+        },
+      };
     });
     const { TelegramChannel } = await import('./telegram.js');
 
@@ -352,7 +368,12 @@ describe('TelegramChannel.sendPoll', () => {
     });
     await channel.connect();
 
-    await (channel as any).sendPoll('tg:123', 'Which tiers?', ['Large Cap', 'Mid Cap'], true);
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
 
     expect(api.sendPoll).toHaveBeenCalledWith(
       '123',
@@ -360,6 +381,14 @@ describe('TelegramChannel.sendPoll', () => {
       [{ text: 'Large Cap' }, { text: 'Mid Cap' }],
       { is_anonymous: false, allows_multiple_answers: true },
     );
+    const pending = (channel as any).pendingPolls as Map<
+      string,
+      { chatJid: string; options: string[] }
+    >;
+    expect(pending.get('poll-abc')).toEqual({
+      chatJid: 'tg:123',
+      options: ['Large Cap', 'Mid Cap'],
+    });
   });
 
   it('calls api.sendMessage with InlineKeyboard for single-choice', async () => {
@@ -372,15 +401,25 @@ describe('TelegramChannel.sendPoll', () => {
         this.token = token;
         this.sendMessage = vi.fn().mockResolvedValue({});
         this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi.fn().mockResolvedValue({ username: `bot_${token}`, id: 1 });
+        this.getMe = vi
+          .fn()
+          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
       }
       function BotMock(this: Record<string, unknown>) {
         Object.assign(this, mockBot);
       }
-      return { Api, Bot: BotMock, InlineKeyboard: class InlineKeyboard {
-        text() { return this; }
-        row() { return this; }
-      }};
+      return {
+        Api,
+        Bot: BotMock,
+        InlineKeyboard: class InlineKeyboard {
+          text() {
+            return this;
+          }
+          row() {
+            return this;
+          }
+        },
+      };
     });
     const { TelegramChannel } = await import('./telegram.js');
 
@@ -398,5 +437,10 @@ describe('TelegramChannel.sendPoll', () => {
       'Proceed?',
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
+    const pending = (channel as any).pendingKeyboards as Map<
+      number,
+      { chatJid: string }
+    >;
+    expect(pending.get(42)).toEqual({ chatJid: 'tg:456' });
   });
 });
