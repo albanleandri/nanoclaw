@@ -292,3 +292,111 @@ describe('splitAtBoundary', () => {
     expect(chunks.join('')).toBe(original);
   });
 });
+
+describe('TelegramChannel.sendPoll', () => {
+  function makeBotApi() {
+    return {
+      sendPoll: vi.fn().mockResolvedValue({
+        poll: { id: 'poll-abc' },
+        message_id: 10,
+      }),
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 42 }),
+      sendChatAction: vi.fn().mockResolvedValue({}),
+    };
+  }
+
+  function makeMockBot(api: ReturnType<typeof makeBotApi>) {
+    const handlers = new Map<string, (ctx: unknown) => void>();
+    return {
+      api,
+      on: vi.fn((event: string, handler: (ctx: unknown) => void) => {
+        handlers.set(event, handler);
+      }),
+      command: vi.fn(),
+      catch: vi.fn(),
+      start: vi.fn(({ onStart }: { onStart: (info: { username: string; id: number }) => void }) => {
+        onStart({ username: 'testbot', id: 1 });
+        return Promise.resolve();
+      }),
+      stop: vi.fn(),
+      _handlers: handlers,
+    };
+  }
+
+  it('calls api.sendPoll with correct parameters for multiple-choice', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    vi.doMock('grammy', () => {
+      function Api(this: Record<string, unknown>, token: string) {
+        this.token = token;
+        this.sendMessage = vi.fn().mockResolvedValue({});
+        this.setMyName = vi.fn().mockResolvedValue({});
+        this.getMe = vi.fn().mockResolvedValue({ username: `bot_${token}`, id: 1 });
+      }
+      function BotMock(this: Record<string, unknown>) {
+        Object.assign(this, mockBot);
+      }
+      return { Api, Bot: BotMock, InlineKeyboard: class InlineKeyboard {
+        text() { return this; }
+        row() { return this; }
+      }};
+    });
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const channel = new TelegramChannel('test-token', {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll('tg:123', 'Which tiers?', ['Large Cap', 'Mid Cap'], true);
+
+    expect(api.sendPoll).toHaveBeenCalledWith(
+      '123',
+      'Which tiers?',
+      [{ text: 'Large Cap' }, { text: 'Mid Cap' }],
+      { is_anonymous: false, allows_multiple_answers: true },
+    );
+  });
+
+  it('calls api.sendMessage with InlineKeyboard for single-choice', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    vi.doMock('grammy', () => {
+      function Api(this: Record<string, unknown>, token: string) {
+        this.token = token;
+        this.sendMessage = vi.fn().mockResolvedValue({});
+        this.setMyName = vi.fn().mockResolvedValue({});
+        this.getMe = vi.fn().mockResolvedValue({ username: `bot_${token}`, id: 1 });
+      }
+      function BotMock(this: Record<string, unknown>) {
+        Object.assign(this, mockBot);
+      }
+      return { Api, Bot: BotMock, InlineKeyboard: class InlineKeyboard {
+        text() { return this; }
+        row() { return this; }
+      }};
+    });
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const channel = new TelegramChannel('test-token', {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll('tg:456', 'Proceed?', ['Yes', 'No'], false);
+
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      '456',
+      'Proceed?',
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
+  });
+});

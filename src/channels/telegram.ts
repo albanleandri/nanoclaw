@@ -1,5 +1,5 @@
 import https from 'https';
-import { Api, Bot } from 'grammy';
+import { Api, Bot, InlineKeyboard } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -185,6 +185,8 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private pendingPolls = new Map<string, { chatJid: string; options: string[] }>();
+  private pendingKeyboards = new Map<number, { chatJid: string }>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -389,6 +391,41 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendPoll(
+    jid: string,
+    question: string,
+    options: string[],
+    multiple: boolean,
+  ): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+    const numericId = jid.replace(/^tg:/, '');
+    try {
+      if (multiple) {
+        const msg = await this.bot.api.sendPoll(
+          numericId,
+          question,
+          options.map((text) => ({ text })),
+          { is_anonymous: false, allows_multiple_answers: true },
+        );
+        this.pendingPolls.set(msg.poll.id, { chatJid: jid, options });
+        logger.info({ jid, pollId: msg.poll.id }, 'Telegram poll sent');
+      } else {
+        const keyboard = new InlineKeyboard();
+        options.forEach((opt) => keyboard.text(opt, opt).row());
+        const msg = await this.bot.api.sendMessage(numericId, question, {
+          reply_markup: keyboard,
+        });
+        this.pendingKeyboards.set(msg.message_id, { chatJid: jid });
+        logger.info({ jid, messageId: msg.message_id }, 'Telegram keyboard sent');
+      }
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send Telegram poll/keyboard');
     }
   }
 
