@@ -379,7 +379,8 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.on('callback_query:data', async (ctx) => {
-      await (ctx as any).answerCallbackQuery();
+      // Always acknowledge to dismiss the client spinner, even for unrecognized queries (e.g. post-restart).
+      await (ctx as any).answerCallbackQuery().catch(() => {});
       const msgId = (ctx as any).callbackQuery.message?.message_id;
       if (msgId === undefined) return;
       const pending = this.pendingKeyboards.get(msgId);

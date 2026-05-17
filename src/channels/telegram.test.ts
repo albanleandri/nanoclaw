@@ -329,11 +329,7 @@ describe('TelegramChannel.sendPoll', () => {
     };
   }
 
-  it('calls api.sendPoll with correct parameters for multiple-choice', async () => {
-    const api = makeBotApi();
-    const mockBot = makeMockBot(api);
-
-    vi.resetModules();
+  function doMockGrammy(mockBot: ReturnType<typeof makeMockBot>) {
     vi.doMock('grammy', () => {
       function Api(this: Record<string, unknown>, token: string) {
         this.token = token;
@@ -359,6 +355,14 @@ describe('TelegramChannel.sendPoll', () => {
         },
       };
     });
+  }
+
+  it('calls api.sendPoll with correct parameters for multiple-choice', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
     const { TelegramChannel } = await import('./telegram.js');
 
     const channel = new TelegramChannel('test-token', {
@@ -396,31 +400,7 @@ describe('TelegramChannel.sendPoll', () => {
     const mockBot = makeMockBot(api);
 
     vi.resetModules();
-    vi.doMock('grammy', () => {
-      function Api(this: Record<string, unknown>, token: string) {
-        this.token = token;
-        this.sendMessage = vi.fn().mockResolvedValue({});
-        this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi
-          .fn()
-          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
-      }
-      function BotMock(this: Record<string, unknown>) {
-        Object.assign(this, mockBot);
-      }
-      return {
-        Api,
-        Bot: BotMock,
-        InlineKeyboard: class InlineKeyboard {
-          text() {
-            return this;
-          }
-          row() {
-            return this;
-          }
-        },
-      };
-    });
+    doMockGrammy(mockBot);
     const { TelegramChannel } = await import('./telegram.js');
 
     const channel = new TelegramChannel('test-token', {
@@ -449,31 +429,7 @@ describe('TelegramChannel.sendPoll', () => {
     const mockBot = makeMockBot(api);
 
     vi.resetModules();
-    vi.doMock('grammy', () => {
-      function Api(this: Record<string, unknown>, token: string) {
-        this.token = token;
-        this.sendMessage = vi.fn().mockResolvedValue({});
-        this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi
-          .fn()
-          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
-      }
-      function BotMock(this: Record<string, unknown>) {
-        Object.assign(this, mockBot);
-      }
-      return {
-        Api,
-        Bot: BotMock,
-        InlineKeyboard: class InlineKeyboard {
-          text() {
-            return this;
-          }
-          row() {
-            return this;
-          }
-        },
-      };
-    });
+    doMockGrammy(mockBot);
     const { TelegramChannel } = await import('./telegram.js');
 
     const onMessage = vi.fn();
@@ -491,7 +447,9 @@ describe('TelegramChannel.sendPoll', () => {
       true,
     );
 
-    const handler = mockBot._handlers.get('poll_answer') as (ctx: unknown) => void;
+    const handler = mockBot._handlers.get('poll_answer') as (
+      ctx: unknown,
+    ) => void;
     handler({
       pollAnswer: {
         poll_id: 'poll-abc',
@@ -515,31 +473,7 @@ describe('TelegramChannel.sendPoll', () => {
     const mockBot = makeMockBot(api);
 
     vi.resetModules();
-    vi.doMock('grammy', () => {
-      function Api(this: Record<string, unknown>, token: string) {
-        this.token = token;
-        this.sendMessage = vi.fn().mockResolvedValue({});
-        this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi
-          .fn()
-          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
-      }
-      function BotMock(this: Record<string, unknown>) {
-        Object.assign(this, mockBot);
-      }
-      return {
-        Api,
-        Bot: BotMock,
-        InlineKeyboard: class InlineKeyboard {
-          text() {
-            return this;
-          }
-          row() {
-            return this;
-          }
-        },
-      };
-    });
+    doMockGrammy(mockBot);
     const { TelegramChannel } = await import('./telegram.js');
 
     const onMessage = vi.fn();
@@ -581,31 +515,7 @@ describe('TelegramChannel.sendPoll', () => {
     const mockBot = makeMockBot(api);
 
     vi.resetModules();
-    vi.doMock('grammy', () => {
-      function Api(this: Record<string, unknown>, token: string) {
-        this.token = token;
-        this.sendMessage = vi.fn().mockResolvedValue({});
-        this.setMyName = vi.fn().mockResolvedValue({});
-        this.getMe = vi
-          .fn()
-          .mockResolvedValue({ username: `bot_${token}`, id: 1 });
-      }
-      function BotMock(this: Record<string, unknown>) {
-        Object.assign(this, mockBot);
-      }
-      return {
-        Api,
-        Bot: BotMock,
-        InlineKeyboard: class InlineKeyboard {
-          text() {
-            return this;
-          }
-          row() {
-            return this;
-          }
-        },
-      };
-    });
+    doMockGrammy(mockBot);
     const { TelegramChannel } = await import('./telegram.js');
 
     const onMessage = vi.fn();
@@ -617,7 +527,9 @@ describe('TelegramChannel.sendPoll', () => {
     await channel.connect();
 
     // No sendPoll call — no pending entry
-    const handler = mockBot._handlers.get('poll_answer') as (ctx: unknown) => void;
+    const handler = mockBot._handlers.get('poll_answer') as (
+      ctx: unknown,
+    ) => void;
     handler({
       pollAnswer: {
         poll_id: 'unknown-poll',
