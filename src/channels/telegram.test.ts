@@ -302,6 +302,8 @@ describe('TelegramChannel.sendPoll', () => {
       }),
       sendMessage: vi.fn().mockResolvedValue({ message_id: 42 }),
       sendChatAction: vi.fn().mockResolvedValue({}),
+      editMessageReplyMarkup: vi.fn().mockResolvedValue({}),
+      editMessageText: vi.fn().mockResolvedValue({}),
     };
   }
 
