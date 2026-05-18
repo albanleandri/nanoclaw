@@ -179,6 +179,19 @@ export async function sendPoolMessage(
   }
 }
 
+export function buildMultiKeyboard(
+  options: string[],
+  selected: Set<string>,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const opt of options) {
+    const label = selected.has(opt) ? `✅ ${opt}` : opt;
+    keyboard.text(label, `__opt__:${opt}`).row();
+  }
+  keyboard.text('Submit', '__submit__').row();
+  return keyboard;
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -190,6 +203,10 @@ export class TelegramChannel implements Channel {
     { chatJid: string; options: string[] }
   >();
   private pendingKeyboards = new Map<number, { chatJid: string }>();
+  private pendingMultiKeyboards = new Map<
+    number,
+    { chatJid: string; options: string[]; selected: Set<string> }
+  >();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -454,14 +471,21 @@ export class TelegramChannel implements Channel {
     const numericId = jid.replace(/^tg:/, '');
     try {
       if (multiple) {
-        const msg = await this.bot.api.sendPoll(
+        const keyboard = buildMultiKeyboard(options, new Set());
+        const msg = await this.bot.api.sendMessage(
           numericId,
-          question,
-          options.map((text) => ({ text })),
-          { is_anonymous: false, allows_multiple_answers: true },
+          sanitizeTelegramText(question),
+          { reply_markup: keyboard },
         );
-        this.pendingPolls.set(msg.poll.id, { chatJid: jid, options });
-        logger.info({ jid, pollId: msg.poll.id }, 'Telegram poll sent');
+        this.pendingMultiKeyboards.set(msg.message_id, {
+          chatJid: jid,
+          options,
+          selected: new Set(),
+        });
+        logger.info(
+          { jid, messageId: msg.message_id },
+          'Telegram multi-keyboard sent',
+        );
       } else {
         const keyboard = new InlineKeyboard();
         options.forEach((opt) => keyboard.text(opt, opt).row());

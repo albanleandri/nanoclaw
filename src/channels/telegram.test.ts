@@ -359,7 +359,7 @@ describe('TelegramChannel.sendPoll', () => {
     });
   }
 
-  it('calls api.sendPoll with correct parameters for multiple-choice', async () => {
+  it('sends InlineKeyboard message (not poll) for multiple=true', async () => {
     const api = makeBotApi();
     const mockBot = makeMockBot(api);
 
@@ -381,20 +381,46 @@ describe('TelegramChannel.sendPoll', () => {
       true,
     );
 
-    expect(api.sendPoll).toHaveBeenCalledWith(
+    expect(api.sendPoll).not.toHaveBeenCalled();
+    expect(api.sendMessage).toHaveBeenCalledWith(
       '123',
       'Which tiers?',
-      [{ text: 'Large Cap' }, { text: 'Mid Cap' }],
-      { is_anonymous: false, allows_multiple_answers: true },
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
-    const pending = (channel as any).pendingPolls as Map<
-      string,
-      { chatJid: string; options: string[] }
+  });
+
+  it('stores entry in pendingMultiKeyboards for multiple=true', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const channel = new TelegramChannel('test-token', {
+      onMessage: vi.fn(),
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const pending = (channel as any).pendingMultiKeyboards as Map<
+      number,
+      { chatJid: string; options: string[]; selected: Set<string> }
     >;
-    expect(pending.get('poll-abc')).toEqual({
+    expect(pending.get(42)).toMatchObject({
       chatJid: 'tg:123',
       options: ['Large Cap', 'Mid Cap'],
     });
+    expect(pending.get(42)?.selected).toBeInstanceOf(Set);
+    expect(pending.get(42)?.selected.size).toBe(0);
   });
 
   it('calls api.sendMessage with InlineKeyboard for single-choice', async () => {
@@ -426,7 +452,7 @@ describe('TelegramChannel.sendPoll', () => {
     expect(pending.get(42)).toEqual({ chatJid: 'tg:456' });
   });
 
-  it('routes poll_answer to onMessage', async () => {
+  it.skip('routes poll_answer to onMessage (superseded by multi-keyboard submit test)', async () => {
     const api = makeBotApi();
     const mockBot = makeMockBot(api);
 
