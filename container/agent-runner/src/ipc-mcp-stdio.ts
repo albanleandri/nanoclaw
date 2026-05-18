@@ -86,7 +86,7 @@ server.tool(
 
 server.tool(
   'ask_user',
-  "Send an interactive question to the user via Telegram. Use multiple=true for checkbox-style multi-select (Telegram poll), or multiple=false for single-tap button selection (inline keyboard). Returns immediately — the user's answer arrives as the next message in the conversation, formatted as '[Poll response: A, B]' or '[Choice: A]'. Telegram polls support 2–10 options maximum.",
+  "Send an interactive question to the user via Telegram. Use multiple=true for checkbox-style multi-select (inline keyboard with checkboxes), or multiple=false for single-tap button selection (inline keyboard). IMPORTANT: After calling this tool you MUST stop — do not call any other tools, including ask_user again. Calling ask_user a second time before the user responds will send two keyboards simultaneously and confuse the user. The user's answer will arrive as the next message in the conversation, formatted as '[Poll response: A, B]' for multiple=true or '[Choice: A]' for multiple=false. Options: 2–10 items maximum.",
   {
     question: z.string().describe('The question text shown to the user'),
     options: z
@@ -97,7 +97,7 @@ server.tool(
     multiple: z
       .boolean()
       .describe(
-        'true = Telegram poll with checkboxes (multi-select); false = inline keyboard buttons (single choice)',
+        'true = inline keyboard with checkboxes (multi-select); false = inline keyboard buttons (single choice)',
       ),
   },
   async (args) => {
@@ -116,7 +116,7 @@ server.tool(
       content: [
         {
           type: 'text' as const,
-          text: "Question sent. The user's answer will arrive as the next message.",
+          text: "Question sent. STOP HERE — do not call any more tools. Wait for the user's answer, which will arrive as the next message.",
         },
       ],
     };
