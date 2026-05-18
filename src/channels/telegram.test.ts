@@ -524,7 +524,7 @@ describe('TelegramChannel.sendPoll', () => {
     await handler({
       answerCallbackQuery,
       callbackQuery: {
-        data: '__opt__:Large Cap',
+        data: '__opt__:0',
         from: { id: 999, first_name: 'Alice' },
         message: { message_id: 42, chat: { id: 123 } },
       },
@@ -573,7 +573,7 @@ describe('TelegramChannel.sendPoll', () => {
     await handler({
       answerCallbackQuery: vi.fn().mockResolvedValue({}),
       callbackQuery: {
-        data: '__opt__:Large Cap',
+        data: '__opt__:0',
         from: { id: 999, first_name: 'Alice' },
         message: { message_id: 42, chat: { id: 123 } },
       },
@@ -639,7 +639,7 @@ describe('TelegramChannel.sendPoll', () => {
     await handler({
       answerCallbackQuery: vi.fn().mockResolvedValue({}),
       callbackQuery: {
-        data: '__opt__:Large Cap',
+        data: '__opt__:0',
         from: { id: 999, first_name: 'Alice' },
         message: { message_id: 42, chat: { id: 123 } },
       },
@@ -741,7 +741,7 @@ describe('TelegramChannel.sendPoll', () => {
     await handler({
       answerCallbackQuery,
       callbackQuery: {
-        data: '__opt__:Large Cap',
+        data: '__opt__:0',
         from: { id: 999, first_name: 'Alice' },
         message: { message_id: 99, chat: { id: 123 } },
       },

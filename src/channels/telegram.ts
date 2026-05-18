@@ -184,10 +184,10 @@ export function buildMultiKeyboard(
   selected: Set<string>,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  for (const opt of options) {
+  options.forEach((opt, idx) => {
     const label = selected.has(opt) ? `✅ ${opt}` : opt;
-    keyboard.text(label, `__opt__:${opt}`).row();
-  }
+    keyboard.text(label, `__opt__:${idx}`).row();
+  });
   keyboard.text('Submit', '__submit__').row();
   return keyboard;
 }
@@ -451,7 +451,12 @@ export class TelegramChannel implements Channel {
             'Multi-keyboard submitted',
           );
         } else if (data.startsWith('__opt__:')) {
-          const option = data.slice(8);
+          const idx = parseInt(data.slice(8), 10);
+          const option = multiPending.options[idx];
+          if (option === undefined) {
+            await (ctx as any).answerCallbackQuery().catch(() => {});
+            return;
+          }
           if (multiPending.selected.has(option)) {
             multiPending.selected.delete(option);
           } else {
@@ -461,9 +466,11 @@ export class TelegramChannel implements Channel {
             multiPending.options,
             multiPending.selected,
           );
-          await this.bot!.api.editMessageReplyMarkup(numericId, msgId, {
-            reply_markup: newKeyboard,
-          }).catch(() => {});
+          await this.bot!.api
+            .editMessageReplyMarkup(numericId, msgId, {
+              reply_markup: newKeyboard,
+            })
+            .catch(() => {});
           await (ctx as any).answerCallbackQuery().catch(() => {});
         } else {
           await (ctx as any).answerCallbackQuery().catch(() => {});
