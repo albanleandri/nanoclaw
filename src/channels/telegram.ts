@@ -466,11 +466,9 @@ export class TelegramChannel implements Channel {
             multiPending.options,
             multiPending.selected,
           );
-          await this.bot!.api
-            .editMessageReplyMarkup(numericId, msgId, {
-              reply_markup: newKeyboard,
-            })
-            .catch(() => {});
+          await this.bot!.api.editMessageReplyMarkup(numericId, msgId, {
+            reply_markup: newKeyboard,
+          }).catch(() => {});
           await (ctx as any).answerCallbackQuery().catch(() => {});
         } else {
           await (ctx as any).answerCallbackQuery().catch(() => {});
