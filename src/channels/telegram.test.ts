@@ -452,50 +452,6 @@ describe('TelegramChannel.sendPoll', () => {
     expect(pending.get(42)).toEqual({ chatJid: 'tg:456' });
   });
 
-  it.skip('routes poll_answer to onMessage (superseded by multi-keyboard submit test)', async () => {
-    const api = makeBotApi();
-    const mockBot = makeMockBot(api);
-
-    vi.resetModules();
-    doMockGrammy(mockBot);
-    const { TelegramChannel } = await import('./telegram.js');
-
-    const onMessage = vi.fn();
-    const channel = new TelegramChannel('test-token', {
-      onMessage,
-      onChatMetadata: vi.fn(),
-      registeredGroups: () => ({ 'tg:123': { id: 'tg:123' } as any }),
-    });
-    await channel.connect();
-
-    await (channel as any).sendPoll(
-      'tg:123',
-      'Which?',
-      ['Large Cap', 'Mid Cap'],
-      true,
-    );
-
-    const handler = mockBot._handlers.get('poll_answer') as (
-      ctx: unknown,
-    ) => void;
-    handler({
-      pollAnswer: {
-        poll_id: 'poll-abc',
-        option_ids: [0, 1],
-        user: { id: 999, first_name: 'Alice', is_bot: false },
-      },
-    });
-
-    expect(onMessage).toHaveBeenCalledWith(
-      'tg:123',
-      expect.objectContaining({
-        content: '[Poll response: Large Cap, Mid Cap]',
-        chat_jid: 'tg:123',
-        is_from_me: false,
-      }),
-    );
-  });
-
   it('routes callback_query to onMessage and answers the query', async () => {
     const api = makeBotApi();
     const mockBot = makeMockBot(api);
@@ -536,6 +492,202 @@ describe('TelegramChannel.sendPoll', () => {
         is_from_me: false,
       }),
     );
+  });
+
+  it('toggles option checkmark and edits keyboard on __opt__ callback', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({ 'tg:123': { id: 'tg:123' } as any }),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+    await handler({
+      answerCallbackQuery,
+      callbackQuery: {
+        data: '__opt__:Large Cap',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledWith(
+      '123',
+      42,
+      expect.any(Object),
+    );
+    expect(answerCallbackQuery).toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+
+    const pending = (channel as any).pendingMultiKeyboards as Map<number, any>;
+    expect(pending.get(42)?.selected.has('Large Cap')).toBe(true);
+  });
+
+  it('submits multi-keyboard selection as [Poll response: ...]', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({ 'tg:123': { id: 'tg:123' } as any }),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+
+    // First: toggle Large Cap
+    await handler({
+      answerCallbackQuery: vi.fn().mockResolvedValue({}),
+      callbackQuery: {
+        data: '__opt__:Large Cap',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    // Then: submit
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    await handler({
+      answerCallbackQuery,
+      callbackQuery: {
+        data: '__submit__',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    expect(api.editMessageText).toHaveBeenCalledWith(
+      '123',
+      42,
+      'Selected: Large Cap',
+      expect.any(Object),
+    );
+    expect(onMessage).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({
+        content: '[Poll response: Large Cap]',
+        chat_jid: 'tg:123',
+        is_from_me: false,
+      }),
+    );
+    const pending = (channel as any).pendingMultiKeyboards as Map<number, any>;
+    expect(pending.has(42)).toBe(false);
+  });
+
+  it('shows alert and keeps keyboard when Submit tapped with no selection', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({ 'tg:123': { id: 'tg:123' } as any }),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+    await handler({
+      answerCallbackQuery,
+      callbackQuery: {
+        data: '__submit__',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    expect(answerCallbackQuery).toHaveBeenCalledWith({
+      text: 'Please select at least one option.',
+      show_alert: true,
+    });
+    expect(api.editMessageText).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+
+    // Entry NOT removed — keyboard stays open for another attempt
+    const pending = (channel as any).pendingMultiKeyboards as Map<number, any>;
+    expect(pending.has(42)).toBe(true);
+  });
+
+  it('ignores stale multi-keyboard msgId after restart and dismisses spinner', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}),
+    });
+    await channel.connect();
+
+    // No sendPoll call — nothing in pendingMultiKeyboards or pendingKeyboards
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+    await handler({
+      answerCallbackQuery,
+      callbackQuery: {
+        data: '__opt__:Large Cap',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 99, chat: { id: 123 } },
+      },
+    });
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(answerCallbackQuery).toHaveBeenCalled();
   });
 
   it('ignores poll_answer for unknown poll_id', async () => {

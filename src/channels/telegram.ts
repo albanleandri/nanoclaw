@@ -396,10 +396,76 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.on('callback_query:data', async (ctx) => {
-      // Always acknowledge to dismiss the client spinner, even for unrecognized queries (e.g. post-restart).
+      const cq = (ctx as any).callbackQuery;
+      const msgId: number | undefined = cq.message?.message_id;
+      if (msgId === undefined) {
+        await (ctx as any).answerCallbackQuery().catch(() => {});
+        return;
+      }
+
+      const multiPending = this.pendingMultiKeyboards.get(msgId);
+      if (multiPending) {
+        const data = cq.data as string;
+        const numericId = multiPending.chatJid.replace(/^tg:/, '');
+
+        if (data === '__submit__') {
+          if (multiPending.selected.size === 0) {
+            await (ctx as any)
+              .answerCallbackQuery({
+                text: 'Please select at least one option.',
+                show_alert: true,
+              })
+              .catch(() => {});
+            return;
+          }
+          const selected = [...multiPending.selected].join(', ');
+          this.pendingMultiKeyboards.delete(msgId);
+          await this.bot!.api
+            .editMessageText(numericId, msgId, `Selected: ${selected}`, {
+              reply_markup: new InlineKeyboard(),
+            })
+            .catch(() => {});
+          await (ctx as any).answerCallbackQuery().catch(() => {});
+          const group = this.opts.registeredGroups()[multiPending.chatJid];
+          if (!group) return;
+          this.opts.onMessage(multiPending.chatJid, {
+            id: `multi-${msgId}`,
+            chat_jid: multiPending.chatJid,
+            sender: cq.from.id.toString(),
+            sender_name: cq.from.first_name || 'User',
+            content: `[Poll response: ${selected}]`,
+            timestamp: new Date().toISOString(),
+            is_from_me: false,
+          });
+          logger.info(
+            { chatJid: multiPending.chatJid, msgId },
+            'Multi-keyboard submitted',
+          );
+        } else if (data.startsWith('__opt__:')) {
+          const option = data.slice(8);
+          if (multiPending.selected.has(option)) {
+            multiPending.selected.delete(option);
+          } else {
+            multiPending.selected.add(option);
+          }
+          const newKeyboard = buildMultiKeyboard(
+            multiPending.options,
+            multiPending.selected,
+          );
+          await this.bot!.api
+            .editMessageReplyMarkup(numericId, msgId, {
+              reply_markup: newKeyboard,
+            })
+            .catch(() => {});
+          await (ctx as any).answerCallbackQuery().catch(() => {});
+        } else {
+          await (ctx as any).answerCallbackQuery().catch(() => {});
+        }
+        return;
+      }
+
+      // Existing single-select path — unchanged
       await (ctx as any).answerCallbackQuery().catch(() => {});
-      const msgId = (ctx as any).callbackQuery.message?.message_id;
-      if (msgId === undefined) return;
       const pending = this.pendingKeyboards.get(msgId);
       if (!pending) return;
       this.pendingKeyboards.delete(msgId);
@@ -409,9 +475,9 @@ export class TelegramChannel implements Channel {
       this.opts.onMessage(chatJid, {
         id: `btn-${msgId}`,
         chat_jid: chatJid,
-        sender: (ctx as any).callbackQuery.from.id.toString(),
-        sender_name: (ctx as any).callbackQuery.from.first_name || 'User',
-        content: `[Choice: ${(ctx as any).callbackQuery.data}]`,
+        sender: cq.from.id.toString(),
+        sender_name: cq.from.first_name || 'User',
+        content: `[Choice: ${cq.data}]`,
         timestamp: new Date().toISOString(),
         is_from_me: false,
       });
