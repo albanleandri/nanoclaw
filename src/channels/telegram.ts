@@ -420,14 +420,23 @@ export class TelegramChannel implements Channel {
           }
           const selected = [...multiPending.selected].join(', ');
           this.pendingMultiKeyboards.delete(msgId);
-          await this.bot!.api
-            .editMessageText(numericId, msgId, `Selected: ${selected}`, {
+          await this.bot!.api.editMessageText(
+            numericId,
+            msgId,
+            `Selected: ${selected}`,
+            {
               reply_markup: new InlineKeyboard(),
-            })
-            .catch(() => {});
+            },
+          ).catch(() => {});
           await (ctx as any).answerCallbackQuery().catch(() => {});
           const group = this.opts.registeredGroups()[multiPending.chatJid];
-          if (!group) return;
+          if (!group) {
+            logger.warn(
+              { chatJid: multiPending.chatJid, msgId },
+              'Multi-keyboard submitted but group not registered — selection dropped',
+            );
+            return;
+          }
           this.opts.onMessage(multiPending.chatJid, {
             id: `multi-${msgId}`,
             chat_jid: multiPending.chatJid,
@@ -452,11 +461,9 @@ export class TelegramChannel implements Channel {
             multiPending.options,
             multiPending.selected,
           );
-          await this.bot!.api
-            .editMessageReplyMarkup(numericId, msgId, {
-              reply_markup: newKeyboard,
-            })
-            .catch(() => {});
+          await this.bot!.api.editMessageReplyMarkup(numericId, msgId, {
+            reply_markup: newKeyboard,
+          }).catch(() => {});
           await (ctx as any).answerCallbackQuery().catch(() => {});
         } else {
           await (ctx as any).answerCallbackQuery().catch(() => {});

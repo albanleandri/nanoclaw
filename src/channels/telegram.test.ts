@@ -608,6 +608,67 @@ describe('TelegramChannel.sendPoll', () => {
     expect(pending.has(42)).toBe(false);
   });
 
+  it('clears keyboard on submit but skips onMessage when group is not registered', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({}), // group NOT registered
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+
+    // Toggle Large Cap
+    await handler({
+      answerCallbackQuery: vi.fn().mockResolvedValue({}),
+      callbackQuery: {
+        data: '__opt__:Large Cap',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    // Submit
+    await handler({
+      answerCallbackQuery: vi.fn().mockResolvedValue({}),
+      callbackQuery: {
+        data: '__submit__',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    // Keyboard was cleared
+    expect(api.editMessageText).toHaveBeenCalledWith(
+      '123',
+      42,
+      'Selected: Large Cap',
+      expect.any(Object),
+    );
+    // But agent never got the message
+    expect(onMessage).not.toHaveBeenCalled();
+    // Entry was removed
+    const pending = (channel as any).pendingMultiKeyboards as Map<number, any>;
+    expect(pending.has(42)).toBe(false);
+  });
+
   it('shows alert and keeps keyboard when Submit tapped with no selection', async () => {
     const api = makeBotApi();
     const mockBot = makeMockBot(api);
