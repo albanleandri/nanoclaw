@@ -452,13 +452,12 @@ export class TelegramChannel implements Channel {
           );
         } else if (data === '__cancel__') {
           this.pendingMultiKeyboards.delete(msgId);
-          await this.bot!.api
-            .editMessageText(numericId, msgId, 'Cancelled.', {
-              reply_markup: new InlineKeyboard(),
-            })
-            .catch(() => {});
+          await this.bot!.api.editMessageText(numericId, msgId, 'Cancelled.', {
+            reply_markup: new InlineKeyboard(),
+          }).catch(() => {});
           await (ctx as any).answerCallbackQuery().catch(() => {});
-          const cancelGroup = this.opts.registeredGroups()[multiPending.chatJid];
+          const cancelGroup =
+            this.opts.registeredGroups()[multiPending.chatJid];
           if (cancelGroup) {
             this.opts.onMessage(multiPending.chatJid, {
               id: `multi-cancel-${msgId}`,
@@ -500,12 +499,18 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      // Existing single-select path — unchanged
+      // Single-select path
       await (ctx as any).answerCallbackQuery().catch(() => {});
       const pending = this.pendingKeyboards.get(msgId);
       if (!pending) return;
       this.pendingKeyboards.delete(msgId);
       const { chatJid } = pending;
+      const singleNumericId = chatJid.replace(/^tg:/, '');
+      await this.bot!.api
+        .editMessageText(singleNumericId, msgId, `Chosen: ${cq.data}`, {
+          reply_markup: new InlineKeyboard(),
+        })
+        .catch(() => {});
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
       this.opts.onMessage(chatJid, {

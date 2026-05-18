@@ -484,6 +484,12 @@ describe('TelegramChannel.sendPoll', () => {
     });
 
     expect(answerCallbackQuery).toHaveBeenCalled();
+    expect(api.editMessageText).toHaveBeenCalledWith(
+      '456',
+      42,
+      'Chosen: Yes',
+      expect.objectContaining({ reply_markup: expect.any(Object) }),
+    );
     expect(onMessage).toHaveBeenCalledWith(
       'tg:456',
       expect.objectContaining({
@@ -753,7 +759,12 @@ describe('TelegramChannel.sendPoll', () => {
       },
     });
 
-    expect(api.editMessageText).toHaveBeenCalledWith('123', 42, 'Cancelled.', expect.any(Object));
+    expect(api.editMessageText).toHaveBeenCalledWith(
+      '123',
+      42,
+      'Cancelled.',
+      expect.any(Object),
+    );
     expect(answerCallbackQuery).toHaveBeenCalled();
     expect(onMessage).toHaveBeenCalledWith(
       'tg:123',
