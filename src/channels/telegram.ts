@@ -506,11 +506,14 @@ export class TelegramChannel implements Channel {
       this.pendingKeyboards.delete(msgId);
       const { chatJid } = pending;
       const singleNumericId = chatJid.replace(/^tg:/, '');
-      await this.bot!.api
-        .editMessageText(singleNumericId, msgId, `Chosen: ${cq.data}`, {
+      await this.bot!.api.editMessageText(
+        singleNumericId,
+        msgId,
+        `Chosen: ${cq.data}`,
+        {
           reply_markup: new InlineKeyboard(),
-        })
-        .catch(() => {});
+        },
+      ).catch(() => {});
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
       this.opts.onMessage(chatJid, {
