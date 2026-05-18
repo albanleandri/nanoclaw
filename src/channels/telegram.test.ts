@@ -717,6 +717,53 @@ describe('TelegramChannel.sendPoll', () => {
     expect(pending.has(42)).toBe(true);
   });
 
+  it('sends [Poll cancelled] and clears keyboard on __cancel__ callback', async () => {
+    const api = makeBotApi();
+    const mockBot = makeMockBot(api);
+
+    vi.resetModules();
+    doMockGrammy(mockBot);
+    const { TelegramChannel } = await import('./telegram.js');
+
+    const onMessage = vi.fn();
+    const channel = new TelegramChannel('test-token', {
+      onMessage,
+      onChatMetadata: vi.fn(),
+      registeredGroups: () => ({ 'tg:123': { id: 'tg:123' } as any }),
+    });
+    await channel.connect();
+
+    await (channel as any).sendPoll(
+      'tg:123',
+      'Which tiers?',
+      ['Large Cap', 'Mid Cap'],
+      true,
+    );
+
+    const answerCallbackQuery = vi.fn().mockResolvedValue({});
+    const handler = mockBot._handlers.get('callback_query:data') as (
+      ctx: unknown,
+    ) => Promise<void>;
+    await handler({
+      answerCallbackQuery,
+      callbackQuery: {
+        data: '__cancel__',
+        from: { id: 999, first_name: 'Alice' },
+        message: { message_id: 42, chat: { id: 123 } },
+      },
+    });
+
+    expect(api.editMessageText).toHaveBeenCalledWith('123', 42, 'Cancelled.', expect.any(Object));
+    expect(answerCallbackQuery).toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith(
+      'tg:123',
+      expect.objectContaining({ content: '[Poll cancelled]' }),
+    );
+    // Entry removed
+    const pending = (channel as any).pendingMultiKeyboards as Map<number, any>;
+    expect(pending.has(42)).toBe(false);
+  });
+
   it('ignores stale multi-keyboard msgId after restart and dismisses spinner', async () => {
     const api = makeBotApi();
     const mockBot = makeMockBot(api);

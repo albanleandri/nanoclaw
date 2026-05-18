@@ -188,7 +188,7 @@ export function buildMultiKeyboard(
     const label = selected.has(opt) ? `✅ ${opt}` : opt;
     keyboard.text(label, `__opt__:${idx}`).row();
   });
-  keyboard.text('Submit', '__submit__').row();
+  keyboard.text('Submit', '__submit__').text('Cancel', '__cancel__').row();
   return keyboard;
 }
 
@@ -449,6 +449,30 @@ export class TelegramChannel implements Channel {
           logger.info(
             { chatJid: multiPending.chatJid, msgId },
             'Multi-keyboard submitted',
+          );
+        } else if (data === '__cancel__') {
+          this.pendingMultiKeyboards.delete(msgId);
+          await this.bot!.api
+            .editMessageText(numericId, msgId, 'Cancelled.', {
+              reply_markup: new InlineKeyboard(),
+            })
+            .catch(() => {});
+          await (ctx as any).answerCallbackQuery().catch(() => {});
+          const cancelGroup = this.opts.registeredGroups()[multiPending.chatJid];
+          if (cancelGroup) {
+            this.opts.onMessage(multiPending.chatJid, {
+              id: `multi-cancel-${msgId}`,
+              chat_jid: multiPending.chatJid,
+              sender: cq.from.id.toString(),
+              sender_name: cq.from.first_name || 'User',
+              content: '[Poll cancelled]',
+              timestamp: new Date().toISOString(),
+              is_from_me: false,
+            });
+          }
+          logger.info(
+            { chatJid: multiPending.chatJid, msgId },
+            'Multi-keyboard cancelled',
           );
         } else if (data.startsWith('__opt__:')) {
           const idx = parseInt(data.slice(8), 10);
