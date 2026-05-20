@@ -1,11 +1,11 @@
 @AGENTS.md
 
 ## Codex-only note
-- Use `AGENTS.md` as the shared instruction source.
-- Prefer repo scripts and `package.json` commands over repeating long shell snippets.
-- For dependency installation, use `npm run deps:install`.
-- For handoff context, prefer `docs/HANDOFF.local.md` when present; otherwise use the tracked `docs/HANDOFF.md`.
-- Runtime tools and skills are group-specific. Non-main groups should have explicit `containerConfig.allowedTools` and `containerConfig.enabledSkills` selections.
+- Use `AGENTS.md` as the shared instruction source. Keep Codex-specific additions here small and non-conflicting.
+- Host uses **pnpm**, not npm. Agent-runner uses **Bun**. Use `pnpm` for host commands; use `bun` inside `container/agent-runner/`.
+- For handoff context, prefer `docs/HANDOFF.local.md` when present; otherwise use `docs/HANDOFF.md`.
+- Runtime tools and skills are group-specific. New non-main groups should have explicit `containerConfig.allowedTools` and `containerConfig.enabledSkills` selections.
+- Agent-runner source changes don't require a container rebuild (bind-mounted at `/app/src`). Host `src/` changes require `pnpm run build`.
 
 ## Codex-to-Claude handoff
 If a task involves multi-file refactoring, interactive prompts, or skill execution, prefer

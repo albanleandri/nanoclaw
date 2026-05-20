@@ -5,6 +5,7 @@ import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { MockProvider } from './providers/mock.js';
+import { processQuery } from './poll-loop.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -318,6 +319,68 @@ describe('mock provider', () => {
     expect(results).toHaveLength(2);
     expect(results[0].text).toBe('Re: First');
     expect(results[1].text).toBe('Re: Second');
+  });
+});
+
+describe('quota error notification', () => {
+  function insertWithRouting(id: string): void {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, thread_id, content)
+         VALUES (?, 'chat', datetime('now'), 'pending', 'chat-42', 'telegram', 'thread-7', '{"text":"hi"}')`,
+      )
+      .run(id);
+  }
+
+  it('writes a usage-limit notification to messages_out when provider emits quota error', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider({}, undefined, true);
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const content = JSON.parse(outMessages[0].content) as { text: string };
+    expect(content.text).toContain('Usage limit reached');
+  });
+
+  it('routes the quota notification to the correct channel', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider({}, undefined, true);
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const [out] = getUndeliveredMessages();
+    expect(out.platform_id).toBe('chat-42');
+    expect(out.channel_type).toBe('telegram');
+    expect(out.thread_id).toBe('thread-7');
+  });
+
+  it('non-quota error events do not write a usage-limit notification', async () => {
+    // api_retry is retryable=true, no classification — should not produce a notification
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+
+    // Provide a mock that returns normally (no quota error) — quota path must not fire on clean result
+    const provider = new MockProvider({}, () => '<message to="default">ok</message>');
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+    setTimeout(() => query.end(), 50);
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    const usageLimitMsgs = outMessages.filter((m) => {
+      const c = JSON.parse(m.content) as { text?: string };
+      return c.text?.includes('Usage limit reached');
+    });
+    expect(usageLimitMsgs).toHaveLength(0);
   });
 });
 

@@ -6,7 +6,7 @@
 #
 # What is backed up:
 #   - All SQLite databases (hot-backup via Node, safe while the service is live)
-#   - JSON state files (available_groups, current_tasks)
+#   - JSON state files
 #   - Tips config
 #
 # Credentials (.env, container env) are intentionally excluded — they are
@@ -37,11 +37,12 @@ mkdir -p "$DEST"
 chmod 700 "$DEST"
 
 # --- SQLite databases (online backup, safe while live) ---
+# V2 uses data/v2.db for the central DB (replaces V1's store/messages.db).
+# Per-session inbound.db/outbound.db live in data/v2-sessions/ and are
+# ephemeral — the central DB is the source of truth for persistent state.
 
 DATABASES=(
-  "$PROJECT_ROOT/store/messages.db"
-  "$PROJECT_ROOT/store/nanoclaw.db"
-  "$PROJECT_ROOT/data/nanoclaw.db"
+  "$PROJECT_ROOT/data/v2.db"
   "$PROJECT_ROOT/groups/telegram_main/investments.db"
   "$PROJECT_ROOT/groups/telegram_main/polymarket_cache.db"
   "$PROJECT_ROOT/groups/main/stock_screener.db"
@@ -62,9 +63,7 @@ copy_if_exists() {
   fi
 }
 
-copy_if_exists "$PROJECT_ROOT/data/ipc/telegram_main/available_groups.json"     "available_groups.json"
-copy_if_exists "$PROJECT_ROOT/data/ipc/telegram_main/current_tasks.json"        "current_tasks.json"
-copy_if_exists "$PROJECT_ROOT/groups/telegram_main/tips/config.json"            "tips_config.json"
+copy_if_exists "$PROJECT_ROOT/groups/telegram_main/tips/config.json" "tips_config.json"
 
 # Write a short manifest
 {

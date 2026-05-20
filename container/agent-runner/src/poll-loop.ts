@@ -257,7 +257,7 @@ interface QueryResult {
   continuation?: string;
 }
 
-async function processQuery(
+export async function processQuery(
   query: AgentQuery,
   routing: RoutingContext,
   initialBatchIds: string[],
@@ -369,6 +369,21 @@ async function processQuery(
         // effectively orphaned and the next message started a blank
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
+      } else if (event.type === 'error' && event.classification === 'quota') {
+        // Anthropic usage/rate limit — notify the user and stop this turn.
+        // The container cannot retry (the limit is account-wide), so there is
+        // no value in keeping the stream open. Mark messages completed so the
+        // host sweep does not reset them to pending and immediately re-wake.
+        markCompleted(initialBatchIds);
+        writeMessageOut({
+          id: generateId(),
+          kind: 'chat',
+          platform_id: routing.platformId,
+          channel_type: routing.channelType,
+          thread_id: routing.threadId,
+          content: JSON.stringify({ text: "Usage limit reached. I can't process requests right now. Try again later." }),
+        });
+        break;
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see

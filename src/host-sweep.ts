@@ -36,6 +36,7 @@ import {
   deleteOrphanProcessingClaims,
   getContainerState,
   getMessageForRetry,
+  getOldestDuePendingTimestamp,
   getProcessingClaims,
   markMessageFailed,
   retryWithBackoff,
@@ -66,13 +67,19 @@ export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
 // Stuck tolerance window applied per 'processing' claim — "did we see any
 // signs of life since this message was claimed?"
 export const CLAIM_STUCK_MS = 60 * 1000;
+// Maximum time a pending (unclaimed) trigger message may wait while the
+// container is alive. Guards against a poll loop blocked on a long API call
+// — the container heartbeats normally so ceiling/claim-stuck don't fire, but
+// new user messages pile up without being processed.
+export const PENDING_STUCK_MS = 10 * 60 * 1000;
 const MAX_TRIES = 5;
 const BACKOFF_BASE_MS = 5000;
 
 export type StuckDecision =
   | { action: 'ok' }
   | { action: 'kill-ceiling'; heartbeatAgeMs: number; ceilingMs: number }
-  | { action: 'kill-claim'; messageId: string; claimAgeMs: number; toleranceMs: number };
+  | { action: 'kill-claim'; messageId: string; claimAgeMs: number; toleranceMs: number }
+  | { action: 'kill-pending-stuck'; oldestPendingAgeMs: number; thresholdMs: number };
 
 /**
  * Pure decision for whether a running container should be killed this sweep
@@ -84,8 +91,10 @@ export function decideStuckAction(args: {
   heartbeatMtimeMs: number; // 0 when heartbeat file absent
   containerState: ContainerState | null;
   claims: Array<{ message_id: string; status_changed: string }>;
+  /** Age in ms of the oldest due-pending trigger message; 0 if none. */
+  oldestDuePendingAgeMs?: number;
 }): StuckDecision {
-  const { now, heartbeatMtimeMs, containerState, claims } = args;
+  const { now, heartbeatMtimeMs, containerState, claims, oldestDuePendingAgeMs = 0 } = args;
   const declaredBashMs = bashTimeoutMs(containerState);
 
   // Ceiling check only applies when we have an actual heartbeat timestamp.
@@ -112,6 +121,16 @@ export function decideStuckAction(args: {
     if (claimAge <= tolerance) continue;
     if (heartbeatMtimeMs > claimedAt) continue;
     return { action: 'kill-claim', messageId: claim.message_id, claimAgeMs: claimAge, toleranceMs: tolerance };
+  }
+
+  // Pending-stuck: a trigger message has been waiting in inbound.db unclaimed
+  // for longer than the threshold. Catches the case where the poll loop is
+  // blocked on a long API call — the container heartbeats normally so the
+  // ceiling and claim-stuck checks above don't fire, but new user messages
+  // pile up as 'pending' without ever being processed.
+  const pendingThreshold = Math.max(PENDING_STUCK_MS, declaredBashMs ?? 0);
+  if (oldestDuePendingAgeMs > pendingThreshold) {
+    return { action: 'kill-pending-stuck', oldestPendingAgeMs: oldestDuePendingAgeMs, thresholdMs: pendingThreshold };
   }
 
   return { action: 'ok' };
@@ -231,11 +250,16 @@ function enforceRunningContainerSla(
   session: Session,
   agentGroupId: string,
 ): void {
+  const now = Date.now();
+  const oldestTs = getOldestDuePendingTimestamp(inDb);
+  const oldestDuePendingAgeMs = oldestTs ? Math.max(0, now - parseSqliteUtc(oldestTs)) : 0;
+
   const decision = decideStuckAction({
-    now: Date.now(),
+    now,
     heartbeatMtimeMs: heartbeatMtimeMs(agentGroupId, session.id),
     containerState: getContainerState(outDb),
     claims: getProcessingClaims(outDb),
+    oldestDuePendingAgeMs,
   });
 
   if (decision.action === 'ok') return;
@@ -251,14 +275,25 @@ function enforceRunningContainerSla(
     return;
   }
 
-  log.warn('Killing container — message claimed then silent', {
+  if (decision.action === 'kill-claim') {
+    log.warn('Killing container — message claimed then silent', {
+      sessionId: session.id,
+      messageId: decision.messageId,
+      claimAgeMs: decision.claimAgeMs,
+      toleranceMs: decision.toleranceMs,
+    });
+    killContainer(session.id, 'claim-stuck');
+    resetStuckProcessingRows(inDb, outDb, session, 'claim-stuck');
+    return;
+  }
+
+  log.warn('Killing container — pending message waiting too long', {
     sessionId: session.id,
-    messageId: decision.messageId,
-    claimAgeMs: decision.claimAgeMs,
-    toleranceMs: decision.toleranceMs,
+    oldestPendingAgeMs: decision.oldestPendingAgeMs,
+    thresholdMs: decision.thresholdMs,
   });
-  killContainer(session.id, 'claim-stuck');
-  resetStuckProcessingRows(inDb, outDb, session, 'claim-stuck');
+  killContainer(session.id, 'pending-stuck');
+  resetStuckProcessingRows(inDb, outDb, session, 'pending-stuck');
 }
 
 export function _resetStuckProcessingRowsForTesting(

@@ -10,6 +10,7 @@ import { deleteOrphanProcessingClaims, getProcessingClaims } from './db/session-
 import {
   ABSOLUTE_CEILING_MS,
   CLAIM_STUCK_MS,
+  PENDING_STUCK_MS,
   _resetStuckProcessingRowsForTesting,
   decideStuckAction,
   parseSqliteUtc,
@@ -291,6 +292,88 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
     expect(getProcessingClaims(outDb)).toEqual([]);
     const row = inDb.prepare('SELECT tries FROM messages_in WHERE id = ?').get('m-2') as { tries: number };
     expect(row.tries).toBe(1); // not bumped, the skip path held
+  });
+});
+
+describe('decideStuckAction — pending-stuck (production bug: long task blocks poll loop)', () => {
+  it('returns ok when there are no pending messages', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [],
+      oldestDuePendingAgeMs: 0,
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('returns ok when pending message age is below PENDING_STUCK_MS', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [],
+      oldestDuePendingAgeMs: PENDING_STUCK_MS - 1_000,
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('returns kill-pending-stuck when pending message waited past PENDING_STUCK_MS', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [],
+      oldestDuePendingAgeMs: PENDING_STUCK_MS + 1_000,
+    });
+    expect(res.action).toBe('kill-pending-stuck');
+    if (res.action !== 'kill-pending-stuck') return;
+    expect(res.oldestPendingAgeMs).toBeGreaterThan(PENDING_STUCK_MS);
+    expect(res.thresholdMs).toBe(PENDING_STUCK_MS);
+  });
+
+  it('fires kill-pending-stuck even when an active claim exists and heartbeat is fresh — exact production scenario', () => {
+    // Container was alive (fresh heartbeat), processing a 58-min scheduled task
+    // (claim exists, heartbeat moved after claim → claim-stuck does NOT fire).
+    // User messages piled up as pending. No check detected them. This test
+    // covers that exact gap.
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000, // heartbeat fresh → ceiling OK, claim-stuck skips
+      containerState: null,
+      claims: [claim('msg-scheduled', 58 * 60_000)], // 58-min claim, fresh heartbeat → claim-stuck skips
+      oldestDuePendingAgeMs: PENDING_STUCK_MS + 1_000,
+    });
+    expect(res.action).toBe('kill-pending-stuck');
+  });
+
+  it('extends pending-stuck threshold when Bash has a declared timeout longer than PENDING_STUCK_MS', () => {
+    // Bash timeout (20 min) > PENDING_STUCK_MS (10 min) → threshold becomes 20 min.
+    // pending age (10 min + 1 sec) is below that extended threshold → ok.
+    const twentyMinMs = 20 * 60 * 1000;
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: {
+        current_tool: 'Bash',
+        tool_declared_timeout_ms: twentyMinMs,
+        tool_started_at: new Date(BASE - 5 * 60 * 1000).toISOString(),
+      },
+      claims: [],
+      oldestDuePendingAgeMs: PENDING_STUCK_MS + 1_000, // over default but under 20-min Bash threshold
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('existing tests still pass without oldestDuePendingAgeMs (default 0 = no pending)', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [],
+      // oldestDuePendingAgeMs omitted → defaults to 0
+    });
+    expect(res.action).toBe('ok');
   });
 });
 

@@ -29,6 +29,7 @@ import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
+import { readEnvFileByPrefix } from './env.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
@@ -386,54 +387,71 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
     fs.mkdirSync(skillsDir, { recursive: true });
   }
 
-  // Determine desired skill set
+  // Build a map of every available skill: name → container path.
+  // Built-in skills live directly under container/skills/ → /app/skills/<name>.
+  // Custom skills live under container/skills/custom/ → /app/skills/custom/<name>.
+  // Custom wins on name collision (allows overriding a built-in).
   const projectRoot = process.cwd();
   const sharedSkillsDir = path.join(projectRoot, 'container', 'skills');
-  let desired: string[];
-  if (containerConfig.skills === 'all') {
-    // Recompute from shared dir — newly-added upstream skills appear automatically
-    desired = fs.existsSync(sharedSkillsDir)
-      ? fs.readdirSync(sharedSkillsDir).filter((e) => {
-          try {
-            return fs.statSync(path.join(sharedSkillsDir, e)).isDirectory();
-          } catch {
-            return false;
-          }
-        })
-      : [];
-  } else {
-    desired = containerConfig.skills;
+  const customSkillsDir = path.join(sharedSkillsDir, 'custom');
+
+  const available = new Map<string, string>(); // name → container target path
+
+  if (fs.existsSync(sharedSkillsDir)) {
+    for (const e of fs.readdirSync(sharedSkillsDir)) {
+      if (e === 'custom') continue;
+      try {
+        if (fs.statSync(path.join(sharedSkillsDir, e)).isDirectory()) {
+          available.set(e, `/app/skills/${e}`);
+        }
+      } catch { /* skip */ }
+    }
+  }
+  if (fs.existsSync(customSkillsDir)) {
+    for (const e of fs.readdirSync(customSkillsDir)) {
+      try {
+        if (fs.statSync(path.join(customSkillsDir, e)).isDirectory()) {
+          available.set(e, `/app/skills/custom/${e}`);
+        }
+      } catch { /* skip */ }
+    }
   }
 
-  const desiredSet = new Set(desired);
+  // Determine desired set: name → container target
+  let desired: Map<string, string>;
+  if (containerConfig.skills === 'all') {
+    desired = available;
+  } else {
+    desired = new Map(
+      containerConfig.skills
+        .filter((s) => available.has(s))
+        .map((s) => [s, available.get(s)!]),
+    );
+  }
 
-  // Remove symlinks not in the desired set
+  // Remove symlinks that are no longer in the desired set
   for (const entry of fs.readdirSync(skillsDir)) {
     const entryPath = path.join(skillsDir, entry);
-    let isSymlink = false;
     try {
-      isSymlink = fs.lstatSync(entryPath).isSymbolicLink();
-    } catch {
-      continue;
-    }
-    if (isSymlink && !desiredSet.has(entry)) {
-      fs.unlinkSync(entryPath);
-    }
+      if (fs.lstatSync(entryPath).isSymbolicLink() && !desired.has(entry)) {
+        fs.unlinkSync(entryPath);
+      }
+    } catch { /* skip */ }
   }
 
-  // Create symlinks for desired skills (container path targets)
-  for (const skill of desired) {
+  // Create or update symlinks for the desired set
+  for (const [skill, containerTarget] of desired) {
     const linkPath = path.join(skillsDir, skill);
-    let exists = false;
     try {
-      fs.lstatSync(linkPath);
-      exists = true;
-    } catch {
-      /* missing */
-    }
-    if (!exists) {
-      fs.symlinkSync(`/app/skills/${skill}`, linkPath);
-    }
+      const stat = fs.lstatSync(linkPath);
+      if (stat.isSymbolicLink()) {
+        if (fs.readlinkSync(linkPath) === containerTarget) continue;
+        fs.unlinkSync(linkPath); // stale target — recreate below
+      } else {
+        continue; // not a symlink, leave it alone
+      }
+    } catch { /* missing — fall through to create */ }
+    fs.symlinkSync(containerTarget, linkPath);
   }
 }
 
@@ -459,6 +477,14 @@ async function buildContainerArgs(
     }
   }
 
+  // Forward CONTAINER_SECRET_* vars from .env into the container as-is.
+  // This is the V2 mechanism for injecting secrets that aren't API keys
+  // (e.g. iCal URLs, webhook secrets) that OneCLI doesn't proxy.
+  const containerSecrets = readEnvFileByPrefix('CONTAINER_SECRET_');
+  for (const [key, value] of Object.entries(containerSecrets)) {
+    args.push('-e', `${key}=${value}`);
+  }
+
   // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
   // are routed through the agent vault for credential injection. Treated as
   // a transient hard failure: if we can't wire the gateway, we don't spawn.
@@ -472,6 +498,22 @@ async function buildContainerArgs(
     throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
   }
   log.info('OneCLI gateway applied', { containerName });
+
+  // If the user has a Claude subscription (OAuth), switch the container to OAuth mode:
+  // set CLAUDE_CODE_OAUTH_TOKEN=placeholder and blank out ANTHROPIC_API_KEY (added by
+  // OneCLI). Claude Code 2.x uses ANTHROPIC_API_KEY when both vars are present, so we
+  // must clear it. The OneCLI proxy then intercepts Authorization: Bearer placeholder
+  // and injects the real token from the vault.
+  const credsPath = path.join(process.env.HOME ?? '', '.claude', '.credentials.json');
+  try {
+    const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as Record<string, unknown>;
+    if ((creds?.claudeAiOauth as Record<string, unknown> | undefined)?.accessToken) {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+      args.push('-e', 'ANTHROPIC_API_KEY=');
+    }
+  } catch {
+    // No credentials file — API key mode via OneCLI is correct
+  }
 
   // Host gateway
   args.push(...hostGatewayArgs());

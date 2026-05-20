@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
-import { execFile } from 'child_process';
+import { registerTools } from './server.js';
+import type { McpToolDefinition } from './types.js';
 
 function log(msg: string): void {
   console.error(`[web-browse] ${msg}`);
@@ -22,7 +23,7 @@ export const INJECTION_PATTERNS: RegExp[] = [
   /you\s+are\s+now\s+(a\s+)?different/gi,
   /system\s*:\s*(new\s+)?directive/gi,
   /override\s+(your\s+)?(guidelines?|instructions?|rules?)/gi,
-  /SYSTEM\s+MESSAGE\s*:/gi,
+  /SYSTEM\s+MESSAGE\s*:/g,
   /disregard\s+(everything|all)\s+(above|before|prior)/gi,
   /new\s+instruction\s*:/gi,
   /forget\s+(everything|all)\s+(you\s+were|was)\s+told/gi,
@@ -72,100 +73,23 @@ export function sanitize(text: string): { clean: string; flagged: string[] } {
     const matches = clean.match(re);
     if (matches) {
       flagged.push(...matches);
-      clean = clean.replace(re, '[content removed]');
+      clean = clean.replace(new RegExp(source, flags), '[content removed]');
     }
   }
   return { clean, flagged };
 }
 
-// Run an agent-browser subcommand, ignoring non-zero exit codes.
-// Returns stdout as a string (empty on error).
-function runBrowser(args: string[]): Promise<string> {
-  return new Promise((resolve) => {
-    execFile('agent-browser', args, { timeout: 30_000 }, (_err, stdout) => {
-      resolve(stdout || '');
-    });
-  });
-}
+// Handler and tool definition added in Task 3.
+// Placeholder export so index.ts import compiles before Task 3 is complete.
+export const browseWeb: McpToolDefinition = {
+  tool: {
+    name: 'browse_web',
+    description: 'Browse a URL — implementation in progress.',
+    inputSchema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  async handler() {
+    return { content: [{ type: 'text' as const, text: 'Error: not yet implemented' }], isError: true };
+  },
+};
 
-// Module-level promise chain ensures only one agent-browser session runs at a time.
-// agent-browser manages a single browser process per container.
-let browserLock: Promise<void> = Promise.resolve();
-
-async function withBrowserLock<T>(fn: () => Promise<T>): Promise<T> {
-  let release!: () => void;
-  const acquired = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const prev = browserLock;
-  browserLock = acquired;
-  await prev;
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
-}
-
-export async function browseWebHandler(args: {
-  url: string;
-  fields_to_extract: string[];
-}) {
-  const { url, fields_to_extract: fieldsToExtract } = args;
-
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    return err('url must start with http:// or https://');
-  }
-
-  const domain = parseDomain(url);
-  if (!domain) return err(`Could not parse domain from URL: ${url}`);
-
-  const trustedDomains = loadTrustedDomains();
-  const trusted = trustedDomains.includes(domain);
-
-  log(`browse url=${url} domain=${domain} trusted=${trusted} fields=[${fieldsToExtract.join(',')}]`);
-
-  return withBrowserLock(async () => {
-    try {
-      await runBrowser(['open', url]);
-      const snapshot = await runBrowser(['snapshot', '-c']);
-      await runBrowser(['close']);
-
-      log(`done url=${url} snapshot_len=${snapshot.length}`);
-      return buildBrowseResult(url, domain, trusted, snapshot, fieldsToExtract);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log(`error url=${url}: ${msg}`);
-      await runBrowser(['close']);
-      return err(`Failed to browse ${url}: ${msg}`);
-    }
-  });
-}
-
-/**
- * Build the structured MCP response from a raw browser snapshot.
- * Pure function — no I/O. Exported for testing.
- */
-export function buildBrowseResult(
-  url: string,
-  domain: string,
-  trusted: boolean,
-  snapshot: string,
-  fieldsToExtract: string[],
-) {
-  const { clean, flagged } = sanitize(snapshot);
-
-  const fields: Record<string, string> = {};
-  fields.content = clean;
-  if (fieldsToExtract.includes('summary')) {
-    fields.summary = clean.slice(0, 1200).trim();
-  }
-
-  const result: Record<string, unknown> = { url, domain, trusted, fields };
-  if (flagged.length > 0) {
-    result.flagged = `Injection patterns detected and removed: ${flagged.join('; ')}`;
-    log(`flagged injection patterns at ${url}: ${flagged.join(', ')}`);
-  }
-
-  return ok(JSON.stringify(result, null, 2));
-}
+registerTools([browseWeb]);

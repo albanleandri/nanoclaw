@@ -19,6 +19,14 @@ vi.mock('./container-runner.js', () => ({
   buildAgentGroupImage: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockDeliverViaPool = vi.fn<
+  (agentGroupId: string, platformId: string, content: Record<string, unknown>) => Promise<string | undefined>
+>();
+vi.mock('./channels/telegram-pool.js', () => ({
+  hasPoolBots: () => true,
+  deliverViaPool: (a: string, b: string, c: Record<string, unknown>) => mockDeliverViaPool(a, b, c),
+}));
+
 vi.mock('./config.js', async () => {
   const actual = await vi.importActual<typeof import('./config.js')>('./config.js');
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-delivery' };
@@ -217,6 +225,95 @@ describe('deliverSessionMessages — retry and permanent failure', () => {
     // Attempt 3 — not called, message already delivered
     await deliverSessionMessages(session);
     expect(callCount).toBe(2);
+  });
+});
+
+describe('deliverSessionMessages — telegram pool bot routing guard', () => {
+  beforeEach(() => {
+    mockDeliverViaPool.mockReset();
+    mockDeliverViaPool.mockResolvedValue('pool-msg-1');
+  });
+
+  function insertOutboundWith(agentGroupId: string, sessionId: string, msgId: string, content: object): void {
+    const db = new Database(outboundDbPath(agentGroupId, sessionId));
+    db.prepare(
+      `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
+       VALUES (?, datetime('now'), 'chat', 'telegram:123', 'telegram', ?)`,
+    ).run(msgId, JSON.stringify(content));
+    db.close();
+  }
+
+  it('routes to pool bot when bot_index is provided', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutboundWith('ag-1', session.id, 'out-pool-1', { text: 'hi', bot_index: 2, sender: 'Bedtime Story' });
+
+    const mainCalls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_ct, _pid, _tid, _kind, content) {
+        mainCalls.push(content);
+        return 'main-msg';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    expect(mockDeliverViaPool).toHaveBeenCalledOnce();
+    expect(mainCalls).toHaveLength(0);
+  });
+
+  it('does NOT route to pool bot when sender is provided but bot_index is absent', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutboundWith('ag-1', session.id, 'out-sender-only', { text: 'hi', sender: 'Weekend Ideas' });
+
+    const mainCalls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_ct, _pid, _tid, _kind, content) {
+        mainCalls.push(content);
+        return 'main-msg';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    expect(mockDeliverViaPool).not.toHaveBeenCalled();
+    expect(mainCalls).toHaveLength(1);
+  });
+
+  it('does NOT route to pool bot when neither sender nor bot_index is present', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutboundWith('ag-1', session.id, 'out-plain', { text: 'plain reply' });
+
+    const mainCalls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_ct, _pid, _tid, _kind, content) {
+        mainCalls.push(content);
+        return 'main-msg';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    expect(mockDeliverViaPool).not.toHaveBeenCalled();
+    expect(mainCalls).toHaveLength(1);
+  });
+
+  it('falls through to main adapter when pool bot returns undefined', async () => {
+    mockDeliverViaPool.mockResolvedValue(undefined);
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutboundWith('ag-1', session.id, 'out-pool-fallback', { text: 'hi', bot_index: 0 });
+
+    const mainCalls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_ct, _pid, _tid, _kind, content) {
+        mainCalls.push(content);
+        return 'main-msg';
+      },
+    });
+
+    await deliverSessionMessages(session);
+    expect(mockDeliverViaPool).toHaveBeenCalledOnce();
+    expect(mainCalls).toHaveLength(1);
   });
 });
 

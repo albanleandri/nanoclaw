@@ -13,6 +13,16 @@ If you are a fresh install (you ran `git clone`, not `git pull`) and there are n
 
 ---
 
+@AGENTS.md
+
+## Claude-only note
+- Use `AGENTS.md` as the shared instruction source. Keep Claude-specific additions here small and non-conflicting.
+- Prefer repo scripts and `package.json` commands over repeating long shell snippets in Claude-only instructions.
+- For handoff context, prefer `docs/HANDOFF.local.md` when present; otherwise use the tracked `docs/HANDOFF.md`.
+- Runtime tools and skills are group-specific. Non-main groups created through the main chat should usually have explicit `containerConfig.allowedTools` and `containerConfig.enabledSkills` selections.
+
+---
+
 # NanoClaw
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. Architecture lives in `docs/`.

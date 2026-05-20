@@ -42,8 +42,8 @@ export function readEnvFile(keys: string[]): Record<string, string> {
 }
 
 /**
- * Returns all key/value pairs from .env whose keys start with prefix.
- * Follows the same quote-stripping and comment-skipping logic as readEnvFile.
+ * Parse the .env file and return all entries whose key starts with `prefix`.
+ * Same security model as readEnvFile — does not touch process.env.
  */
 export function readEnvFileByPrefix(prefix: string): Record<string, string> {
   const envFile = path.join(process.cwd(), '.env');
@@ -53,6 +53,7 @@ export function readEnvFileByPrefix(prefix: string): Record<string, string> {
   } catch {
     return {};
   }
+
   const result: Record<string, string> = {};
   for (const line of content.split('\n')) {
     const trimmed = line.trim();

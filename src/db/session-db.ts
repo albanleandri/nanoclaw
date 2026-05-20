@@ -146,6 +146,21 @@ export function countDueMessages(db: Database.Database): number {
   ).count;
 }
 
+/** Return the timestamp of the oldest due pending trigger message, or null if none. */
+export function getOldestDuePendingTimestamp(db: Database.Database): string | null {
+  const row = db
+    .prepare(
+      `SELECT timestamp FROM messages_in
+       WHERE status = 'pending'
+         AND trigger = 1
+         AND (process_after IS NULL OR datetime(process_after) <= datetime('now'))
+       ORDER BY timestamp ASC
+       LIMIT 1`,
+    )
+    .get() as { timestamp: string } | undefined;
+  return row?.timestamp ?? null;
+}
+
 export function markMessageFailed(db: Database.Database, messageId: string): void {
   db.prepare("UPDATE messages_in SET status = 'failed' WHERE id = ?").run(messageId);
 }
