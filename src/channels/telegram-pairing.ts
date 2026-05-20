@@ -128,7 +128,11 @@ export async function createPairing(intent: PairingIntent): Promise<PairingRecor
         log.info('Pairing superseded by new request', { code: r.code, intent });
       }
     }
-    const active = new Set(store.pairings.filter((r) => r.status === 'pending').map((r) => r.code));
+    // Avoid reusing any retained code, not just pending ones. A superseded
+    // setup prompt may still be visible to the operator, so immediate reuse
+    // of an invalidated code is confusing and makes collision-sensitive tests
+    // nondeterministic.
+    const active = new Set(store.pairings.map((r) => r.code));
     const record: PairingRecord = {
       code: generateCode(active),
       intent,

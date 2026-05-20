@@ -14,14 +14,14 @@ export async function readClaudeCredentials(
     raw = await readFile(credentialsPath, 'utf-8');
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    throw new Error(`credentials file not found: ${credentialsPath}` + (code ? ` (${code})` : ''));
+    throw new Error(`credentials file not found: ${credentialsPath}` + (code ? ` (${code})` : ''), { cause: err });
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`failed to parse credentials file: ${credentialsPath}`);
+  } catch (err: unknown) {
+    throw new Error(`failed to parse credentials file: ${credentialsPath}`, { cause: err });
   }
 
   const token =
@@ -59,8 +59,7 @@ export async function updateOnecliSecret(opts: {
 }): Promise<void> {
   const fetchFn = opts.fetch ?? globalThis.fetch;
   const url = `${opts.onecliUrl}/api/secrets/${opts.secretId}`;
-  let res: Response;
-  res = await fetchFn(url, {
+  const res = await fetchFn(url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value: opts.token }),

@@ -40,7 +40,9 @@ export function resetCircuitBreaker(): void {
   try {
     fs.unlinkSync(CB_PATH);
     log.info('Circuit breaker reset on clean shutdown');
-  } catch {}
+  } catch {
+    // Missing state file is fine on first clean shutdown.
+  }
 }
 
 export async function enforceStartupBackoff(): Promise<void> {

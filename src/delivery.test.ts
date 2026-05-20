@@ -33,14 +33,7 @@ vi.mock('./config.js', async () => {
 
 const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 
-import {
-  initTestDb,
-  closeDb,
-  runMigrations,
-  createAgentGroup,
-  createMessagingGroup,
-  createMessagingGroupAgent,
-} from './db/index.js';
+import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
 import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';

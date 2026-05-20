@@ -15,7 +15,7 @@ function err(text: string) {
 }
 
 // Path at which the trusted domains JSON is mounted inside the container.
-export const TRUSTED_DOMAINS_PATH = '/workspace/group/trusted_domains.json';
+export const TRUSTED_DOMAINS_PATH = '/workspace/agent/trusted_domains.json';
 
 // Known prompt injection patterns. Each regex must have the `g` and `i` flags.
 export const INJECTION_PATTERNS: RegExp[] = [
@@ -79,17 +79,99 @@ export function sanitize(text: string): { clean: string; flagged: string[] } {
   return { clean, flagged };
 }
 
-// Handler and tool definition added in Task 3.
-// Placeholder export so index.ts import compiles before Task 3 is complete.
+export function isTrustedDomain(domain: string, trustedDomains: string[]): boolean {
+  return trustedDomains.some((trusted) => domain === trusted || domain.endsWith(`.${trusted}`));
+}
+
+function htmlToText(raw: string): string {
+  return raw
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface BrowseWebArgs {
+  url?: unknown;
+  fields_to_extract?: unknown;
+  fetch?: typeof globalThis.fetch;
+}
+
+export async function browseWebHandler(args: BrowseWebArgs) {
+  const url = typeof args.url === 'string' ? args.url : '';
+  if (!url) return err('url is required');
+  if (!/^https?:\/\//i.test(url)) return err('url must start with http:// or https://');
+
+  const domain = parseDomain(url);
+  if (!domain) return err('invalid URL');
+
+  const fetchFn = args.fetch ?? globalThis.fetch;
+  let res: Response;
+  try {
+    res = await fetchFn(url, {
+      headers: {
+        'user-agent': 'NanoClaw browse_web/1.0',
+        accept: 'text/html,text/plain,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+      },
+    });
+  } catch (fetchErr) {
+    return err(`fetch failed: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`);
+  }
+
+  if (!res.ok) return err(`fetch failed: ${res.status} ${res.statusText}`.trim());
+
+  const contentType = res.headers.get('content-type') ?? '';
+  const raw = await res.text();
+  const extracted = contentType.includes('html') ? htmlToText(raw) : raw.replace(/\s+/g, ' ').trim();
+  const { clean, flagged } = sanitize(extracted);
+
+  const fieldsToExtract = Array.isArray(args.fields_to_extract)
+    ? args.fields_to_extract.filter((f): f is string => typeof f === 'string')
+    : [];
+  const fields: Record<string, string> = { content: clean };
+  if (fieldsToExtract.includes('summary')) {
+    fields.summary = clean.slice(0, 1200);
+  }
+
+  const trustedDomains = loadTrustedDomains();
+  const result = {
+    url,
+    domain,
+    trusted: isTrustedDomain(domain, trustedDomains),
+    sanitized: flagged.length > 0,
+    flaggedPatterns: flagged,
+    fields,
+  };
+
+  return ok(JSON.stringify(result, null, 2));
+}
+
 export const browseWeb: McpToolDefinition = {
   tool: {
     name: 'browse_web',
-    description: 'Browse a URL — implementation in progress.',
-    inputSchema: { type: 'object' as const, properties: {}, required: [] },
+    description:
+      'Browse a URL, strip active content, remove known prompt-injection phrases, and return structured JSON.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        url: { type: 'string', description: 'Full URL to browse. Must start with https:// or http://.' },
+        fields_to_extract: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional extraction hints. Include "summary" to get a short summary field.',
+        },
+      },
+      required: ['url'],
+    },
   },
-  async handler() {
-    return { content: [{ type: 'text' as const, text: 'Error: not yet implemented' }], isError: true };
-  },
+  handler: browseWebHandler,
 };
 
 registerTools([browseWeb]);
