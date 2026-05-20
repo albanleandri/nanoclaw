@@ -1,9 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import {
-  readClaudeCredentials,
-  updateOnecliSecret,
-  refreshOnecliToken,
-} from './onecli-token-refresh.js';
+import { readClaudeCredentials, updateOnecliSecret, refreshOnecliToken } from './onecli-token-refresh.js';
 
 // --- readClaudeCredentials ---
 
@@ -27,37 +23,37 @@ describe('readClaudeCredentials', () => {
   it('throws when the credentials file is missing', async () => {
     const readFile = vi.fn().mockRejectedValue(Object.assign(new Error('no such file'), { code: 'ENOENT' }));
 
-    await expect(readClaudeCredentials('/missing/.credentials.json', readFile))
-      .rejects.toThrow('credentials file not found');
+    await expect(readClaudeCredentials('/missing/.credentials.json', readFile)).rejects.toThrow(
+      'credentials file not found',
+    );
   });
 
   it('throws when the file contains invalid JSON', async () => {
     const readFile = vi.fn().mockResolvedValue('not json {{{');
 
-    await expect(readClaudeCredentials('/fake/.credentials.json', readFile))
-      .rejects.toThrow('failed to parse credentials file');
+    await expect(readClaudeCredentials('/fake/.credentials.json', readFile)).rejects.toThrow(
+      'failed to parse credentials file',
+    );
   });
 
   it('throws when claudeAiOauth key is absent', async () => {
     const readFile = vi.fn().mockResolvedValue(JSON.stringify({ someOtherKey: {} }));
 
-    await expect(readClaudeCredentials('/fake/.credentials.json', readFile))
-      .rejects.toThrow('claudeAiOauth.accessToken missing');
+    await expect(readClaudeCredentials('/fake/.credentials.json', readFile)).rejects.toThrow(
+      'claudeAiOauth.accessToken missing',
+    );
   });
 
   it('throws when accessToken is an empty string', async () => {
-    const readFile = vi.fn().mockResolvedValue(
-      JSON.stringify({ claudeAiOauth: { accessToken: '', expiresAt: 9999 } }),
-    );
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: '', expiresAt: 9999 } }));
 
-    await expect(readClaudeCredentials('/fake/.credentials.json', readFile))
-      .rejects.toThrow('claudeAiOauth.accessToken missing');
+    await expect(readClaudeCredentials('/fake/.credentials.json', readFile)).rejects.toThrow(
+      'claudeAiOauth.accessToken missing',
+    );
   });
 
   it('defaults expiresAt to 0 when omitted', async () => {
-    const readFile = vi.fn().mockResolvedValue(
-      JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-xyz' } }),
-    );
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-xyz' } }));
 
     const result = await readClaudeCredentials('/fake/.credentials.json', readFile);
 
@@ -125,9 +121,11 @@ describe('updateOnecliSecret', () => {
 
 describe('refreshOnecliToken', () => {
   it('reads credentials and updates the OneCLI secret', async () => {
-    const readFile = vi.fn().mockResolvedValue(
-      JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-fresh', expiresAt: 9999999999999 } }),
-    );
+    const readFile = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-fresh', expiresAt: 9999999999999 } }),
+      );
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -166,9 +164,9 @@ describe('refreshOnecliToken', () => {
   });
 
   it('propagates OneCLI update errors', async () => {
-    const readFile = vi.fn().mockResolvedValue(
-      JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: 9999 } }),
-    );
+    const readFile = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: 9999 } }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,

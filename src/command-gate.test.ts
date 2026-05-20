@@ -34,12 +34,9 @@ describe('gateCommand — non-slash messages', () => {
 });
 
 describe('gateCommand — filtered commands', () => {
-  it.each(['/help', '/login', '/logout', '/doctor', '/config', '/remote-control'])(
-    'filters %s silently',
-    (cmd) => {
-      expect(gateCommand(cmd, 'u-1', 'ag-1')).toEqual({ action: 'filter' });
-    },
-  );
+  it.each(['/help', '/login', '/logout', '/doctor', '/config', '/remote-control'])('filters %s silently', (cmd) => {
+    expect(gateCommand(cmd, 'u-1', 'ag-1')).toEqual({ action: 'filter' });
+  });
 
   it('filters commands case-insensitively', () => {
     expect(gateCommand('/HELP', 'u-1', 'ag-1')).toEqual({ action: 'filter' });

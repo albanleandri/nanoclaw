@@ -14,9 +14,7 @@ export async function readClaudeCredentials(
     raw = await readFile(credentialsPath, 'utf-8');
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    throw new Error(
-      `credentials file not found: ${credentialsPath}` + (code ? ` (${code})` : ''),
-    );
+    throw new Error(`credentials file not found: ${credentialsPath}` + (code ? ` (${code})` : ''));
   }
 
   let parsed: unknown;

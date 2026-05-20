@@ -19,9 +19,8 @@ vi.mock('./container-runner.js', () => ({
   buildAgentGroupImage: vi.fn().mockResolvedValue(undefined),
 }));
 
-const mockDeliverViaPool = vi.fn<
-  (agentGroupId: string, platformId: string, content: Record<string, unknown>) => Promise<string | undefined>
->();
+const mockDeliverViaPool =
+  vi.fn<(agentGroupId: string, platformId: string, content: Record<string, unknown>) => Promise<string | undefined>>();
 vi.mock('./channels/telegram-pool.js', () => ({
   hasPoolBots: () => true,
   deliverViaPool: (a: string, b: string, c: Record<string, unknown>) => mockDeliverViaPool(a, b, c),

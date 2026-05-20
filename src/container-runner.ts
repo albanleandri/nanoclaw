@@ -404,7 +404,9 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
         if (fs.statSync(path.join(sharedSkillsDir, e)).isDirectory()) {
           available.set(e, `/app/skills/${e}`);
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
   if (fs.existsSync(customSkillsDir)) {
@@ -413,7 +415,9 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
         if (fs.statSync(path.join(customSkillsDir, e)).isDirectory()) {
           available.set(e, `/app/skills/custom/${e}`);
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 
@@ -422,11 +426,7 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
   if (containerConfig.skills === 'all') {
     desired = available;
   } else {
-    desired = new Map(
-      containerConfig.skills
-        .filter((s) => available.has(s))
-        .map((s) => [s, available.get(s)!]),
-    );
+    desired = new Map(containerConfig.skills.filter((s) => available.has(s)).map((s) => [s, available.get(s)!]));
   }
 
   // Remove symlinks that are no longer in the desired set
@@ -436,7 +436,9 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
       if (fs.lstatSync(entryPath).isSymbolicLink() && !desired.has(entry)) {
         fs.unlinkSync(entryPath);
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   // Create or update symlinks for the desired set
@@ -450,7 +452,9 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
       } else {
         continue; // not a symlink, leave it alone
       }
-    } catch { /* missing — fall through to create */ }
+    } catch {
+      /* missing — fall through to create */
+    }
     fs.symlinkSync(containerTarget, linkPath);
   }
 }
