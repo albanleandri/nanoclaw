@@ -9,7 +9,7 @@ import os from 'os';
 import path from 'path';
 import { request as httpsRequest } from 'https';
 
-import { logger } from './logger.js';
+import { log } from './log.js';
 
 export interface ClaudeOAuthCredentials {
   accessToken: string;
@@ -93,10 +93,7 @@ export async function defaultFetcher(
           try {
             const data = JSON.parse(Buffer.concat(chunks).toString());
             if (!data.access_token) {
-              logger.error(
-                { status: res.statusCode, data },
-                'Token refresh failed',
-              );
+              log.error('Token refresh failed', { status: res.statusCode, data });
               resolve(null);
               return;
             }
@@ -113,7 +110,7 @@ export async function defaultFetcher(
               rateLimitTier: data.rate_limit_tier ?? '',
             });
           } catch (err) {
-            logger.error({ err }, 'Failed to parse token refresh response');
+            log.error('Failed to parse token refresh response', { err });
             resolve(null);
           }
         });
@@ -125,7 +122,7 @@ export async function defaultFetcher(
     });
 
     req.on('error', (err: Error) => {
-      logger.error({ err }, 'Token refresh request failed');
+      log.error('Token refresh request failed', { err });
       resolve(null);
     });
 
@@ -148,7 +145,7 @@ function writeClaudeCredentials(
     existing.claudeAiOauth = creds;
     fs.writeFileSync(filePath, JSON.stringify(existing, null, 2) + '\n');
   } catch (err) {
-    logger.error({ err }, 'Failed to write refreshed Claude credentials');
+    log.error('Failed to write refreshed Claude credentials', { err });
   }
 }
 
@@ -170,20 +167,16 @@ export async function getValidClaudeOAuthToken(
   }
 
   if (!creds.refreshToken) {
-    logger.warn(
-      'Claude OAuth credentials have no refreshToken — cannot refresh',
-    );
+    log.warn('Claude OAuth credentials have no refreshToken — cannot refresh');
     return creds.accessToken;
   }
 
-  logger.info('Claude OAuth token expired or expiring soon, refreshing...');
+  log.info('Claude OAuth token expired or expiring soon, refreshing...');
   const refresh = fetcher ?? defaultFetcher;
   const newCreds = await refresh(creds.refreshToken, creds.scopes);
 
   if (!newCreds) {
-    logger.warn(
-      'Token refresh failed — using potentially expired token as fallback',
-    );
+    log.warn('Token refresh failed — using potentially expired token as fallback');
     return creds.accessToken;
   }
 

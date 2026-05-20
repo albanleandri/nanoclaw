@@ -219,7 +219,7 @@ AskUserQuestion: I can do deep research on [topic] using Parallel's Task API. Th
 Build the container with updated agent runner:
 
 ```bash
-npm run container:build
+./container/build.sh
 ```
 
 Verify the build:
@@ -229,17 +229,22 @@ echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Containe
 
 ### 7. Restart Service
 
-Rebuild the main app and restart:
+Rebuild the main app and restart.
+
+Run from your NanoClaw project root:
 
 ```bash
-npm run build
-npm run service:restart
+pnpm run build
+source setup/lib/install-slug.sh
+launchctl kickstart -k gui/$(id -u)/$(launchd_label)  # macOS
+# Linux: systemctl --user restart $(systemd_unit)
 ```
 
 Wait 3 seconds for service to start, then verify:
 ```bash
 sleep 3
-npm run service:status
+launchctl list | grep "$(. setup/lib/install-slug.sh && launchd_label)"  # macOS
+# Linux: systemctl --user status "$(. setup/lib/install-slug.sh && systemd_unit)"
 ```
 
 ### 8. Test Integration
@@ -273,7 +278,7 @@ Look for: `Parallel AI MCP servers configured`
 - Check agent-runner logs for "Parallel AI MCP servers configured" message
 
 **Task polling not working:**
-- Verify scheduled task was created: `sqlite3 store/messages.db "SELECT * FROM scheduled_tasks"`
+- Verify scheduled task was created: `pnpm exec tsx scripts/q.ts store/messages.db "SELECT * FROM scheduled_tasks"`
 - Check task runs: `tail -f logs/nanoclaw.log | grep "scheduled task"`
 - Ensure task prompt includes proper Parallel MCP tool names
 
@@ -284,5 +289,5 @@ To remove Parallel AI integration:
 1. Remove from .env: `sed -i.bak '/PARALLEL_API_KEY/d' .env`
 2. Revert changes to container-runner.ts and agent-runner/src/index.ts
 3. Remove Web Research Tools section from groups/main/CLAUDE.md
-4. Rebuild: `npm run container:build && npm run build`
-5. Restart: `npm run service:restart`
+4. Rebuild: `./container/build.sh && pnpm run build`
+5. Restart: `source setup/lib/install-slug.sh && launchctl kickstart -k gui/$(id -u)/$(launchd_label)` (macOS) or `source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)` (Linux)

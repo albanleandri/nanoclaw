@@ -88,11 +88,19 @@ Implementation:
 
 ## After Changes
 
-Always tell the user:
+Always tell the user.
+
+Run from your NanoClaw project root:
+
 ```bash
 # Rebuild and restart
-npm run build
-npm run service:restart
+pnpm run build
+source setup/lib/install-slug.sh
+# macOS:
+launchctl unload ~/Library/LaunchAgents/$(launchd_label).plist
+launchctl load ~/Library/LaunchAgents/$(launchd_label).plist
+# Linux:
+# systemctl --user restart $(systemd_unit)
 ```
 
 ## Example Interaction

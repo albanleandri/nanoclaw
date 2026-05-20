@@ -54,7 +54,7 @@ git remote -v
 If `upstream` is missing, add it:
 
 ```bash
-git remote add upstream https://github.com/qwibitai/nanoclaw.git
+git remote add upstream https://github.com/nanocoai/nanoclaw.git
 ```
 
 ### Merge the skill branch
@@ -87,8 +87,8 @@ done
 ### Validate code changes
 
 ```bash
-npm run build
-npm run container:build
+pnpm run build
+./container/build.sh
 ```
 
 Build must be clean before proceeding.
@@ -122,8 +122,12 @@ OLLAMA_HOST=http://your-ollama-host:11434
 
 ### Restart the service
 
+Run from your NanoClaw project root:
+
 ```bash
-npm run service:restart
+source setup/lib/install-slug.sh
+launchctl kickstart -k gui/$(id -u)/$(launchd_label)  # macOS
+systemctl --user restart $(systemd_unit)              # Linux
 ```
 
 ## Phase 4: Verify
@@ -171,7 +175,7 @@ Look for:
 The agent is trying to run `ollama` CLI inside the container instead of using the MCP tools. This means:
 1. The MCP server wasn't registered — check `container/agent-runner/src/index.ts` has the `ollama` entry in `mcpServers`
 2. The per-group source wasn't updated — re-copy files (see Phase 2)
-3. The container wasn't rebuilt — run `npm run container:build`
+3. The container wasn't rebuilt — run `./container/build.sh`
 
 ### "Failed to connect to Ollama"
 

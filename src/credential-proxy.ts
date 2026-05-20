@@ -20,7 +20,7 @@ import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
 
 import { readEnvFile } from './env.js';
-import { logger } from './logger.js';
+import { log } from './log.js';
 import { getValidClaudeOAuthToken } from './claude-credentials.js';
 
 export type AuthMode = 'api-key' | 'oauth';
@@ -85,10 +85,7 @@ export function startCredentialProxy(
           if (secrets.ANTHROPIC_API_KEY) {
             headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
           } else {
-            logger.warn(
-              { url: req.url },
-              'API-key mode: no key available — request will reach upstream unauthenticated',
-            );
+            log.warn('API-key mode: no key available — request will reach upstream unauthenticated', { url: req.url });
           }
         } else {
           // OAuth mode: inject Bearer token and ensure the oauth-2025-04-20 beta
@@ -113,10 +110,7 @@ export function startCredentialProxy(
                 : 'oauth-2025-04-20';
             }
           } else {
-            logger.warn(
-              { url: req.url },
-              'OAuth mode: no token available — request will reach upstream unauthenticated',
-            );
+            log.warn('OAuth mode: no token available — request will reach upstream unauthenticated', { url: req.url });
           }
         }
 
@@ -135,10 +129,7 @@ export function startCredentialProxy(
         );
 
         upstream.on('error', (err) => {
-          logger.error(
-            { err, url: req.url },
-            'Credential proxy upstream error',
-          );
+          log.error('Credential proxy upstream error', { err, url: req.url });
           if (!res.headersSent) {
             res.writeHead(502);
             res.end('Bad Gateway');
@@ -151,10 +142,7 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info(
-        { port, host, authMode: initialAuthMode },
-        'Credential proxy started',
-      );
+      log.info('Credential proxy started', { port, host, authMode: initialAuthMode });
       resolve(server);
     });
 
