@@ -260,26 +260,57 @@ function buildVolumeMounts(
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
+  // Read existing settings or initialise with defaults for new groups
+  let containerSettings: Record<string, unknown>;
+  let settingsIsNew = false;
+  try {
+    containerSettings = JSON.parse(
+      fs.readFileSync(settingsFile, 'utf8'),
+    ) as Record<string, unknown>;
+  } catch {
+    settingsIsNew = true;
+    containerSettings = {
+      env: {
+        // Enable agent swarms (subagent orchestration)
+        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+        // Load CLAUDE.md from additional mounted directories
+        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
+        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+        // Enable Claude's memory feature (persists user preferences between sessions)
+        // https://code.claude.com/docs/en/memory#manage-auto-memory
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+      },
+    };
+  }
+  // Idempotently ensure the RTK PreToolUse hook is present so all container
+  // Bash calls are compressed before reaching the LLM context window.
+  const rtkCommand = 'rtk hook claude';
+  const hooks =
+    (containerSettings.hooks as Record<string, unknown[]> | undefined) ?? {};
+  const preToolUse = (hooks.PreToolUse ?? []) as Array<{
+    matcher?: string;
+    hooks?: Array<{ command?: string }>;
+  }>;
+  const hasRtkHook = preToolUse.some((h) =>
+    h.hooks?.some((cmd) => cmd.command === rtkCommand),
+  );
+  if (settingsIsNew || !hasRtkHook) {
+    if (!hasRtkHook) {
+      containerSettings.hooks = {
+        ...hooks,
+        PreToolUse: [
+          ...preToolUse,
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: rtkCommand }],
+          },
+        ],
+      };
+    }
     fs.writeFileSync(
       settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-          },
-        },
-        null,
-        2,
-      ) + '\n',
+      JSON.stringify(containerSettings, null, 2) + '\n',
     );
   }
 

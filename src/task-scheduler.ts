@@ -169,6 +169,11 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  // Notify the user that the task has started so a missing completion
+  // message is a clear signal that the agent hit its context limit.
+  const promptPreview = task.prompt.split('\n')[0].slice(0, 60);
+  await deps.sendMessage(task.chat_jid, `🔄 ${promptPreview}…`);
+
   try {
     const output = await runContainerAgent(
       group,
@@ -238,6 +243,13 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
+
+  if (error) {
+    await deps.sendMessage(
+      task.chat_jid,
+      `❌ Task failed: ${error.slice(0, 200)}`,
+    );
+  }
 }
 
 let schedulerRunning = false;

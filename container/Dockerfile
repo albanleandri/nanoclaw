@@ -36,6 +36,11 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Install RTK (Rust Token Killer) for token-efficient bash output compression
+RUN curl -Lo /tmp/rtk.tar.gz https://github.com/rtk-ai/rtk/releases/download/v0.40.0/rtk-x86_64-unknown-linux-musl.tar.gz \
+    && tar xzf /tmp/rtk.tar.gz -C /usr/local/bin/ \
+    && rm /tmp/rtk.tar.gz
+
 # Create app directory
 WORKDIR /app
 
