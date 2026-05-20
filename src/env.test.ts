@@ -29,9 +29,7 @@ describe('readEnvFileByPrefix', () => {
   });
 
   it('returns multiple vars matching prefix', () => {
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      'CONTAINER_SECRET_A=foo\nCONTAINER_SECRET_B=bar\n',
-    );
+    vi.mocked(fs.readFileSync).mockReturnValue('CONTAINER_SECRET_A=foo\nCONTAINER_SECRET_B=bar\n');
     expect(readEnvFileByPrefix('CONTAINER_SECRET_')).toEqual({
       CONTAINER_SECRET_A: 'foo',
       CONTAINER_SECRET_B: 'bar',
@@ -51,27 +49,21 @@ describe('readEnvFileByPrefix', () => {
   });
 
   it('strips double quotes from values', () => {
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      'CONTAINER_SECRET_URL="https://example.com"\n',
-    );
+    vi.mocked(fs.readFileSync).mockReturnValue('CONTAINER_SECRET_URL="https://example.com"\n');
     expect(readEnvFileByPrefix('CONTAINER_SECRET_')).toEqual({
       CONTAINER_SECRET_URL: 'https://example.com',
     });
   });
 
   it('strips single quotes from values', () => {
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      "CONTAINER_SECRET_URL='https://example.com'\n",
-    );
+    vi.mocked(fs.readFileSync).mockReturnValue("CONTAINER_SECRET_URL='https://example.com'\n");
     expect(readEnvFileByPrefix('CONTAINER_SECRET_')).toEqual({
       CONTAINER_SECRET_URL: 'https://example.com',
     });
   });
 
   it('ignores comment lines', () => {
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      '# CONTAINER_SECRET_IGNORED=value\nCONTAINER_SECRET_REAL=ok\n',
-    );
+    vi.mocked(fs.readFileSync).mockReturnValue('# CONTAINER_SECRET_IGNORED=value\nCONTAINER_SECRET_REAL=ok\n');
     expect(readEnvFileByPrefix('CONTAINER_SECRET_')).toEqual({
       CONTAINER_SECRET_REAL: 'ok',
     });

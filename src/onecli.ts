@@ -22,10 +22,7 @@ export function isOneCliConfigured(): boolean {
   return getOneCliGatewayConfig() !== null;
 }
 
-export async function applyOneCliContainerConfig(
-  args: string[],
-  agent: string,
-): Promise<boolean> {
+export async function applyOneCliContainerConfig(args: string[], agent: string): Promise<boolean> {
   const config = getOneCliGatewayConfig();
   if (!config) return false;
 

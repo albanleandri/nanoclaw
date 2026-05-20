@@ -24,31 +24,22 @@ const USAGE_LIMIT_PATTERNS = [
 ];
 
 function parseExplicitRetryAt(error: string): string | undefined {
-  const isoMatch = error.match(
-    /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/,
-  );
+  const isoMatch = error.match(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/);
   if (isoMatch) {
     return isoMatch[0];
   }
 
-  const utcMatch = error.match(
-    /\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})? ?UTC\b/i,
-  );
+  const utcMatch = error.match(/\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})? ?UTC\b/i);
   if (!utcMatch) return undefined;
 
-  const normalized = utcMatch[0]
-    .replace(' UTC', 'Z')
-    .replace(' ', 'T')
-    .toUpperCase();
+  const normalized = utcMatch[0].replace(' UTC', 'Z').replace(' ', 'T').toUpperCase();
   const parsed = Date.parse(normalized);
   return Number.isNaN(parsed) ? undefined : new Date(parsed).toISOString();
 }
 
 function parseDurationMs(fragment: string): number | undefined {
   const matches = Array.from(
-    fragment.matchAll(
-      /(\d+)\s*(hours?|hrs?|hr|h|minutes?|mins?|min|m(?!s\b)|seconds?|secs?|sec|s)\b/gi,
-    ),
+    fragment.matchAll(/(\d+)\s*(hours?|hrs?|hr|h|minutes?|mins?|min|m(?!s\b)|seconds?|secs?|sec|s)\b/gi),
   );
   if (matches.length === 0) return undefined;
 
@@ -69,9 +60,7 @@ function parseDurationMs(fragment: string): number | undefined {
 }
 
 function parseRelativeRetryAt(error: string, now: Date): string | undefined {
-  const phraseMatch = error.match(
-    /(?:try again|retry|available again|resets?|reset)\s+(?:in|after)\s+([^\n.]+)/i,
-  );
+  const phraseMatch = error.match(/(?:try again|retry|available again|resets?|reset)\s+(?:in|after)\s+([^\n.]+)/i);
   const durationMs = parseDurationMs(phraseMatch?.[1] ?? error);
   if (!durationMs) return undefined;
   return new Date(now.getTime() + durationMs).toISOString();
@@ -87,28 +76,19 @@ function sameLocalDay(a: Date, b: Date, timeZone: string): boolean {
   return formatter.format(a) === formatter.format(b);
 }
 
-export function detectUsageLimitError(
-  error: string | undefined,
-  now: Date = new Date(),
-): UsageLimitDetection | null {
+export function detectUsageLimitError(error: string | undefined, now: Date = new Date()): UsageLimitDetection | null {
   if (!error) return null;
   if (!USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(error))) {
     return null;
   }
 
-  const retryAt =
-    parseExplicitRetryAt(error) ?? parseRelativeRetryAt(error, now);
-  const suppressUntil =
-    retryAt ??
-    new Date(now.getTime() + DEFAULT_USAGE_LIMIT_SUPPRESS_MS).toISOString();
+  const retryAt = parseExplicitRetryAt(error) ?? parseRelativeRetryAt(error, now);
+  const suppressUntil = retryAt ?? new Date(now.getTime() + DEFAULT_USAGE_LIMIT_SUPPRESS_MS).toISOString();
 
   return { retryAt, suppressUntil };
 }
 
-export function isUsageLimitActive(
-  state: UsageLimitState | undefined,
-  now: Date = new Date(),
-): boolean {
+export function isUsageLimitActive(state: UsageLimitState | undefined, now: Date = new Date()): boolean {
   if (!state) return false;
   return new Date(state.suppressUntil).getTime() > now.getTime();
 }
@@ -123,11 +103,7 @@ export function formatUsageLimitMessage(
   }
 
   const retryAt = new Date(state.retryAt);
-  const options: Intl.DateTimeFormatOptions = sameLocalDay(
-    retryAt,
-    now,
-    timeZone,
-  )
+  const options: Intl.DateTimeFormatOptions = sameLocalDay(retryAt, now, timeZone)
     ? {
         timeZone,
         hour: '2-digit',

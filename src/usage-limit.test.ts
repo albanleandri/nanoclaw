@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  detectUsageLimitError,
-  formatUsageLimitMessage,
-  isUsageLimitActive,
-  UsageLimitState,
-} from './usage-limit.js';
+import { detectUsageLimitError, formatUsageLimitMessage, isUsageLimitActive, UsageLimitState } from './usage-limit.js';
 
 describe('usage-limit detection', () => {
   it('detects explicit ISO reset timestamps', () => {
@@ -31,10 +26,7 @@ describe('usage-limit detection', () => {
   });
 
   it('falls back to a short suppress window when reset time is unavailable', () => {
-    const detection = detectUsageLimitError(
-      '429 quota exceeded for this workspace.',
-      new Date('2026-04-12T13:00:00Z'),
-    );
+    const detection = detectUsageLimitError('429 quota exceeded for this workspace.', new Date('2026-04-12T13:00:00Z'));
 
     expect(detection?.retryAt).toBeUndefined();
     expect(detection?.suppressUntil).toBe('2026-04-12T13:15:00.000Z');
@@ -42,10 +34,7 @@ describe('usage-limit detection', () => {
 
   it('ignores unrelated errors', () => {
     expect(
-      detectUsageLimitError(
-        'Container exited with code 1: ENOENT missing file',
-        new Date('2026-04-12T13:00:00Z'),
-      ),
+      detectUsageLimitError('Container exited with code 1: ENOENT missing file', new Date('2026-04-12T13:00:00Z')),
     ).toBeNull();
   });
 });
@@ -58,9 +47,7 @@ describe('usage-limit messaging', () => {
       new Date('2026-04-12T13:00:00Z'),
     );
 
-    expect(message).toBe(
-      'Usage limit reached. Try again after 16:30 Europe/Zurich.',
-    );
+    expect(message).toBe('Usage limit reached. Try again after 16:30 Europe/Zurich.');
   });
 
   it('formats cross-day retry messages with date', () => {
@@ -70,19 +57,11 @@ describe('usage-limit messaging', () => {
       new Date('2026-04-12T13:00:00Z'),
     );
 
-    expect(message).toBe(
-      'Usage limit reached. Try again after Apr 13, 10:00 Europe/Zurich.',
-    );
+    expect(message).toBe('Usage limit reached. Try again after Apr 13, 10:00 Europe/Zurich.');
   });
 
   it('formats a generic fallback when reset time is unknown', () => {
-    expect(
-      formatUsageLimitMessage(
-        {},
-        'Europe/Zurich',
-        new Date('2026-04-12T13:00:00Z'),
-      ),
-    ).toBe(
+    expect(formatUsageLimitMessage({}, 'Europe/Zurich', new Date('2026-04-12T13:00:00Z'))).toBe(
       "Usage limit reached. I can't process requests right now. Reset time unavailable; try again later.",
     );
   });
@@ -95,11 +74,7 @@ describe('usage-limit messaging', () => {
       lastError: '429 rate limit',
     };
 
-    expect(isUsageLimitActive(state, new Date('2026-04-12T13:10:00Z'))).toBe(
-      true,
-    );
-    expect(isUsageLimitActive(state, new Date('2026-04-12T13:15:00Z'))).toBe(
-      false,
-    );
+    expect(isUsageLimitActive(state, new Date('2026-04-12T13:10:00Z'))).toBe(true);
+    expect(isUsageLimitActive(state, new Date('2026-04-12T13:15:00Z'))).toBe(false);
   });
 });

@@ -20,11 +20,7 @@ export interface ClaudeOAuthCredentials {
   rateLimitTier: string;
 }
 
-export const CREDENTIALS_PATH = path.join(
-  os.homedir(),
-  '.claude',
-  '.credentials.json',
-);
+export const CREDENTIALS_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 
 const REFRESH_URL = 'https://platform.claude.com/v1/oauth/token';
 const REFRESH_TIMEOUT_MS = 10_000; // abort if the token endpoint doesn't respond
@@ -40,9 +36,7 @@ const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
  * Read credentials from the given file path (defaults to ~/.claude/.credentials.json).
  * Returns null if the file is missing, unreadable, or malformed.
  */
-export function readClaudeCredentials(
-  filePath = CREDENTIALS_PATH,
-): ClaudeOAuthCredentials | null {
+export function readClaudeCredentials(filePath = CREDENTIALS_PATH): ClaudeOAuthCredentials | null {
   try {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     return (data?.claudeAiOauth as ClaudeOAuthCredentials) ?? null;
@@ -58,15 +52,9 @@ export function isTokenExpired(expiresAt: number): boolean {
   return Date.now() >= expiresAt - EXPIRY_BUFFER_MS;
 }
 
-export type TokenFetcher = (
-  refreshToken: string,
-  scopes: string[],
-) => Promise<ClaudeOAuthCredentials | null>;
+export type TokenFetcher = (refreshToken: string, scopes: string[]) => Promise<ClaudeOAuthCredentials | null>;
 
-export async function defaultFetcher(
-  refreshToken: string,
-  scopes: string[],
-): Promise<ClaudeOAuthCredentials | null> {
+export async function defaultFetcher(refreshToken: string, scopes: string[]): Promise<ClaudeOAuthCredentials | null> {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       grant_type: 'refresh_token',
@@ -97,15 +85,12 @@ export async function defaultFetcher(
               resolve(null);
               return;
             }
-            const expiresAt = data.expires_in
-              ? Date.now() + data.expires_in * 1000
-              : Date.now() + 8 * 60 * 60 * 1000; // default 8h
+            const expiresAt = data.expires_in ? Date.now() + data.expires_in * 1000 : Date.now() + 8 * 60 * 60 * 1000; // default 8h
             resolve({
               accessToken: data.access_token,
               refreshToken: data.refresh_token ?? refreshToken,
               expiresAt,
-              scopes:
-                typeof data.scope === 'string' ? data.scope.split(' ') : [],
+              scopes: typeof data.scope === 'string' ? data.scope.split(' ') : [],
               subscriptionType: data.subscription_type ?? '',
               rateLimitTier: data.rate_limit_tier ?? '',
             });
@@ -131,10 +116,7 @@ export async function defaultFetcher(
   });
 }
 
-function writeClaudeCredentials(
-  creds: ClaudeOAuthCredentials,
-  filePath: string,
-): void {
+function writeClaudeCredentials(creds: ClaudeOAuthCredentials, filePath: string): void {
   try {
     let existing: Record<string, unknown> = {};
     try {

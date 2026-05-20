@@ -11,11 +11,7 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
 }));
 
-import {
-  startCredentialProxy,
-  closeCredentialProxy,
-  detectAuthMode,
-} from './credential-proxy.js';
+import { startCredentialProxy, closeCredentialProxy, detectAuthMode } from './credential-proxy.js';
 
 function makeRequest(
   port: number,
@@ -27,20 +23,17 @@ function makeRequest(
   headers: http.IncomingHttpHeaders;
 }> {
   return new Promise((resolve, reject) => {
-    const req = http.request(
-      { ...options, hostname: '127.0.0.1', port },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          resolve({
-            statusCode: res.statusCode!,
-            body: Buffer.concat(chunks).toString(),
-            headers: res.headers,
-          });
+    const req = http.request({ ...options, hostname: '127.0.0.1', port }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode!,
+          body: Buffer.concat(chunks).toString(),
+          headers: res.headers,
         });
-      },
-    );
+      });
+    });
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -62,9 +55,7 @@ describe('credential-proxy', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     });
-    await new Promise<void>((resolve) =>
-      upstreamServer.listen(0, '127.0.0.1', resolve),
-    );
+    await new Promise<void>((resolve) => upstreamServer.listen(0, '127.0.0.1', resolve));
     upstreamPort = (upstreamServer.address() as AddressInfo).port;
   });
 
@@ -121,9 +112,7 @@ describe('credential-proxy', () => {
       '{}',
     );
 
-    expect(lastUpstreamHeaders['authorization']).toBe(
-      'Bearer real-oauth-token',
-    );
+    expect(lastUpstreamHeaders['authorization']).toBe('Bearer real-oauth-token');
   });
 
   it('OAuth mode injects Bearer and strips x-api-key on all requests', async () => {
@@ -147,9 +136,7 @@ describe('credential-proxy', () => {
     );
 
     expect(lastUpstreamHeaders['x-api-key']).toBeUndefined();
-    expect(lastUpstreamHeaders['authorization']).toBe(
-      'Bearer real-oauth-token',
-    );
+    expect(lastUpstreamHeaders['authorization']).toBe('Bearer real-oauth-token');
   });
 
   it('strips hop-by-hop headers', async () => {

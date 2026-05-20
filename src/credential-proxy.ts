@@ -29,10 +29,7 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
-export function startCredentialProxy(
-  port: number,
-  host = '127.0.0.1',
-): Promise<Server> {
+export function startCredentialProxy(port: number, host = '127.0.0.1'): Promise<Server> {
   // Read once at startup for the upstream URL and initial log
   const initialSecrets = readEnvFile([
     'ANTHROPIC_AUTH_MODE',
@@ -42,9 +39,7 @@ export function startCredentialProxy(
     'ANTHROPIC_BASE_URL',
   ]);
   const initialAuthMode = detectAuthModeFromSecrets(initialSecrets);
-  const upstreamUrl = new URL(
-    initialSecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
-  );
+  const upstreamUrl = new URL(initialSecrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
 
@@ -60,19 +55,17 @@ export function startCredentialProxy(
         'ANTHROPIC_BASE_URL',
       ]);
       const authMode = detectAuthModeFromSecrets(secrets);
-      const oauthToken =
-        secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+      const oauthToken = secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
 
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', async () => {
         const body = Buffer.concat(chunks);
-        const headers: Record<string, string | number | string[] | undefined> =
-          {
-            ...(req.headers as Record<string, string>),
-            host: upstreamUrl.host,
-            'content-length': body.length,
-          };
+        const headers: Record<string, string | number | string[] | undefined> = {
+          ...(req.headers as Record<string, string>),
+          host: upstreamUrl.host,
+          'content-length': body.length,
+        };
 
         // Strip hop-by-hop headers that must not be forwarded by proxies
         delete headers['connection'];
@@ -92,8 +85,7 @@ export function startCredentialProxy(
           // flag is present. Without that flag the API returns 401 "OAuth
           // authentication is currently not supported."
           // Priority: .env token > ~/.claude/.credentials.json (host Claude token)
-          const resolvedToken =
-            oauthToken || (await getValidClaudeOAuthToken());
+          const resolvedToken = oauthToken || (await getValidClaudeOAuthToken());
           delete headers['x-api-key'];
           delete headers['authorization'];
           if (resolvedToken) {
@@ -101,13 +93,9 @@ export function startCredentialProxy(
             // Append oauth beta flag if not already present.
             // Normalise to a string first — Node may parse repeated headers as string[].
             const rawBeta = headers['anthropic-beta'];
-            const beta = Array.isArray(rawBeta)
-              ? rawBeta.join(',')
-              : ((rawBeta as string | undefined) ?? '');
+            const beta = Array.isArray(rawBeta) ? rawBeta.join(',') : ((rawBeta as string | undefined) ?? '');
             if (!beta.includes('oauth-2025-04-20')) {
-              headers['anthropic-beta'] = beta
-                ? `${beta},oauth-2025-04-20`
-                : 'oauth-2025-04-20';
+              headers['anthropic-beta'] = beta ? `${beta},oauth-2025-04-20` : 'oauth-2025-04-20';
             }
           } else {
             log.warn('OAuth mode: no token available — request will reach upstream unauthenticated', { url: req.url });
@@ -166,12 +154,7 @@ export function closeCredentialProxy(server: Server): Promise<void> {
 /** Detect which auth mode the host is configured for. */
 export function detectAuthMode(): AuthMode {
   return detectAuthModeFromSecrets(
-    readEnvFile([
-      'ANTHROPIC_AUTH_MODE',
-      'ANTHROPIC_API_KEY',
-      'CLAUDE_CODE_OAUTH_TOKEN',
-      'ANTHROPIC_AUTH_TOKEN',
-    ]),
+    readEnvFile(['ANTHROPIC_AUTH_MODE', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN']),
   );
 }
 
