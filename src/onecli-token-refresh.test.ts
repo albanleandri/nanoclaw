@@ -121,11 +121,7 @@ describe('updateOnecliSecret', () => {
 
 describe('refreshOnecliToken', () => {
   it('reads credentials and updates the OneCLI secret', async () => {
-    const readFile = vi
-      .fn()
-      .mockResolvedValue(
-        JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-fresh', expiresAt: 9999999999999 } }),
-      );
+    const getToken = vi.fn().mockResolvedValue('sk-ant-oat01-fresh');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -136,18 +132,21 @@ describe('refreshOnecliToken', () => {
       credentialsPath: '/home/user/.claude/.credentials.json',
       onecliUrl: 'http://172.17.0.1:10254',
       secretId: 'sec-abc',
-      readFile,
+      getToken,
       fetch: fetchMock,
     });
 
-    expect(readFile).toHaveBeenCalledWith('/home/user/.claude/.credentials.json', 'utf-8');
+    expect(getToken).toHaveBeenCalledWith('/home/user/.claude/.credentials.json');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://172.17.0.1:10254/api/secrets/sec-abc');
     expect(JSON.parse(init.body as string).value).toBe('sk-ant-oat01-fresh');
   });
 
-  it('propagates credential read errors before touching OneCLI', async () => {
-    const readFile = vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+  it('throws when no credentials are available (getToken returns null)', async () => {
+    // getValidClaudeOAuthToken returns null when credentials file is absent.
+    // refreshOnecliToken must surface this as a hard error so the systemd
+    // service exits non-zero — alerting the operator that the vault is stale.
+    const getToken = vi.fn().mockResolvedValue(null);
     const fetchMock = vi.fn();
 
     await expect(
@@ -155,18 +154,41 @@ describe('refreshOnecliToken', () => {
         credentialsPath: '/missing/.credentials.json',
         onecliUrl: 'http://172.17.0.1:10254',
         secretId: 'sec-abc',
-        readFile,
+        getToken,
         fetch: fetchMock,
       }),
-    ).rejects.toThrow('credentials file not found');
+    ).rejects.toThrow('No Claude credentials available');
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('pushes a freshly-refreshed token when the stored one is expired', async () => {
+    // This is the regression that caused the 7-day outage: the old code read
+    // the accessToken from disk with no expiry check and blindly pushed it to
+    // the vault even when it was expired. Now, getToken (backed by
+    // getValidClaudeOAuthToken) performs the OAuth refresh cycle and returns
+    // the fresh token. The vault must receive that fresh token.
+    const getToken = vi.fn().mockResolvedValue('sk-ant-oat01-refreshed-via-oauth');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: vi.fn().mockResolvedValue('{}'),
+    });
+
+    await refreshOnecliToken({
+      credentialsPath: '/fake/.credentials.json',
+      onecliUrl: 'http://172.17.0.1:10254',
+      secretId: 'sec-abc',
+      getToken,
+      fetch: fetchMock,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).value).toBe('sk-ant-oat01-refreshed-via-oauth');
+  });
+
   it('propagates OneCLI update errors', async () => {
-    const readFile = vi
-      .fn()
-      .mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: 9999 } }));
+    const getToken = vi.fn().mockResolvedValue('tok');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -178,7 +200,7 @@ describe('refreshOnecliToken', () => {
         credentialsPath: '/fake/.credentials.json',
         onecliUrl: 'http://172.17.0.1:10254',
         secretId: 'sec-abc',
-        readFile,
+        getToken,
         fetch: fetchMock,
       }),
     ).rejects.toThrow('OneCLI secret update failed: 500');

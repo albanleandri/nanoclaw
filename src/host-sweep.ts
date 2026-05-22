@@ -128,8 +128,13 @@ export function decideStuckAction(args: {
   // blocked on a long API call — the container heartbeats normally so the
   // ceiling and claim-stuck checks above don't fire, but new user messages
   // pile up as 'pending' without ever being processed.
+  //
+  // Guard on heartbeat presence for the same reason as ceiling: a freshly-
+  // spawned container hasn't written its first heartbeat yet. Killing it for
+  // pending-stuck before it even starts creates a spawn-kill loop when old
+  // unprocessed messages exceed the threshold.
   const pendingThreshold = Math.max(PENDING_STUCK_MS, declaredBashMs ?? 0);
-  if (oldestDuePendingAgeMs > pendingThreshold) {
+  if (heartbeatMtimeMs !== 0 && oldestDuePendingAgeMs > pendingThreshold) {
     return { action: 'kill-pending-stuck', oldestPendingAgeMs: oldestDuePendingAgeMs, thresholdMs: pendingThreshold };
   }
 

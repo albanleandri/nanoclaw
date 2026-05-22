@@ -375,6 +375,36 @@ describe('decideStuckAction — pending-stuck (production bug: long task blocks 
     });
     expect(res.action).toBe('ok');
   });
+
+  it('does not kill when heartbeat is absent even though old pending messages exist (freshly-spawned container)', () => {
+    // Regression test for the spawn-kill loop:
+    // Sweep kills container for pending-stuck → onExit respawns it → sweep
+    // kills it again in 5ms before the agent-runner can start → infinite loop.
+    // Root cause: pending-stuck fired even when heartbeatMtimeMs===0 (no
+    // heartbeat written yet = container just spawned). Fix: guard the
+    // pending-stuck check with heartbeatMtimeMs !== 0, same as ceiling.
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: 0, // freshly-spawned container: no heartbeat yet
+      containerState: null,
+      claims: [],
+      oldestDuePendingAgeMs: PENDING_STUCK_MS + 60 * 60 * 1000, // 1h+ old messages
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('still kills when heartbeat exists and old pending messages are blocked (normal pending-stuck scenario)', () => {
+    // Ensure the guard does not suppress legitimate pending-stuck kills for
+    // containers that ARE running (heartbeat present) but ignoring new messages.
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000, // container is alive and heartbeating
+      containerState: null,
+      claims: [],
+      oldestDuePendingAgeMs: PENDING_STUCK_MS + 60 * 60 * 1000, // 1h+ old messages
+    });
+    expect(res.action).toBe('kill-pending-stuck');
+  });
 });
 
 describe('parseSqliteUtc', () => {

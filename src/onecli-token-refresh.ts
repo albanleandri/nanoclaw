@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { getValidClaudeOAuthToken } from './claude-credentials.js';
 
 export interface ClaudeCredentials {
   accessToken: string;
@@ -74,14 +75,16 @@ export async function refreshOnecliToken(opts: {
   credentialsPath: string;
   onecliUrl: string;
   secretId: string;
-  readFile?: (path: string, encoding: 'utf-8') => Promise<string>;
+  getToken?: (credentialsPath: string) => Promise<string | null>;
   fetch?: typeof globalThis.fetch;
 }): Promise<void> {
-  const creds = await readClaudeCredentials(opts.credentialsPath, opts.readFile);
+  const getTokenFn = opts.getToken ?? ((p: string) => getValidClaudeOAuthToken(p));
+  const token = await getTokenFn(opts.credentialsPath);
+  if (!token) throw new Error('No Claude credentials available');
   await updateOnecliSecret({
     onecliUrl: opts.onecliUrl,
     secretId: opts.secretId,
-    token: creds.accessToken,
+    token,
     fetch: opts.fetch,
   });
 }
