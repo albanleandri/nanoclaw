@@ -381,7 +381,10 @@ function injectRtkHook(claudeDir: string): void {
  * selection. Each symlink points to a container path (/app/skills/<name>)
  * so it's dangling on the host but valid inside the container.
  */
-function syncSkillSymlinks(claudeDir: string, containerConfig: import('./container-config.js').ContainerConfig): void {
+export function syncSkillSymlinks(
+  claudeDir: string,
+  containerConfig: import('./container-config.js').ContainerConfig,
+): void {
   const skillsDir = path.join(claudeDir, 'skills');
   if (!fs.existsSync(skillsDir)) {
     fs.mkdirSync(skillsDir, { recursive: true });
@@ -441,7 +444,9 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
     }
   }
 
-  // Create or update symlinks for the desired set
+  // Create or update symlinks for the desired set. Older installs may
+  // have copied skill directories here; selected skills must be replaced so
+  // runtime uses the current /app/skills mount instead of stale files.
   for (const [skill, containerTarget] of desired) {
     const linkPath = path.join(skillsDir, skill);
     try {
@@ -450,7 +455,7 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
         if (fs.readlinkSync(linkPath) === containerTarget) continue;
         fs.unlinkSync(linkPath); // stale target — recreate below
       } else {
-        continue; // not a symlink, leave it alone
+        fs.rmSync(linkPath, { recursive: true, force: true });
       }
     } catch {
       /* missing — fall through to create */

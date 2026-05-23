@@ -1,6 +1,10 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderName } from './container-runner.js';
+import { resolveProviderName, syncSkillSymlinks } from './container-runner.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -23,5 +27,37 @@ describe('resolveProviderName', () => {
   it('treats empty string as unset (falls through)', () => {
     expect(resolveProviderName('', 'opencode')).toBe('opencode');
     expect(resolveProviderName(null, '')).toBe('claude');
+  });
+});
+
+describe('syncSkillSymlinks', () => {
+  it('replaces stale copied skill directories with managed symlinks for selected skills', () => {
+    const previousCwd = process.cwd();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-skills-'));
+    try {
+      const customSkill = path.join(tmp, 'container', 'skills', 'custom', 'stock-market-investing');
+      fs.mkdirSync(customSkill, { recursive: true });
+      fs.writeFileSync(path.join(customSkill, 'SKILL.md'), '# Stock Market Investing\n');
+
+      const claudeDir = path.join(tmp, 'session', '.claude-shared');
+      const staleSkillDir = path.join(claudeDir, 'skills', 'stock-market-investing');
+      fs.mkdirSync(staleSkillDir, { recursive: true });
+      fs.writeFileSync(path.join(staleSkillDir, 'old.txt'), 'stale');
+
+      process.chdir(tmp);
+      syncSkillSymlinks(claudeDir, {
+        mcpServers: {},
+        packages: { apt: [], npm: [] },
+        additionalMounts: [],
+        skills: ['stock-market-investing'],
+      });
+
+      const linkPath = path.join(claudeDir, 'skills', 'stock-market-investing');
+      expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(linkPath)).toBe('/app/skills/custom/stock-market-investing');
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
