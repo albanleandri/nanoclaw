@@ -514,15 +514,17 @@ async function buildContainerArgs(
   log.info('OneCLI gateway applied', { containerName });
 
   // If the user has a Claude subscription (OAuth), switch the container to OAuth mode:
-  // set CLAUDE_CODE_OAUTH_TOKEN=placeholder and blank out ANTHROPIC_API_KEY (added by
+  // set placeholder bearer-token env vars and blank out ANTHROPIC_API_KEY (added by
   // OneCLI). Claude Code 2.x uses ANTHROPIC_API_KEY when both vars are present, so we
   // must clear it. The OneCLI proxy then intercepts Authorization: Bearer placeholder
-  // and injects the real token from the vault.
+  // and injects the real token from the vault. ANTHROPIC_AUTH_TOKEN supports direct
+  // Anthropic SDK usage from skills without exposing a real token.
   const credsPath = path.join(process.env.HOME ?? '', '.claude', '.credentials.json');
   try {
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as Record<string, unknown>;
     if ((creds?.claudeAiOauth as Record<string, unknown> | undefined)?.accessToken) {
       args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+      args.push('-e', 'ANTHROPIC_AUTH_TOKEN=placeholder');
       args.push('-e', 'ANTHROPIC_API_KEY=');
     }
   } catch {
