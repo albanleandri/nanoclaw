@@ -6,7 +6,7 @@ import { TIMEZONE, formatLocalTime } from './timezone.js';
  * Command categories for messages starting with '/'.
  * - admin: sender must be in NANOCLAW_ADMIN_USER_IDS
  * - filtered: silently drop (mark completed without processing)
- * - passthrough: pass raw to the agent (no XML wrapping)
+ * - passthrough: unknown application/skill slash command; format as chat
  * - none: not a command — format normally
  */
 export type CommandCategory = 'admin' | 'filtered' | 'passthrough' | 'none';
@@ -67,15 +67,15 @@ export function isClearCommand(msg: MessageInRow): boolean {
 }
 
 /**
- * True for any chat that needs the outer loop's command path: /clear plus
- * admin/passthrough slash commands the SDK can only dispatch when they are
- * a query's first input. Used by the follow-up poller to bail out and let
- * the outer loop reopen the query.
+ * True for any known native/admin slash command that needs the outer loop's
+ * command path. Unknown slash commands are application/skill triggers and can
+ * be formatted as normal chat. Used by the follow-up poller to bail out and
+ * let the outer loop reopen the query.
  */
 export function isRunnerCommand(msg: MessageInRow): boolean {
   if (msg.kind !== 'chat' && msg.kind !== 'chat-sdk') return false;
   const cat = categorizeMessage(msg).category;
-  return cat === 'admin' || cat === 'passthrough';
+  return cat === 'admin';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

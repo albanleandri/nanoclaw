@@ -5,7 +5,7 @@ import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { MockProvider } from './providers/mock.js';
-import { processQuery } from './poll-loop.js';
+import { formatMessagesWithCommands, processQuery } from './poll-loop.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -189,6 +189,33 @@ describe('on_wake filtering', () => {
   });
 });
 
+describe('slash command formatting', () => {
+  it('wraps unknown slash commands as chat even for native-slash providers', () => {
+    insertMessage('m-screen', 'chat-sdk', {
+      sender: 'Andy',
+      text: '/screen-market',
+      author: { userId: '123' },
+    });
+
+    const prompt = formatMessagesWithCommands(getPendingMessages(), true);
+
+    expect(prompt).toContain('<context timezone=');
+    expect(prompt).toContain('<message ');
+    expect(prompt).toContain('/screen-market');
+    expect(prompt).not.toBe('/screen-market');
+  });
+
+  it('passes known admin commands raw for native-slash providers', () => {
+    insertMessage('m-cost', 'chat-sdk', {
+      sender: 'Andy',
+      text: '/cost',
+      author: { userId: '123' },
+    });
+
+    expect(formatMessagesWithCommands(getPendingMessages(), true)).toBe('/cost');
+  });
+});
+
 describe('routing', () => {
   it('should extract routing from messages', () => {
     getInboundDb()
@@ -217,7 +244,13 @@ describe('origin metadata (from= attribute)', () => {
       .run(name, name, channelType, platformId);
   }
 
-  function insertWithRouting(id: string, kind: string, content: object, channelType: string | null, platformId: string | null): void {
+  function insertWithRouting(
+    id: string,
+    kind: string,
+    content: object,
+    channelType: string | null,
+    platformId: string | null,
+  ): void {
     getInboundDb()
       .prepare(
         `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, content)

@@ -161,8 +161,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       continue;
     }
 
-    // Format messages: passthrough commands get raw text (only if the
-    // provider natively handles slash commands), others get XML.
+    // Format messages: known native/admin commands get raw text (only if
+    // the provider natively handles slash commands), others get XML.
     const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
 
     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
@@ -220,25 +220,26 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 }
 
 /**
- * Format messages, handling passthrough commands differently.
- * When the provider handles slash commands natively (Claude Code),
- * passthrough commands are sent raw (no XML wrapping) so the SDK can
- * dispatch them. Otherwise they fall through to standard XML formatting.
+ * Format messages, handling known native/admin commands differently.
+ *
+ * Unknown slash commands are skill/application triggers, not Claude Code
+ * commands. They must stay XML-wrapped so the agent can interpret them from
+ * its instructions instead of the SDK rejecting them before the model runs.
  */
-function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommands: boolean): string {
+export function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommands: boolean): string {
   const parts: string[] = [];
   const normalBatch: MessageInRow[] = [];
 
   for (const msg of messages) {
     if (nativeSlashCommands && (msg.kind === 'chat' || msg.kind === 'chat-sdk')) {
       const cmdInfo = categorizeMessage(msg);
-      if (cmdInfo.category === 'passthrough' || cmdInfo.category === 'admin') {
+      if (cmdInfo.category === 'admin') {
         // Flush normal batch first
         if (normalBatch.length > 0) {
           parts.push(formatMessages(normalBatch));
           normalBatch.length = 0;
         }
-        // Pass raw command text (no XML wrapping) — SDK handles it natively
+        // Pass raw command text (no XML wrapping) — SDK handles it natively.
         parts.push(cmdInfo.text);
         continue;
       }
@@ -286,11 +287,10 @@ export async function processQuery(
       try {
         const pending = getPendingMessages();
 
-        // Slash commands need a fresh query: /clear resets the SDK's
-        // resume id (fixed at sdkQuery() time); admin/passthrough commands
-        // (/compact, /cost, …) only dispatch when they're the first input
-        // of a query — pushed mid-stream they arrive as plain text and
-        // the SDK never runs them. End the stream and leave the rows
+        // Known native/admin slash commands need a fresh query: /clear resets
+        // the SDK's resume id (fixed at sdkQuery() time), and commands such
+        // as /compact or /cost only dispatch when they're the first input of
+        // a query. End the stream and leave the rows
         // pending; the outer loop handles them on next iteration via the
         // canonical command path + formatMessagesWithCommands.
         if (pending.some((m) => isRunnerCommand(m))) {
@@ -381,7 +381,9 @@ export async function processQuery(
           platform_id: routing.platformId,
           channel_type: routing.channelType,
           thread_id: routing.threadId,
-          content: JSON.stringify({ text: "Usage limit reached. I can't process requests right now. Try again later." }),
+          content: JSON.stringify({
+            text: "Usage limit reached. I can't process requests right now. Try again later.",
+          }),
         });
         break;
       } else if (event.type === 'result') {
