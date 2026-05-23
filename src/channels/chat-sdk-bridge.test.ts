@@ -93,6 +93,37 @@ describe('createChatSdkBridge', () => {
   });
 });
 
+describe('createChatSdkBridge.deliver — ask_question multi-select', () => {
+  it('renders multi-select questions with toggle buttons and a Done action', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+    });
+
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: {
+        type: 'ask_question',
+        questionId: 'q1',
+        title: 'Screen Market',
+        question: 'Which markets?',
+        multiple: true,
+        options: ['Japan', 'Europe'],
+      },
+    });
+
+    expect(calls).toHaveLength(1);
+    const msg = calls[0].message as {
+      card?: { children?: Array<{ type?: string; children?: Array<{ id?: string; label?: string }> }> };
+    };
+    const actionsRows = (msg.card?.children ?? []).filter((c) => c.type === 'actions');
+    const buttons = actionsRows.flatMap((row) => row.children ?? []);
+    expect(buttons.map((b) => b.id)).toEqual(['ncqm:q1:0', 'ncqm:q1:1', 'ncqm:q1:done']);
+    expect(buttons.map((b) => b.label)).toEqual(['☐ Japan', '☐ Europe', 'Done']);
+  });
+});
+
 describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
   // The send_card MCP tool writes outbound rows with `{ type: 'card', card, fallbackText }`.
   // Before this branch existed the bridge silently dropped them: cards have no

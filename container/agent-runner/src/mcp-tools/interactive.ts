@@ -62,6 +62,10 @@ export const askUserQuestion: McpToolDefinition = {
           },
           description: 'Options for the user to choose from (string or {label, selectedLabel?, value?})',
         },
+        multiple: {
+          type: 'boolean',
+          description: 'When true, render checkbox-style multi-select and return selected values as a comma-separated list',
+        },
         timeout: { type: 'number', description: 'Timeout in seconds (default: 300)' },
       },
       required: ['title', 'question', 'options'],
@@ -71,6 +75,7 @@ export const askUserQuestion: McpToolDefinition = {
     const title = args.title as string;
     const question = args.question as string;
     const rawOptions = args.options as unknown[];
+    const multiple = (args.multiple as boolean) || false;
     const timeout = ((args.timeout as number) || 300) * 1000;
     if (!title || !question || !rawOptions?.length) {
       return err('title, question, and options are required');
@@ -102,6 +107,7 @@ export const askUserQuestion: McpToolDefinition = {
         title,
         question,
         options,
+        multiple,
       }),
     });
 

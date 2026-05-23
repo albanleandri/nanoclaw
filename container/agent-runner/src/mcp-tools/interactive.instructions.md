@@ -4,7 +4,7 @@ The two tools here solve different problems: `ask_user_question` forces a decisi
 
 ### Asking a multiple-choice question (`ask_user_question`)
 
-`mcp__nanoclaw__ask_user_question({ title, question, options, timeout? })` presents the user with a set of choices and **blocks your turn** until they tap one or the timeout expires (default: 300 seconds). Returns their chosen value.
+`mcp__nanoclaw__ask_user_question({ title, question, options, multiple?, timeout? })` presents the user with a set of choices and **blocks your turn** until they answer or the timeout expires (default: 300 seconds). With `multiple: false` or omitted, returns the single chosen value. With `multiple: true`, renders checkbox-style toggles plus a Done button and returns selected values as a comma-separated string.
 
 `options` can be plain strings or `{ label, selectedLabel?, value? }` objects:
 - `label` — the button text shown before selection

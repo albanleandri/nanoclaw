@@ -25,6 +25,38 @@ import { getAskQuestionRender } from '../db/sessions.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage } from './adapter.js';
 
+const multiSelectQuestionState = new Map<string, Set<string>>();
+
+function selectedValuesLabel(options: NormalizedOption[], selected: Set<string>): string {
+  const labels = options.filter((opt) => selected.has(opt.value)).map((opt) => opt.selectedLabel);
+  return labels.length > 0 ? labels.join(', ') : '(no selection)';
+}
+
+function buildQuestionActions(questionId: string, options: NormalizedOption[], multiple: boolean): CardChild[] {
+  if (!multiple) {
+    return [
+      Actions(
+        options.map((opt, idx) => Button({ id: `ncq:${questionId}:${idx}`, label: opt.label, value: String(idx) })),
+      ) as CardChild,
+    ];
+  }
+
+  const selected = multiSelectQuestionState.get(questionId) ?? new Set<string>();
+  multiSelectQuestionState.set(questionId, selected);
+  return [
+    Actions(
+      options.map((opt, idx) =>
+        Button({
+          id: `ncqm:${questionId}:${idx}`,
+          label: `${selected.has(opt.value) ? '☑' : '☐'} ${opt.label}`,
+          value: String(idx),
+        }),
+      ),
+    ) as CardChild,
+    Actions([Button({ id: `ncqm:${questionId}:done`, label: 'Done', value: 'done' })]) as CardChild,
+  ];
+}
+
 /** Adapter with optional gateway support (e.g., Discord). */
 interface GatewayAdapter extends Adapter {
   startGatewayListener?(
@@ -267,20 +299,64 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
 
       // Handle button clicks (ask_user_question)
       chat.onAction(async (event) => {
-        if (!event.actionId.startsWith('ncq:')) return;
+        if (!event.actionId.startsWith('ncq:') && !event.actionId.startsWith('ncqm:')) return;
         const parts = event.actionId.split(':');
         if (parts.length < 3) return;
+        const isMulti = parts[0] === 'ncqm';
         const questionId = parts[1];
         const tail = parts.slice(2).join(':');
         const userId = event.user?.userId || '';
 
         // Resolve render metadata BEFORE dispatching onAction (which deletes the row).
         const render = getAskQuestionRender(questionId);
+        const title = render?.title ?? '❓ Question';
+
+        if (isMulti) {
+          const selected = multiSelectQuestionState.get(questionId) ?? new Set<string>();
+          multiSelectQuestionState.set(questionId, selected);
+
+          if (tail === 'done' || event.value === 'done') {
+            const selectedOption = [...selected].join(', ');
+            const selectedLabel = render
+              ? selectedValuesLabel(render.options, selected)
+              : selectedOption || '(no selection)';
+            try {
+              await adapter.editMessage(event.threadId, event.messageId, {
+                markdown: `${title}\n\n${selectedLabel}`,
+              });
+            } catch (err) {
+              log.warn('Failed to update card after multi-select completion', { err });
+            }
+            multiSelectQuestionState.delete(questionId);
+            setupConfig.onAction(questionId, selectedOption, userId);
+            return;
+          }
+
+          const selectedOption = resolveSelectedOption(render, event.value, tail);
+          if (!selectedOption) return;
+          if (selected.has(selectedOption)) selected.delete(selectedOption);
+          else selected.add(selectedOption);
+
+          try {
+            const options = render?.options ?? [];
+            const card = Card({
+              title,
+              children: [
+                CardText(selectedValuesLabel(options, selected)) as CardChild,
+                ...buildQuestionActions(questionId, options, true),
+              ],
+            });
+            await adapter.editMessage(event.threadId, event.messageId, { card });
+          } catch (err) {
+            log.warn('Failed to update multi-select card after action', { err });
+          }
+          return;
+        }
+
         // New format: button id/value is an integer index into options (kept
         // short to fit Telegram's 64-byte callback_data cap). Old format:
         // the full value is embedded in actionId/value directly.
         const selectedOption = resolveSelectedOption(render, event.value, tail);
-        const title = render?.title ?? '❓ Question';
         const matched = render?.options.find((o) => o.value === selectedOption);
         const selectedLabel = matched?.selectedLabel ?? selectedOption ?? '(clicked)';
 
@@ -393,20 +469,17 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           return;
         }
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
+        const multiple = content.multiple === true;
         const card = Card({
           title,
           children: [
-            CardText(question),
-            Actions(
-              // Encode button id/value with the option index rather than the
-              // full value. Telegram caps callback_data at 64 bytes, and
-              // long values (e.g. ISO datetimes, URLs) push the JSON payload
-              // well past that. The onAction handlers resolve the index back
-              // to the real value via getAskQuestionRender(questionId).
-              options.map((opt, idx) =>
-                Button({ id: `ncq:${questionId}:${idx}`, label: opt.label, value: String(idx) }),
-              ),
-            ),
+            CardText(question) as CardChild,
+            // Encode button id/value with the option index rather than the
+            // full value. Telegram caps callback_data at 64 bytes, and
+            // long values (e.g. ISO datetimes, URLs) push the JSON payload
+            // well past that. The onAction handlers resolve the index back
+            // to the real value via getAskQuestionRender(questionId).
+            ...buildQuestionActions(questionId, options, multiple),
           ],
         });
         const result = await adapter.postMessage(tid, {

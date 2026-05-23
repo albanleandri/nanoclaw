@@ -43,4 +43,5 @@ export interface AskQuestionPayload {
   title: string;
   question: string;
   options: NormalizedOption[];
+  multiple?: boolean;
 }
