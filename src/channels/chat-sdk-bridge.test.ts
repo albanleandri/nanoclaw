@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
-import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
+import {
+  buildOpenMultiSelectQuestionCard,
+  createChatSdkBridge,
+  formatMultiSelectOptionLabel,
+  formatSelectedQuestionMarkdown,
+  splitForLimit,
+} from './chat-sdk-bridge.js';
 
 function stubAdapter(partial: Partial<Adapter>): Adapter {
   return { name: 'stub', ...partial } as unknown as Adapter;
@@ -94,7 +100,7 @@ describe('createChatSdkBridge', () => {
 });
 
 describe('createChatSdkBridge.deliver — ask_question multi-select', () => {
-  it('renders multi-select questions with toggle buttons and a Done action', async () => {
+  it('renders multi-select questions with one vertical action row per option and a Submit action', async () => {
     const { calls, postMessage } = makePostCapture();
     const bridge = createChatSdkBridge({
       adapter: stubAdapter({ postMessage }),
@@ -120,7 +126,44 @@ describe('createChatSdkBridge.deliver — ask_question multi-select', () => {
     const actionsRows = (msg.card?.children ?? []).filter((c) => c.type === 'actions');
     const buttons = actionsRows.flatMap((row) => row.children ?? []);
     expect(buttons.map((b) => b.id)).toEqual(['ncqm:q1:0', 'ncqm:q1:1', 'ncqm:q1:done']);
-    expect(buttons.map((b) => b.label)).toEqual(['☐ Japan', '☐ Europe', 'Done']);
+    expect(buttons.map((b) => b.label)).toEqual(['Japan', 'Europe', 'Submit']);
+    expect(actionsRows.map((row) => row.children?.map((b) => b.label))).toEqual([['Japan'], ['Europe'], ['Submit']]);
+  });
+
+  it('marks selected multi-select options in the button label without using checkbox glyphs', () => {
+    expect(formatMultiSelectOptionLabel('Japan', false)).toBe('Japan');
+    expect(formatMultiSelectOptionLabel('Japan', true)).toBe('Japan ✓');
+  });
+
+  it('keeps the open multi-select card body stable while marking selected options', () => {
+    const card = buildOpenMultiSelectQuestionCard(
+      'q1',
+      'Screen Market',
+      'Which markets?',
+      [
+        { label: 'Japan', selectedLabel: 'Japan', value: 'Japan' },
+        { label: 'Europe', selectedLabel: 'Europe', value: 'Europe' },
+      ],
+      new Set(['Japan']),
+    ) as {
+      children?: Array<{ type?: string; content?: string; children?: Array<{ label?: string; style?: string }> }>;
+    };
+
+    expect(card.children?.[0]).toMatchObject({ type: 'text', content: 'Which markets?' });
+    expect(JSON.stringify(card)).not.toContain('Selected:');
+    const actionRows = (card.children ?? []).filter((child) => child.type === 'actions');
+    expect(actionRows.map((row) => row.children?.map((button) => button.label))).toEqual([
+      ['Japan ✓'],
+      ['Europe'],
+      ['Submit'],
+    ]);
+    expect(actionRows[0].children?.[0].style).toBe('primary');
+  });
+
+  it('formats submitted multi-select decisions with an explicit Selected prefix', () => {
+    expect(formatSelectedQuestionMarkdown('Screen Market', 'Japan, Europe')).toBe(
+      'Screen Market\n\nSelected: Japan, Europe',
+    );
   });
 });
 

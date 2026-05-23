@@ -93,7 +93,7 @@ Variables forwarded with the `CONTAINER_SECRET_*` prefix are still injected dire
 |------------|------------|----------------|
 | Project root access | `/workspace/project` (ro) | None |
 | Store (SQLite DB) | `/workspace/project/store` (rw) | None |
-| Group folder | `/workspace/group` (rw) | `/workspace/group` (rw) |
+| Group folder | `/workspace/agent` and legacy alias `/workspace/group` (rw) | `/workspace/agent` and legacy alias `/workspace/group` (rw) |
 | Global memory | Implicit via project | `/workspace/global` (ro) |
 | Additional mounts | Configurable | Read-only unless allowed |
 | Network access | Unrestricted | Unrestricted |

@@ -423,7 +423,7 @@ This is documented as a pattern, not a built-in feature.
     ... working files
 ```
 
-Two directory mounts: session folder at `/workspace`, agent group folder at `/workspace/agent/`. The agent-runner CDs into `/workspace/agent/` to run the agent. Claude SDK writes `.claude/` at `/workspace/.claude/` (root of the workspace). The session DB is at `/workspace/session.db`.
+Directory mounts: session folder at `/workspace`, agent group folder at `/workspace/agent/`, and the same agent group folder also mounted at legacy path `/workspace/group/` for skills and scheduled tasks that still use that durable-state path. The agent-runner CDs into `/workspace/agent/` to run the agent. Claude SDK writes `.claude/` at `/workspace/.claude/` (root of the workspace). The session DB is at `/workspace/session.db`.
 
 This works on both Docker (nested bind mounts) and Apple Container (directory mounts only — no file-level mounts, but nested directory mounts are supported).
 

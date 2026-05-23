@@ -14,6 +14,7 @@ import {
   Button,
   LinkButton,
   type CardChild,
+  type CardElement,
   type Adapter,
   type ConcurrencyStrategy,
   type Message as ChatMessage,
@@ -26,13 +27,23 @@ import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage } from './adapter.js';
 
 const multiSelectQuestionState = new Map<string, Set<string>>();
+const multiSelectQuestionPrompts = new Map<string, string>();
 
 function selectedValuesLabel(options: NormalizedOption[], selected: Set<string>): string {
   const labels = options.filter((opt) => selected.has(opt.value)).map((opt) => opt.selectedLabel);
   return labels.length > 0 ? labels.join(', ') : '(no selection)';
 }
 
-function buildQuestionActions(questionId: string, options: NormalizedOption[], multiple: boolean): CardChild[] {
+export function formatMultiSelectOptionLabel(label: string, selected: boolean): string {
+  return selected ? label + ' ✓' : label;
+}
+
+function buildQuestionActions(
+  questionId: string,
+  options: NormalizedOption[],
+  multiple: boolean,
+  selectedOverride?: ReadonlySet<string>,
+): CardChild[] {
   if (!multiple) {
     return [
       Actions(
@@ -41,20 +52,44 @@ function buildQuestionActions(questionId: string, options: NormalizedOption[], m
     ];
   }
 
-  const selected = multiSelectQuestionState.get(questionId) ?? new Set<string>();
-  multiSelectQuestionState.set(questionId, selected);
+  const selected = selectedOverride ?? multiSelectQuestionState.get(questionId) ?? new Set<string>();
+  if (!selectedOverride) multiSelectQuestionState.set(questionId, selected as Set<string>);
   return [
-    Actions(
-      options.map((opt, idx) =>
-        Button({
-          id: `ncqm:${questionId}:${idx}`,
-          label: `${selected.has(opt.value) ? '☑' : '☐'} ${opt.label}`,
-          value: String(idx),
-        }),
-      ),
-    ) as CardChild,
-    Actions([Button({ id: `ncqm:${questionId}:done`, label: 'Done', value: 'done' })]) as CardChild,
+    ...options.map(
+      (opt, idx) =>
+        Actions([
+          Button({
+            id: `ncqm:${questionId}:${idx}`,
+            label: formatMultiSelectOptionLabel(opt.label, selected.has(opt.value)),
+            style: selected.has(opt.value) ? 'primary' : 'default',
+            value: String(idx),
+          }),
+        ]) as CardChild,
+    ),
+    Actions([Button({ id: `ncqm:${questionId}:done`, label: 'Submit', value: 'done' })]) as CardChild,
   ];
+}
+
+export function formatSelectedQuestionMarkdown(title: string, selectedLabel: string): string {
+  return `${title}
+
+Selected: ${selectedLabel}`;
+}
+
+export function buildOpenMultiSelectQuestionCard(
+  questionId: string,
+  title: string,
+  question: string | undefined,
+  options: NormalizedOption[],
+  selectedOverride?: ReadonlySet<string>,
+): CardElement {
+  return Card({
+    title,
+    children: [
+      ...(question ? ([CardText(question)] as CardChild[]) : []),
+      ...buildQuestionActions(questionId, options, true, selectedOverride),
+    ],
+  });
 }
 
 /** Adapter with optional gateway support (e.g., Discord). */
@@ -322,12 +357,13 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
               : selectedOption || '(no selection)';
             try {
               await adapter.editMessage(event.threadId, event.messageId, {
-                markdown: `${title}\n\n${selectedLabel}`,
+                markdown: formatSelectedQuestionMarkdown(title, selectedLabel),
               });
             } catch (err) {
               log.warn('Failed to update card after multi-select completion', { err });
             }
             multiSelectQuestionState.delete(questionId);
+            multiSelectQuestionPrompts.delete(questionId);
             setupConfig.onAction(questionId, selectedOption, userId);
             return;
           }
@@ -339,13 +375,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
 
           try {
             const options = render?.options ?? [];
-            const card = Card({
+            const card = buildOpenMultiSelectQuestionCard(
+              questionId,
               title,
-              children: [
-                CardText(selectedValuesLabel(options, selected)) as CardChild,
-                ...buildQuestionActions(questionId, options, true),
-              ],
-            });
+              multiSelectQuestionPrompts.get(questionId),
+              options,
+            );
             await adapter.editMessage(event.threadId, event.messageId, { card });
           } catch (err) {
             log.warn('Failed to update multi-select card after action', { err });
@@ -470,6 +505,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         }
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
         const multiple = content.multiple === true;
+        if (multiple) multiSelectQuestionPrompts.set(questionId, question);
         const card = Card({
           title,
           children: [

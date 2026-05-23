@@ -4,7 +4,7 @@ import path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderName, syncSkillSymlinks } from './container-runner.js';
+import { buildGroupWorkspaceMounts, resolveProviderName, syncSkillSymlinks } from './container-runner.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -57,6 +57,50 @@ describe('syncSkillSymlinks', () => {
       expect(fs.readlinkSync(linkPath)).toBe('/app/skills/custom/stock-market-investing');
     } finally {
       process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildGroupWorkspaceMounts', () => {
+  it('mounts the group workspace at both current and legacy paths with managed overlays read-only', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-group-mounts-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'container.json'), '{}');
+      fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), '# Managed');
+      fs.mkdirSync(path.join(tmp, '.claude-fragments'));
+
+      const mounts = buildGroupWorkspaceMounts(tmp);
+
+      expect(mounts).toEqual(
+        expect.arrayContaining([
+          { hostPath: tmp, containerPath: '/workspace/agent', readonly: false },
+          { hostPath: tmp, containerPath: '/workspace/group', readonly: false },
+          {
+            hostPath: path.join(tmp, 'container.json'),
+            containerPath: '/workspace/agent/container.json',
+            readonly: true,
+          },
+          {
+            hostPath: path.join(tmp, 'container.json'),
+            containerPath: '/workspace/group/container.json',
+            readonly: true,
+          },
+          { hostPath: path.join(tmp, 'CLAUDE.md'), containerPath: '/workspace/agent/CLAUDE.md', readonly: true },
+          { hostPath: path.join(tmp, 'CLAUDE.md'), containerPath: '/workspace/group/CLAUDE.md', readonly: true },
+          {
+            hostPath: path.join(tmp, '.claude-fragments'),
+            containerPath: '/workspace/agent/.claude-fragments',
+            readonly: true,
+          },
+          {
+            hostPath: path.join(tmp, '.claude-fragments'),
+            containerPath: '/workspace/group/.claude-fragments',
+            readonly: true,
+          },
+        ]),
+      );
+    } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
