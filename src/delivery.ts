@@ -440,6 +440,10 @@ async function handleSystemAction(
   log.warn('Unknown system action', { action });
 }
 
+export function clearDeliveryAdapterForTesting(): void {
+  deliveryAdapter = null;
+}
+
 export function stopDeliveryPolls(): void {
   activePolling = false;
   sweepPolling = false;

@@ -14,6 +14,7 @@ import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
+import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
 import { log } from './log.js';
@@ -58,6 +59,8 @@ import './modules/index.js';
 // accepts connections.
 import './cli/commands/index.js';
 import './cli/delivery-action.js';
+import './jobs/stock-market-screen.js';
+import './jobs/actions.js';
 import { startCliServer, stopCliServer } from './cli/socket-server.js';
 
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
@@ -168,6 +171,7 @@ async function main(): Promise<void> {
   // 5. Start delivery polls
   startActiveDeliveryPoll();
   startSweepDeliveryPoll();
+  startJobDeliveryPoll();
   log.info('Delivery polls started');
 
   // 6. Start host sweep
@@ -191,6 +195,7 @@ async function shutdown(signal: string): Promise<void> {
     }
   }
   stopDeliveryPolls();
+  stopJobDeliveryPoll();
   stopHostSweep();
   await stopCliServer();
   try {
