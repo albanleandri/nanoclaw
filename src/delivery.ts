@@ -423,7 +423,7 @@ export function registerDeliveryAction(action: string, handler: DeliveryActionHa
  * These are written to messages_out because the container can't write to inbound.db.
  * The host applies them to inbound.db here.
  */
-async function handleSystemAction(
+export async function handleSystemAction(
   content: Record<string, unknown>,
   session: Session,
   inDb: Database.Database,

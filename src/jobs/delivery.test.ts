@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { createAgentGroup, closeDb, createJob, getJobDeliveries, initTestDb, runMigrations } from '../db/index.js';
 import { appendJobEvent } from '../db/jobs.js';
+import { registerJobType } from './registry.js';
 import { clearDeliveryAdapterForTesting, setDeliveryAdapter, type ChannelDeliveryAdapter } from '../delivery.js';
 import { deliverJobEventsOnce, setJobDeliveryProgressIntervalForTesting, stopJobDeliveryPoll } from './delivery.js';
 
@@ -49,7 +50,7 @@ describe('job delivery', () => {
     await deliverJobEventsOnce();
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual(['Job job-1: Batch 1 done']);
+    expect(deliveries).toEqual(['Batch 1 done']);
     expect(getJobDeliveries('job-1')).toHaveLength(1);
   });
 
@@ -70,7 +71,7 @@ describe('job delivery', () => {
     await deliverJobEventsOnce();
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual(['Job job-1: Batch 1 done']);
+    expect(deliveries).toEqual(['Batch 1 done']);
   });
 
   it('always delivers final events after progress', async () => {
@@ -89,8 +90,38 @@ describe('job delivery', () => {
 
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual(['Job job-1: Batch 1 done', 'Job job-1: Complete']);
+    expect(deliveries).toEqual(['Batch 1 done', 'Complete']);
     expect(getJobDeliveries('job-1')).toHaveLength(2);
+  });
+
+  it('uses job-type progress formatting and does not expose the job id in routine progress', async () => {
+    const deliveries: string[] = [];
+    setDeliveryAdapter(mockAdapter(deliveries));
+    registerJobType({
+      type: 'friendly_fixture',
+      validateParams: (params) => params,
+      buildCommand: () => ({ command: 'node', args: ['-e', ''], cwd: process.cwd() }),
+      formatProgress: () => 'Screen progress: 50/100 tickers. Batch 1/2. 49 stored, 1 failed.',
+      formatFinal: () => 'Screen complete: 99/100 stored.',
+    });
+    createJob({
+      id: 'job-1',
+      type: 'friendly_fixture',
+      agentGroupId: 'ag-1',
+      params: {},
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+    });
+    appendJobEvent('job-1', { id: 'evt-1', level: 'progress', eventType: 'progress', message: 'raw progress' });
+    appendJobEvent('job-1', { id: 'evt-2', level: 'final', eventType: 'final', message: 'raw final' });
+
+    await deliverJobEventsOnce();
+
+    expect(deliveries).toEqual([
+      'Screen progress: 50/100 tickers. Batch 1/2. 49 stored, 1 failed.',
+      'Screen complete: 99/100 stored.',
+    ]);
+    expect(deliveries.join('\n')).not.toContain('job-1');
   });
 
   it('leaves events pending when no adapter is set', async () => {

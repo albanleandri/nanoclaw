@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { createAgentGroup, closeDb, initTestDb, runMigrations } from '../db/index.js';
-import { buildStockMarketScreenCommand } from './stock-market-screen.js';
+import {
+  buildStockMarketScreenCommand,
+  formatStockMarketScreenFinal,
+  formatStockMarketScreenProgress,
+} from './stock-market-screen.js';
 
 function now() {
   return new Date().toISOString();
@@ -39,5 +43,70 @@ describe('stock_market_screen job type', () => {
     expect(command.args).toContain('nasdaq');
     expect(command.args).toContain('--limit');
     expect(command.args).toContain('100');
+  });
+
+  it('formats progress without exposing internal job ids', () => {
+    const message = formatStockMarketScreenProgress({
+      id: 'evt-1',
+      job_id: 'job-secret',
+      seq: 1,
+      level: 'progress',
+      event_type: 'progress',
+      message: 'raw',
+      created_at: now(),
+      data: {
+        current: 100,
+        total: 5665,
+        batch: 2,
+        batches: 114,
+        stored: 91,
+        failed: 9,
+        skipped: 0,
+        etaSec: 2820,
+      },
+    });
+
+    expect(message).toBe('Screen progress: 100/5665 tickers. Batch 2/114. 91 stored, 9 failed. About 47 min left.');
+    expect(message).not.toContain('job-secret');
+  });
+
+  it('formats final messages from the worker final event', () => {
+    const message = formatStockMarketScreenFinal(
+      {
+        id: 'job-1',
+        type: 'stock_market_screen',
+        status: 'succeeded',
+        agent_group_id: 'ag-1',
+        session_id: null,
+        messaging_group_id: null,
+        channel_type: null,
+        platform_id: null,
+        thread_id: null,
+        requested_by: null,
+        params: {},
+        result: null,
+        error: null,
+        progress_current: 2,
+        progress_total: 2,
+        started_at: now(),
+        finished_at: now(),
+        created_at: now(),
+        updated_at: now(),
+      },
+      [
+        {
+          id: 'evt-1',
+          job_id: 'job-1',
+          seq: 1,
+          level: 'final',
+          event_type: 'final',
+          message: 'Screen complete: 2/2 stored in 0.1 min.',
+          data: null,
+          created_at: now(),
+        },
+      ],
+    );
+
+    expect(message).toBe('Screen complete: 2/2 stored in 0.1 min.');
   });
 });

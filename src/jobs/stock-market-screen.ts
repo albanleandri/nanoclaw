@@ -3,6 +3,7 @@ import path from 'path';
 import { GROUPS_DIR } from '../config.js';
 import { getAgentGroup } from '../db/agent-groups.js';
 import { registerJobType } from './registry.js';
+import type { JobEventRecord, JobRecord } from '../db/jobs.js';
 import type { JobContext, JobCommand } from './types.js';
 
 export interface StockMarketScreenParams {
@@ -34,6 +35,47 @@ function numberValue(value: unknown, name: string): number | undefined {
 
 function addRepeated(args: string[], flag: string, values: string[] | undefined): void {
   if (values && values.length > 0) args.push(flag, ...values);
+}
+
+function numberFromData(data: unknown, key: string): number | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function formatEta(seconds: number | undefined): string {
+  if (seconds === undefined || seconds <= 0) return '';
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return ` About ${minutes} min left.`;
+}
+
+export function formatStockMarketScreenProgress(event: JobEventRecord): string | null {
+  const data = event.data;
+  const current = numberFromData(data, 'current');
+  const total = numberFromData(data, 'total');
+  const batch = numberFromData(data, 'batch');
+  const batches = numberFromData(data, 'batches');
+  const stored = numberFromData(data, 'stored');
+  const failed = numberFromData(data, 'failed');
+  const skipped = numberFromData(data, 'skipped');
+  const etaSec = numberFromData(data, 'etaSec');
+  if (current === undefined || total === undefined) return event.message;
+
+  const batchText = batch !== undefined && batches !== undefined ? ` Batch ${batch}/${batches}.` : '';
+  const resultParts = [
+    stored !== undefined ? `${stored} stored` : null,
+    failed !== undefined ? `${failed} failed` : null,
+    skipped !== undefined && skipped > 0 ? `${skipped} cached` : null,
+  ].filter(Boolean);
+  const resultText = resultParts.length ? ` ${resultParts.join(', ')}.` : '';
+  return `Screen progress: ${current}/${total} tickers.${batchText}${resultText}${formatEta(etaSec)}`;
+}
+
+export function formatStockMarketScreenFinal(job: JobRecord, events: JobEventRecord[]): string {
+  const finalEvent = [...events].reverse().find((event) => event.level === 'final');
+  if (finalEvent?.message) return finalEvent.message;
+  const total = job.progress_total ?? job.progress_current ?? '?';
+  return `Screen complete: ${total}/${total} tickers processed.`;
 }
 
 function validateParams(params: unknown): StockMarketScreenParams {
@@ -86,4 +128,6 @@ registerJobType<StockMarketScreenParams>({
   type: 'stock_market_screen',
   validateParams,
   buildCommand: buildStockMarketScreenCommand,
+  formatProgress: formatStockMarketScreenProgress,
+  formatFinal: formatStockMarketScreenFinal,
 });

@@ -36,7 +36,8 @@ function enqueueAction(content: Record<string, unknown>): void {
 export const startJob: McpToolDefinition = {
   tool: {
     name: 'start_job',
-    description: 'Start a durable NanoClaw host-managed job. Returns after the host accepts the request.',
+    description:
+      'Start a durable NanoClaw host-managed job. The host sends the user-facing confirmation/progress; do not send a separate launch message.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -50,43 +51,43 @@ export const startJob: McpToolDefinition = {
     const type = args.type as string | undefined;
     if (!type) return err('type is required');
     enqueueAction({ action: 'start_job', type, params: (args.params as Record<string, unknown> | undefined) ?? {} });
-    return ok(`Job start requested for ${type}. The host will send the job id and progress updates.`);
+    return ok(
+      `Job start requested for ${type}. The host will notify the user; do not send a separate launch confirmation.`,
+    );
   },
 };
 
 export const getJobStatus: McpToolDefinition = {
   tool: {
     name: 'get_job_status',
-    description: 'Ask the host to report durable job status to the current conversation.',
+    description:
+      'Ask the host to report durable job status to the current conversation. job_id is optional; omit it for the latest active job in this chat.',
     inputSchema: {
       type: 'object' as const,
-      properties: { job_id: { type: 'string', description: 'Durable job id' } },
-      required: ['job_id'],
+      properties: { job_id: { type: 'string', description: 'Optional durable job id' } },
     },
   },
   async handler(args) {
     const jobId = args.job_id as string | undefined;
-    if (!jobId) return err('job_id is required');
-    enqueueAction({ action: 'get_job_status', jobId });
-    return ok(`Job status requested for ${jobId}.`);
+    enqueueAction({ action: 'get_job_status', ...(jobId ? { jobId } : {}) });
+    return ok('Job status requested. The host will reply to the user.');
   },
 };
 
 export const cancelJob: McpToolDefinition = {
   tool: {
     name: 'cancel_job',
-    description: 'Ask the host to cancel a durable job.',
+    description:
+      'Ask the host to cancel a durable job. job_id is optional; omit it for the latest active job in this chat.',
     inputSchema: {
       type: 'object' as const,
-      properties: { job_id: { type: 'string', description: 'Durable job id' } },
-      required: ['job_id'],
+      properties: { job_id: { type: 'string', description: 'Optional durable job id' } },
     },
   },
   async handler(args) {
     const jobId = args.job_id as string | undefined;
-    if (!jobId) return err('job_id is required');
-    enqueueAction({ action: 'cancel_job', jobId });
-    return ok(`Cancellation requested for ${jobId}.`);
+    enqueueAction({ action: 'cancel_job', ...(jobId ? { jobId } : {}) });
+    return ok('Cancellation requested. The host will reply to the user.');
   },
 };
 

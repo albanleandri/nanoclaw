@@ -8,6 +8,7 @@ import {
 } from '../db/jobs.js';
 import { getDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
+import { getJobType } from './registry.js';
 
 const DEFAULT_POLL_MS = 30_000;
 const DEFAULT_PROGRESS_INTERVAL_MS = 5 * 60 * 1000;
@@ -21,16 +22,23 @@ function parseTime(value: string): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-function formatEvent(job: JobRecord, event: JobEventRecord): string {
-  const prefix = `Job ${job.id}`;
-  if (event.message) return `${prefix}: ${event.message}`;
+function formatEvent(job: JobRecord, event: JobEventRecord, events: JobEventRecord[]): string {
+  const definition = getJobType(job.type);
   if (event.level === 'progress') {
+    const formatted = definition?.formatProgress?.(event);
+    if (formatted) return formatted;
+    if (event.message) return event.message;
     const current = job.progress_current ?? '?';
     const total = job.progress_total ?? '?';
-    return `${prefix}: progress ${current}/${total}`;
+    return `Progress: ${current}/${total}`;
   }
-  if (event.level === 'final') return `${prefix}: ${job.status}`;
-  return `${prefix}: ${event.event_type}`;
+  if (event.level === 'final') {
+    const formatted = definition?.formatFinal?.(job, events);
+    if (formatted) return formatted;
+    return event.message ?? `Job ${job.status}.`;
+  }
+  if (event.level === 'error') return event.message ?? `Job failed. Reference: ${job.id}`;
+  return event.message ?? event.event_type;
 }
 
 function isTerminal(event: JobEventRecord): boolean {
@@ -70,7 +78,7 @@ export async function deliverJobEventsOnce(): Promise<void> {
           job.platform_id!,
           job.thread_id,
           'chat',
-          JSON.stringify({ text: formatEvent(job, event) }),
+          JSON.stringify({ text: formatEvent(job, event, events) }),
         );
         markJobEventDelivered(job.id, event.seq, { platformMessageId });
         delivered.push({

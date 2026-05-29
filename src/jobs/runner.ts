@@ -43,12 +43,13 @@ function levelFor(type: string, raw?: string): JobEventLevel {
 }
 
 function appendRunnerEvent(jobId: string, event: ManagedJobEvent): void {
+  const eventData = event.data ?? event;
   const appended = appendJobEvent(jobId, {
     id: eventId(jobId),
     level: levelFor(event.type, event.level),
     eventType: event.type,
     message: event.message ?? null,
-    data: event.data ?? null,
+    data: eventData,
   });
 
   const patch: Parameters<typeof updateJobStatus>[1] = {};
@@ -217,6 +218,9 @@ export function getActiveJobIdsForTesting(): string[] {
 export function resetJobsForTesting(): void {
   for (const active of activeJobs.values()) {
     if (active.killTimer) clearTimeout(active.killTimer);
+    active.child.stdout?.removeAllListeners();
+    active.child.stderr?.removeAllListeners();
+    active.child.removeAllListeners();
     active.child.kill('SIGKILL');
   }
   activeJobs.clear();
