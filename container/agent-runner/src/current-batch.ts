@@ -8,22 +8,39 @@
  * row so the host's a2a return-path routing can correlate replies back to
  * the originating session.
  *
- * This is module-level state on purpose: the agent-runner is single-process
- * and processes one batch at a time. Poll-loop calls `setCurrentInReplyTo`
- * before invoking the provider and `clearCurrentInReplyTo` after the batch
- * completes (or errors out).
+ * The poll loop and MCP tools may run in separate processes. Poll-loop
+ * stores the value in memory and in outbound.db session_state before invoking
+ * the provider; MCP child processes read the DB row when module memory is empty.
  */
+import { getOutboundDb } from './db/connection.js';
+
+const CURRENT_IN_REPLY_TO_KEY = 'runtime:current_in_reply_to';
+
 let currentInReplyTo: string | null = null;
 
 export function setCurrentInReplyTo(id: string | null): void {
   currentInReplyTo = id;
+  const db = getOutboundDb();
+  if (id) {
+    db.prepare('INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      CURRENT_IN_REPLY_TO_KEY,
+      id,
+      new Date().toISOString(),
+    );
+  } else {
+    db.prepare('DELETE FROM session_state WHERE key = ?').run(CURRENT_IN_REPLY_TO_KEY);
+  }
 }
 
 export function clearCurrentInReplyTo(): void {
   currentInReplyTo = null;
+  getOutboundDb().prepare('DELETE FROM session_state WHERE key = ?').run(CURRENT_IN_REPLY_TO_KEY);
 }
 
 export function getCurrentInReplyTo(): string | null {
-  return currentInReplyTo;
+  if (currentInReplyTo) return currentInReplyTo;
+  const row = getOutboundDb().prepare('SELECT value FROM session_state WHERE key = ?').get(CURRENT_IN_REPLY_TO_KEY) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
 }
-

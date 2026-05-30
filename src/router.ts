@@ -30,7 +30,8 @@ import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
-import { wakeContainer } from './container-runner.js';
+import { isContainerRunning, wakeContainer } from './container-runner.js';
+import { deliverSessionMessages } from './delivery.js';
 import { getSession } from './db/sessions.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
@@ -141,6 +142,10 @@ export function setChannelRequestGate(fn: ChannelRequestGateFn): void {
     log.warn('Channel-request gate overwritten');
   }
   channelRequestGate = fn;
+}
+
+function isScreenMarketCommand(text: string): boolean {
+  return text.trim().toLowerCase() === '/screen-market';
 }
 
 function safeParseContent(raw: string): { text?: string; sender?: string; senderId?: string } {
@@ -445,6 +450,21 @@ async function deliverToAgent(
       log.info('Admin command denied by gate', { command: gate.command, userId, agentGroupId: agent.agent_group_id });
       return;
     }
+  }
+
+  const inboundText = safeParseContent(event.message.content).text ?? '';
+  if (wake && isScreenMarketCommand(inboundText) && !isContainerRunning(session.id)) {
+    writeOutboundDirect(session.agent_group_id, session.id, {
+      id: 'screen-ack-' + generateId(),
+      kind: 'chat',
+      platformId: deliveryAddr.platformId,
+      channelType: deliveryAddr.channelType,
+      threadId: deliveryAddr.threadId,
+      content: JSON.stringify({ text: 'Opening screen-market options...' }),
+    });
+    void deliverSessionMessages(session).catch((err) =>
+      log.warn('Immediate screen-market acknowledgement delivery failed', { sessionId: session.id, err }),
+    );
   }
 
   writeSessionMessage(session.agent_group_id, session.id, {

@@ -235,6 +235,8 @@ async function sweepSession(session: Session): Promise<void> {
   }
 }
 
+export const _sweepSessionForTesting = sweepSession;
+
 function heartbeatMtimeMs(agentGroupId: string, sessionId: string): number {
   const hbPath = heartbeatPath(agentGroupId, sessionId);
   try {

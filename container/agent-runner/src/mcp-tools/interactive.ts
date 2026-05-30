@@ -5,6 +5,7 @@
  * with a question card, then polls messages_in for the response.
  */
 import { findQuestionResponse, markCompleted } from '../db/messages-in.js';
+import { getCurrentInReplyTo } from '../current-batch.js';
 import { writeMessageOut } from '../db/messages-out.js';
 import { getSessionRouting } from '../db/session-routing.js';
 import { registerTools } from './server.js';
@@ -64,7 +65,8 @@ export const askUserQuestion: McpToolDefinition = {
         },
         multiple: {
           type: 'boolean',
-          description: 'When true, render checkbox-style multi-select and return selected values as a comma-separated list',
+          description:
+            'When true, render checkbox-style multi-select and return selected values as a comma-separated list',
         },
         timeout: { type: 'number', description: 'Timeout in seconds (default: 300)' },
       },
@@ -93,10 +95,12 @@ export const askUserQuestion: McpToolDefinition = {
 
     const questionId = generateId();
     const r = routing();
+    const inReplyTo = getCurrentInReplyTo();
 
     // Write question card to outbound.db
     writeMessageOut({
       id: questionId,
+      in_reply_to: inReplyTo,
       kind: 'chat-sdk',
       platform_id: r.platform_id,
       channel_type: r.channel_type,
@@ -110,6 +114,7 @@ export const askUserQuestion: McpToolDefinition = {
         multiple,
       }),
     });
+    if (inReplyTo) markCompleted([inReplyTo]);
 
     log(`ask_user_question: ${questionId} → "${question}" [${options.join(', ')}]`);
 
@@ -160,6 +165,7 @@ export const sendCard: McpToolDefinition = {
 
     writeMessageOut({
       id,
+      in_reply_to: getCurrentInReplyTo(),
       kind: 'chat-sdk',
       platform_id: r.platform_id,
       channel_type: r.channel_type,
