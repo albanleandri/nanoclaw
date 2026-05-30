@@ -10,7 +10,12 @@ import fs from 'fs';
 import path from 'path';
 import { describe, it, expect, afterEach } from 'vitest';
 
-import { getInboundSourceSessionId, migrateMessagesInTable } from './session-db.js';
+import {
+  countDueMessages,
+  getInboundSourceSessionId,
+  getOldestDuePendingTimestamp,
+  migrateMessagesInTable,
+} from './session-db.js';
 
 const TEST_DIR = '/tmp/nanoclaw-session-db-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
@@ -89,6 +94,49 @@ describe('migrateMessagesInTable', () => {
 
     expect(getInboundSourceSessionId(db, 'legacy-2')).toBeNull();
     expect(getInboundSourceSessionId(db, 'does-not-exist')).toBeNull();
+    db.close();
+  });
+});
+
+function makeDueMessageDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE messages_in (
+      id            TEXT PRIMARY KEY,
+      seq           INTEGER UNIQUE,
+      kind          TEXT NOT NULL,
+      timestamp     TEXT NOT NULL,
+      status        TEXT DEFAULT 'pending',
+      process_after TEXT,
+      trigger       INTEGER NOT NULL DEFAULT 1,
+      content       TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
+describe('due trigger queries', () => {
+  it('ignores pending system tool responses for wake and pending-stuck calculations', () => {
+    const db = makeDueMessageDb();
+    db.prepare(
+      `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
+       VALUES ('qr-old', 2, 'system', '2026-05-29T19:01:27.759Z', 'pending', 1, '{}')`,
+    ).run();
+
+    expect(countDueMessages(db)).toBe(0);
+    expect(getOldestDuePendingTimestamp(db)).toBeNull();
+    db.close();
+  });
+
+  it('still counts normal due trigger messages', () => {
+    const db = makeDueMessageDb();
+    db.prepare(
+      `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
+       VALUES ('chat-1', 2, 'chat', '2026-05-30T07:57:05.000Z', 'pending', 1, '{}')`,
+    ).run();
+
+    expect(countDueMessages(db)).toBe(1);
+    expect(getOldestDuePendingTimestamp(db)).toBe('2026-05-30T07:57:05.000Z');
     db.close();
   });
 });

@@ -10,12 +10,12 @@ import { getDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
 import { getJobType } from './registry.js';
 
-const DEFAULT_POLL_MS = 30_000;
-const DEFAULT_PROGRESS_INTERVAL_MS = 5 * 60 * 1000;
+export const JOB_DELIVERY_DEFAULT_POLL_MS = 10_000;
+export const JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS = 60 * 1000;
 
 let polling = false;
-let pollMs = DEFAULT_POLL_MS;
-let progressIntervalMs = DEFAULT_PROGRESS_INTERVAL_MS;
+let pollMs = JOB_DELIVERY_DEFAULT_POLL_MS;
+let progressIntervalMs = JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS;
 
 function parseTime(value: string): number {
   const ms = Date.parse(value);
@@ -52,6 +52,7 @@ function shouldDeliverEvent(
   events: JobEventRecord[],
 ): boolean {
   if (event.level === 'progress' && events.some((e) => isTerminal(e) && e.seq > event.seq)) return false;
+  if (event.level === 'progress' && events.some((e) => e.level === 'progress' && e.seq > event.seq)) return false;
   if (delivered.some((d) => d.event_seq === event.seq)) return false;
   if (isTerminal(event)) return true;
   if (event.level !== 'progress') return false;
@@ -100,8 +101,8 @@ export async function deliverJobEventsOnce(): Promise<void> {
 export function startJobDeliveryPoll(options: { pollMs?: number; progressIntervalMs?: number } = {}): void {
   if (polling) return;
   polling = true;
-  pollMs = options.pollMs ?? DEFAULT_POLL_MS;
-  progressIntervalMs = options.progressIntervalMs ?? DEFAULT_PROGRESS_INTERVAL_MS;
+  pollMs = options.pollMs ?? JOB_DELIVERY_DEFAULT_POLL_MS;
+  progressIntervalMs = options.progressIntervalMs ?? JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS;
   void poll();
 }
 

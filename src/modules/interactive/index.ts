@@ -37,6 +37,7 @@ async function handleInteractiveResponse(payload: ResponsePayload): Promise<bool
     platformId: pq.platform_id,
     channelType: pq.channel_type,
     threadId: pq.thread_id,
+    trigger: 0,
     content: JSON.stringify({
       type: 'question_response',
       questionId: payload.questionId,

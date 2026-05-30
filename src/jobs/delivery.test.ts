@@ -12,7 +12,12 @@ import {
 import { appendJobEvent, markJobEventDelivered } from '../db/jobs.js';
 import { registerJobType } from './registry.js';
 import { clearDeliveryAdapterForTesting, setDeliveryAdapter, type ChannelDeliveryAdapter } from '../delivery.js';
-import { deliverJobEventsOnce, setJobDeliveryProgressIntervalForTesting, stopJobDeliveryPoll } from './delivery.js';
+import {
+  deliverJobEventsOnce,
+  JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS,
+  setJobDeliveryProgressIntervalForTesting,
+  stopJobDeliveryPoll,
+} from './delivery.js';
 
 function now() {
   return new Date().toISOString();
@@ -31,7 +36,7 @@ beforeEach(() => {
   const db = initTestDb();
   runMigrations(db);
   createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
-  setJobDeliveryProgressIntervalForTesting(5 * 60 * 1000);
+  setJobDeliveryProgressIntervalForTesting(JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS);
 });
 
 afterEach(() => {
@@ -62,7 +67,7 @@ describe('job delivery', () => {
     expect(getJobDeliveries('job-1')).toHaveLength(1);
   });
 
-  it('does not deliver throttled progress events before the interval', async () => {
+  it('delivers the latest progress snapshot instead of stale queued progress', async () => {
     const deliveries: string[] = [];
     setDeliveryAdapter(mockAdapter(deliveries));
     createJob({
@@ -79,7 +84,37 @@ describe('job delivery', () => {
     await deliverJobEventsOnce();
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual(['Batch 1 done']);
+    expect(deliveries).toEqual(['Batch 2 done']);
+    expect(getJobDeliveries('job-1').map((delivery) => delivery.event_seq)).toEqual([2]);
+  });
+
+  it('uses a one-minute default progress interval', async () => {
+    expect(JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS).toBe(60 * 1000);
+  });
+
+  it('delivers the latest pending progress after the default interval', async () => {
+    const deliveries: string[] = [];
+    setDeliveryAdapter(mockAdapter(deliveries));
+    createJob({
+      id: 'job-1',
+      type: 'fixture',
+      agentGroupId: 'ag-1',
+      params: {},
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+    });
+    appendJobEvent('job-1', { id: 'evt-1', level: 'progress', eventType: 'progress', message: 'Batch 1 done' });
+
+    await deliverJobEventsOnce();
+    getDb()
+      .prepare('UPDATE job_deliveries SET delivered_at = ? WHERE job_id = ? AND event_seq = ?')
+      .run(new Date(Date.now() - JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS - 1000).toISOString(), 'job-1', 1);
+    appendJobEvent('job-1', { id: 'evt-2', level: 'progress', eventType: 'progress', message: 'Batch 2 done' });
+    appendJobEvent('job-1', { id: 'evt-3', level: 'progress', eventType: 'progress', message: 'Batch 3 done' });
+    await deliverJobEventsOnce();
+
+    expect(deliveries).toEqual(['Batch 1 done', 'Batch 3 done']);
+    expect(getJobDeliveries('job-1').map((delivery) => delivery.event_seq)).toEqual([1, 3]);
   });
 
   it('always delivers final events after progress', async () => {
