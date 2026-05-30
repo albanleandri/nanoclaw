@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-import { createAgentGroup, closeDb, createJob, getJobDeliveries, initTestDb, runMigrations } from '../db/index.js';
-import { appendJobEvent } from '../db/jobs.js';
+import {
+  createAgentGroup,
+  closeDb,
+  createJob,
+  getDb,
+  getJobDeliveries,
+  initTestDb,
+  runMigrations,
+} from '../db/index.js';
+import { appendJobEvent, markJobEventDelivered } from '../db/jobs.js';
 import { registerJobType } from './registry.js';
 import { clearDeliveryAdapterForTesting, setDeliveryAdapter, type ChannelDeliveryAdapter } from '../delivery.js';
 import { deliverJobEventsOnce, setJobDeliveryProgressIntervalForTesting, stopJobDeliveryPoll } from './delivery.js';
@@ -90,8 +98,35 @@ describe('job delivery', () => {
 
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual(['Batch 1 done', 'Complete']);
-    expect(getJobDeliveries('job-1')).toHaveLength(2);
+    expect(deliveries).toEqual(['Complete']);
+    expect(getJobDeliveries('job-1')).toHaveLength(1);
+  });
+
+  it('does not deliver stale progress after a terminal event has already been delivered', async () => {
+    const deliveries: string[] = [];
+    setDeliveryAdapter(mockAdapter(deliveries));
+    setJobDeliveryProgressIntervalForTesting(0);
+    createJob({
+      id: 'job-1',
+      type: 'fixture',
+      agentGroupId: 'ag-1',
+      params: {},
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+    });
+    appendJobEvent('job-1', { id: 'evt-1', level: 'progress', eventType: 'progress', message: 'Batch 1 done' });
+    appendJobEvent('job-1', { id: 'evt-2', level: 'progress', eventType: 'progress', message: 'Batch 2 done' });
+    appendJobEvent('job-1', { id: 'evt-3', level: 'final', eventType: 'final', message: 'Complete' });
+    markJobEventDelivered('job-1', 1, { platformMessageId: 'platform-1' });
+    markJobEventDelivered('job-1', 3, { platformMessageId: 'platform-3' });
+    getDb()
+      .prepare("UPDATE job_deliveries SET delivered_at = '2026-05-29T21:36:22.000Z' WHERE job_id = ?")
+      .run('job-1');
+
+    await deliverJobEventsOnce();
+
+    expect(deliveries).toEqual([]);
+    expect(getJobDeliveries('job-1').map((delivery) => delivery.event_seq)).toEqual([1, 3]);
   });
 
   it('uses job-type progress formatting and does not expose the job id in routine progress', async () => {
@@ -117,10 +152,7 @@ describe('job delivery', () => {
 
     await deliverJobEventsOnce();
 
-    expect(deliveries).toEqual([
-      'Screen progress: 50/100 tickers. Batch 1/2. 49 stored, 1 failed.',
-      'Screen complete: 99/100 stored.',
-    ]);
+    expect(deliveries).toEqual(['Screen complete: 99/100 stored.']);
     expect(deliveries.join('\n')).not.toContain('job-1');
   });
 

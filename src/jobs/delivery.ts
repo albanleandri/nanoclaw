@@ -49,7 +49,9 @@ function shouldDeliverEvent(
   job: JobRecord,
   event: JobEventRecord,
   delivered: ReturnType<typeof getJobDeliveries>,
+  events: JobEventRecord[],
 ): boolean {
+  if (event.level === 'progress' && events.some((e) => isTerminal(e) && e.seq > event.seq)) return false;
   if (delivered.some((d) => d.event_seq === event.seq)) return false;
   if (isTerminal(event)) return true;
   if (event.level !== 'progress') return false;
@@ -71,7 +73,7 @@ export async function deliverJobEventsOnce(): Promise<void> {
     const delivered = getJobDeliveries(job.id);
     const events = getJobEvents(job.id, { limit: 500 });
     for (const event of events) {
-      if (!shouldDeliverEvent(job, event, delivered)) continue;
+      if (!shouldDeliverEvent(job, event, delivered, events)) continue;
       try {
         const platformMessageId = await adapter.deliver(
           job.channel_type!,
