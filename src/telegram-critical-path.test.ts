@@ -32,7 +32,7 @@ import {
 import { getSession, updateSession } from './db/sessions.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
 import { _sweepSessionForTesting } from './host-sweep.js';
-import { routeInbound } from './router.js';
+import { resetCommandInterceptorForTesting, routeInbound, setCommandInterceptor } from './router.js';
 import { inboundDbPath, outboundDbPath, resolveSession } from './session-manager.js';
 
 function now(): string {
@@ -82,6 +82,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetCommandInterceptorForTesting();
   closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
@@ -147,6 +148,44 @@ describe('Telegram main receive/reply critical path', () => {
       thread_id: null,
       trigger: 1,
     });
+  });
+
+  it('lets a host command interceptor consume exact /screen-market before inbound write or wake', async () => {
+    seedTelegramMain();
+    const consumed: string[] = [];
+    setCommandInterceptor(async ({ text }) => {
+      if (text.trim().toLowerCase() !== '/screen-market') return false;
+      consumed.push(text);
+      return true;
+    });
+
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: '6413334350',
+      threadId: null,
+      message: {
+        id: '6413334350:2001-host-guided',
+        kind: 'chat-sdk',
+        content: JSON.stringify({ text: '/screen-market' }),
+        timestamp: now(),
+      },
+    });
+
+    const session = getSession(resolveSession('ag-telegram', 'mg-telegram', null, 'shared').session.id);
+    expect(session).toBeDefined();
+    expect(consumed).toEqual(['/screen-market']);
+    expect(mockWakeContainer).not.toHaveBeenCalled();
+
+    const db = new Database(inboundDbPath('ag-telegram', session!.id), { readonly: true });
+    const inboundCount = (db.prepare('SELECT COUNT(*) AS count FROM messages_in').get() as { count: number }).count;
+    db.close();
+    expect(inboundCount).toBe(0);
+
+    const outDb = new Database(outboundDbPath('ag-telegram', session!.id), { readonly: true });
+    const outboundCount = (outDb.prepare('SELECT COUNT(*) AS count FROM messages_out').get() as { count: number })
+      .count;
+    outDb.close();
+    expect(outboundCount).toBe(0);
   });
 
   it('does not write a host-side screen acknowledgement while the container is already running', async () => {

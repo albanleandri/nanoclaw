@@ -124,6 +124,36 @@ export function setMessageInterceptor(fn: MessageInterceptorFn): void {
 }
 
 /**
+ * Command-interceptor hook. Runs after routing/access/session resolution but
+ * before writing to the agent inbound DB. Used for deterministic host-owned
+ * commands that need the resolved origin and session but should not wake the
+ * agent.
+ */
+export type CommandInterceptorFn = (ctx: {
+  event: InboundEvent;
+  messagingGroup: MessagingGroup;
+  agent: MessagingGroupAgent;
+  agentGroup: AgentGroup;
+  session: ReturnType<typeof resolveSession>['session'];
+  userId: string | null;
+  text: string;
+  deliveryAddress: { channelType: string; platformId: string; threadId: string | null };
+}) => Promise<boolean>;
+
+let commandInterceptor: CommandInterceptorFn | null = null;
+
+export function setCommandInterceptor(fn: CommandInterceptorFn): void {
+  if (commandInterceptor) {
+    log.warn('Command interceptor overwritten');
+  }
+  commandInterceptor = fn;
+}
+
+export function resetCommandInterceptorForTesting(): void {
+  commandInterceptor = null;
+}
+
+/**
  * Channel-registration hook. Runs when the router sees a mention/DM on a
  * messaging group that has no wirings AND hasn't been denied. The hook is
  * expected to escalate to an owner (card, etc.) and arrange for future
@@ -453,6 +483,20 @@ async function deliverToAgent(
   }
 
   const inboundText = safeParseContent(event.message.content).text ?? '';
+  if (wake && commandInterceptor) {
+    const consumed = await commandInterceptor({
+      event,
+      messagingGroup: mg,
+      agent,
+      agentGroup,
+      session,
+      userId,
+      text: inboundText,
+      deliveryAddress: deliveryAddr,
+    });
+    if (consumed) return;
+  }
+
   if (wake && isScreenMarketCommand(inboundText) && !isContainerRunning(session.id)) {
     writeOutboundDirect(session.agent_group_id, session.id, {
       id: 'screen-ack-' + generateId(),

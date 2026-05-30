@@ -36,6 +36,8 @@ export {
   createPendingQuestion,
   getPendingQuestion,
   deletePendingQuestion,
+  createPendingHostQuestion,
+  deletePendingHostQuestion,
   createPendingApproval,
   getPendingApproval,
   updatePendingApprovalStatus,

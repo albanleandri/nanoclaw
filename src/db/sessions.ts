@@ -103,6 +103,37 @@ export function deleteSession(id: string): void {
  * IGNORE` that would throw UNIQUE and prevent the retry from reaching the
  * actual send step. Returns true if a new row was inserted.
  */
+
+export interface PendingHostQuestionInput {
+  question_id: string;
+  owner_type: string;
+  owner_id: string;
+  title: string;
+  options: import('../channels/ask-question.js').NormalizedOption[];
+  created_at: string;
+}
+
+export function createPendingHostQuestion(pq: PendingHostQuestionInput): boolean {
+  const result = getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO pending_host_questions (question_id, owner_type, owner_id, title, options_json, created_at)
+       VALUES (@question_id, @owner_type, @owner_id, @title, @options_json, @created_at)`,
+    )
+    .run({
+      question_id: pq.question_id,
+      owner_type: pq.owner_type,
+      owner_id: pq.owner_id,
+      title: pq.title,
+      options_json: JSON.stringify(pq.options),
+      created_at: pq.created_at,
+    });
+  return result.changes > 0;
+}
+
+export function deletePendingHostQuestion(questionId: string): void {
+  getDb().prepare('DELETE FROM pending_host_questions WHERE question_id = ?').run(questionId);
+}
+
 export function createPendingQuestion(pq: PendingQuestion): boolean {
   const result = getDb()
     .prepare(
@@ -202,6 +233,13 @@ export function getAskQuestionRender(
 ): { title: string; options: import('../channels/ask-question.js').NormalizedOption[] } | undefined {
   const q = getPendingQuestion(id);
   if (q) return { title: q.title, options: q.options };
+
+  if (hasTable(getDb(), 'pending_host_questions')) {
+    const h = getDb()
+      .prepare('SELECT title, options_json FROM pending_host_questions WHERE question_id = ?')
+      .get(id) as { title: string; options_json: string } | undefined;
+    if (h?.title) return { title: h.title, options: JSON.parse(h.options_json) };
+  }
   const a = getDb().prepare('SELECT title, options_json FROM pending_approvals WHERE approval_id = ?').get(id) as
     | { title: string; options_json: string }
     | undefined;

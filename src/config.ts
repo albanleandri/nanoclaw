@@ -13,6 +13,7 @@ const envConfig = readEnvFile([
   'ONECLI_API_KEY',
   'TZ',
   'TELEGRAM_BOT_POOL',
+  'SCREEN_MARKET_GUIDED_HOST',
 ]);
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -79,3 +80,6 @@ export const TELEGRAM_BOT_POOL = (process.env.TELEGRAM_BOT_POOL || envConfig.TEL
   .split(',')
   .map((t) => t.trim())
   .filter(Boolean);
+
+export const SCREEN_MARKET_GUIDED_HOST =
+  (process.env.SCREEN_MARKET_GUIDED_HOST || envConfig.SCREEN_MARKET_GUIDED_HOST || 'false') === 'true';
