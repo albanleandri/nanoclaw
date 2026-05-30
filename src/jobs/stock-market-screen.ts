@@ -57,7 +57,8 @@ export function formatStockMarketScreenProgress(event: JobEventRecord): string |
   const batches = numberFromData(data, 'batches');
   const stored = numberFromData(data, 'stored');
   const failed = numberFromData(data, 'failed');
-  const skipped = numberFromData(data, 'skipped');
+  const cached = numberFromData(data, 'cached') ?? numberFromData(data, 'skipped');
+  const suppressed = numberFromData(data, 'suppressed');
   const etaSec = numberFromData(data, 'etaSec');
   if (current === undefined || total === undefined) return event.message;
 
@@ -65,7 +66,8 @@ export function formatStockMarketScreenProgress(event: JobEventRecord): string |
   const resultParts = [
     stored !== undefined ? `${stored} stored` : null,
     failed !== undefined ? `${failed} failed` : null,
-    skipped !== undefined && skipped > 0 ? `${skipped} cached` : null,
+    cached !== undefined && cached > 0 ? `${cached} cached` : null,
+    suppressed !== undefined && suppressed > 0 ? `${suppressed} suppressed` : null,
   ].filter(Boolean);
   const resultText = resultParts.length ? ` ${resultParts.join(', ')}.` : '';
   return `Screen progress: ${current}/${total} tickers.${batchText}${resultText}${formatEta(etaSec)}`;

@@ -70,6 +70,32 @@ describe('stock_market_screen job type', () => {
     expect(message).not.toContain('job-secret');
   });
 
+  it('formats cached and suppressed ticker counts separately', () => {
+    const message = formatStockMarketScreenProgress({
+      id: 'evt-1',
+      job_id: 'job-secret',
+      seq: 1,
+      level: 'progress',
+      event_type: 'progress',
+      message: 'raw',
+      created_at: now(),
+      data: {
+        current: 250,
+        total: 2641,
+        batch: 5,
+        batches: 53,
+        stored: 39,
+        failed: 0,
+        cached: 10,
+        suppressed: 201,
+      },
+    });
+
+    expect(message).toBe(
+      'Screen progress: 250/2641 tickers. Batch 5/53. 39 stored, 0 failed, 10 cached, 201 suppressed.',
+    );
+  });
+
   it('formats final messages from the worker final event', () => {
     const message = formatStockMarketScreenFinal(
       {
