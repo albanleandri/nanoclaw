@@ -88,11 +88,12 @@ describe('stock_market_screen job type', () => {
         failed: 0,
         cached: 10,
         suppressed: 201,
+        suppressedByStatus: { data_limited: 150, transient_error: 51 },
       },
     });
 
     expect(message).toBe(
-      'Screen progress: 250/2641 tickers. Batch 5/53. 39 stored, 0 failed, 10 cached, 201 suppressed.',
+      'Screen progress: 250/2641 tickers. Batch 5/53. 39 stored, 0 failed, 10 cached, 201 suppressed (150 data-limited, 51 transient errors).',
     );
   });
 

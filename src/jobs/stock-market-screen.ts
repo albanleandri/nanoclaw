@@ -49,6 +49,26 @@ function formatEta(seconds: number | undefined): string {
   return ` About ${minutes} min left.`;
 }
 
+const SUPPRESSED_STATUS_LABELS: Record<string, string> = {
+  data_limited: 'data-limited',
+  transient_error: 'transient errors',
+  source_unfetchable: 'source-unfetchable',
+  yahoo_unfetchable: 'Yahoo-unfetchable',
+  likely_delisted: 'legacy likely-delisted',
+  unsupported_security: 'unsupported securities',
+};
+
+function formatSuppressedBreakdown(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const raw = (data as Record<string, unknown>).suppressedByStatus;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '';
+  const parts = Object.entries(raw)
+    .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([status, value]) => String(value) + ' ' + (SUPPRESSED_STATUS_LABELS[status] || status.replaceAll('_', '-')));
+  return parts.length ? ' (' + parts.join(', ') + ')' : '';
+}
+
 export function formatStockMarketScreenProgress(event: JobEventRecord): string | null {
   const data = event.data;
   const current = numberFromData(data, 'current');
@@ -67,7 +87,9 @@ export function formatStockMarketScreenProgress(event: JobEventRecord): string |
     stored !== undefined ? `${stored} stored` : null,
     failed !== undefined ? `${failed} failed` : null,
     cached !== undefined && cached > 0 ? `${cached} cached` : null,
-    suppressed !== undefined && suppressed > 0 ? `${suppressed} suppressed` : null,
+    suppressed !== undefined && suppressed > 0
+      ? String(suppressed) + ' suppressed' + formatSuppressedBreakdown(data)
+      : null,
   ].filter(Boolean);
   const resultText = resultParts.length ? ` ${resultParts.join(', ')}.` : '';
   return `Screen progress: ${current}/${total} tickers.${batchText}${resultText}${formatEta(etaSec)}`;
@@ -75,7 +97,13 @@ export function formatStockMarketScreenProgress(event: JobEventRecord): string |
 
 export function formatStockMarketScreenFinal(job: JobRecord, events: JobEventRecord[]): string {
   const finalEvent = [...events].reverse().find((event) => event.level === 'final');
-  if (finalEvent?.message) return finalEvent.message;
+  if (finalEvent?.message) {
+    const breakdown = formatSuppressedBreakdown(finalEvent.data);
+    if (breakdown && finalEvent.message.endsWith(' suppressed.')) {
+      return finalEvent.message.slice(0, -1) + breakdown + '.';
+    }
+    return finalEvent.message;
+  }
   const total = job.progress_total ?? job.progress_current ?? '?';
   return `Screen complete: ${total}/${total} tickers processed.`;
 }
