@@ -35,6 +35,9 @@
 **Service (Linux systemd):**
 - `systemctl --user start|stop|restart nanoclaw`
 
+**SQLite read-only inspection:**
+- `pnpm exec tsx scripts/q.ts --readonly [--limit N] <db-path> "<SELECT ...>"` — preferred way to inspect repo SQLite databases without escalation. Read-only mode is scoped to `data/` and `groups/`, allows `SELECT`/`WITH`/read-only `PRAGMA`, enables SQLite `query_only`, rejects compound SQL, and caps output at 5,000 rows by default. Use this instead of `node -e` or writable DB helpers for database reads.
+
 ## Repository map
 
 - `src/` — Host Node process: init, routing, delivery, sweep, session management, CLI server.

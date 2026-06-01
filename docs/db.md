@@ -46,6 +46,18 @@ data/
 
 Path helpers: `sessionDir()`, `inboundDbPath()`, `outboundDbPath()`, `heartbeatPath()` — all in `src/session-manager.ts`.
 
+### Read-only inspection helper
+
+Use `pnpm exec tsx scripts/q.ts --readonly <db-path> "<SELECT ...>"` for ad-hoc database reads. This is the approved Codex inspection path and is intentionally narrower than arbitrary `node -e` snippets:
+
+- DB paths must resolve under `data/` or `groups/`; symlinks that escape those directories are rejected.
+- SQLite is opened read-only with `fileMustExist`, then `PRAGMA query_only = ON` is enabled as defense in depth.
+- Read-only mode accepts `SELECT`, `WITH`, and selected read-only `PRAGMA` statements only.
+- Compound SQL is rejected. Keep inspection queries single-statement.
+- Output is capped at 5,000 rows by default. Pass `--limit N` when a larger result is intentional, up to 50,000 rows.
+
+Writable maintenance still requires an explicit writable path and should not use the approved read-only command prefix.
+
 ---
 
 ## 3. Central vs. session: what goes where
