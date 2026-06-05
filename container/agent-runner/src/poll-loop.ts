@@ -304,6 +304,7 @@ export async function processQuery(
   let queryContinuation: string | undefined;
   let done = false;
   let unwrappedNudged = false;
+  let providerFailureNotified = false;
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open avoids
@@ -438,16 +439,7 @@ export async function processQuery(
         // no value in keeping the stream open. Mark messages completed so the
         // host sweep does not reset them to pending and immediately re-wake.
         markCompleted(initialBatchIds);
-        writeMessageOut({
-          id: generateId(),
-          kind: 'chat',
-          platform_id: routing.platformId,
-          channel_type: routing.channelType,
-          thread_id: routing.threadId,
-          content: JSON.stringify({
-            text: "Usage limit reached. I can't process requests right now. Try again later.",
-          }),
-        });
+        writeUsageLimitNotification(routing);
         break;
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
@@ -458,6 +450,15 @@ export async function processQuery(
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
         if (event.text) {
+          if (isBareProviderUsageLimitError(event.text)) {
+            if (!providerFailureNotified) {
+              providerFailureNotified = true;
+              writeUsageLimitNotification(routing);
+            }
+            query.end();
+            break;
+          }
+
           const { hasUnwrapped } = dispatchResultText(event.text, routing);
           if (hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
@@ -498,6 +499,27 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
       log(`Progress: ${event.message}`);
       break;
   }
+}
+
+function writeUsageLimitNotification(routing: RoutingContext): void {
+  writeMessageOut({
+    id: generateId(),
+    kind: 'chat',
+    platform_id: routing.platformId,
+    channel_type: routing.channelType,
+    thread_id: routing.threadId,
+    content: JSON.stringify({
+      text: "Usage limit reached. I can't process requests right now. Try again later.",
+    }),
+  });
+}
+
+function isBareProviderUsageLimitError(text: string): boolean {
+  const trimmed = stripInternalTags(text).trim();
+  return (
+    /^api error:/i.test(trimmed) &&
+    /(429|rate limit|usage limit|exceed\w* your account.*limit|request rejected)/i.test(trimmed)
+  );
 }
 
 /**

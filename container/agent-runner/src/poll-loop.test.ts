@@ -398,6 +398,28 @@ describe('quota error notification', () => {
     expect(out.thread_id).toBe('thread-7');
   });
 
+  it('writes a usage-limit notification when provider returns a bare 429 API error result', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider(
+      {},
+      () =>
+        "API Error: Request rejected (429) · This request would exceed your account's rate limit. Please try again later.",
+    );
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const content = JSON.parse(outMessages[0].content) as { text: string };
+    expect(content.text).toContain('Usage limit reached');
+    expect(outMessages[0].platform_id).toBe('chat-42');
+    expect(outMessages[0].channel_type).toBe('telegram');
+    expect(outMessages[0].thread_id).toBe('thread-7');
+  });
+
   it('non-quota error events do not write a usage-limit notification', async () => {
     // api_retry is retryable=true, no classification — should not produce a notification
     insertWithRouting('m1');
