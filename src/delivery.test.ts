@@ -36,7 +36,7 @@ const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
 import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
-import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
+import { deliverSessionMessages, setDeliveryAdapter, clearDeliveryAdapterForTesting } from './delivery.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -78,6 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearDeliveryAdapterForTesting();
   closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
@@ -190,6 +191,26 @@ describe('deliverSessionMessages — retry and permanent failure', () => {
     const delivered = getDeliveredIds(inDb);
     inDb.close();
     expect(delivered.has('out-flaky')).toBe(true);
+  });
+
+  it('does not mark delivered when no delivery adapter is configured', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutbound('ag-1', session.id, 'out-no-adapter');
+
+    clearDeliveryAdapterForTesting();
+
+    await deliverSessionMessages(session);
+    let inDb = openInboundDb('ag-1', session.id);
+    expect(getDeliveredIds(inDb).has('out-no-adapter')).toBe(false);
+    inDb.close();
+
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+
+    inDb = openInboundDb('ag-1', session.id);
+    expect(getDeliveredIds(inDb).has('out-no-adapter')).toBe(true);
+    inDb.close();
   });
 
   it('clears attempt counter on successful delivery', async () => {

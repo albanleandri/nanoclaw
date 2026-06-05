@@ -11,8 +11,12 @@
  *   - launchd: `state != running` AND `runs > UNHEALTHY_RUNS_THRESHOLD`
  *   - systemd: unit is in `failed` state, OR `activating` with many restarts
  *
- * Healthy peers are left alone — multiple installs can coexist fine now that
- * container-reaper is label-scoped.
+ * A peer is also stopped when its effective service definition points at this
+ * checkout's dist/index.js. That is not a legitimate peer install; it is a
+ * duplicate unit for the same host process and will compete for Telegram
+ * polling and webhook ports.
+ *
+ * Healthy peers from other checkouts are left alone.
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -30,6 +34,7 @@ export interface PeerStatus {
   state: string;
   runs: number;
   unhealthy: boolean;
+  duplicateCurrentInstall?: boolean;
 }
 
 export interface PeerCleanupResult {
@@ -80,7 +85,7 @@ function cleanupLaunchdPeers(projectRoot: string): PeerCleanupResult {
     if (!status) continue;
     result.checked.push(status);
 
-    if (!status.unhealthy) continue;
+    if (!shouldUnloadPeer(status)) continue;
 
     try {
       execFileSync('launchctl', ['unload', plistPath], { stdio: 'pipe' });
@@ -141,18 +146,19 @@ function cleanupSystemdPeers(projectRoot: string): PeerCleanupResult {
   for (const unit of units) {
     if (unit === ownUnit) continue;
 
-    const status = probeSystemdPeer(unit);
+    const status = probeSystemdPeer(unit, projectRoot);
     if (!status) continue;
     result.checked.push(status);
 
-    if (!status.unhealthy) continue;
+    if (!shouldUnloadPeer(status)) continue;
 
     try {
       execFileSync('systemctl', ['--user', 'disable', '--now', `${unit}.service`], { stdio: 'pipe' });
-      log.info('Disabled unhealthy peer systemd unit', {
+      log.info('Disabled peer systemd unit', {
         unit,
         state: status.state,
         runs: status.runs,
+        duplicateCurrentInstall: status.duplicateCurrentInstall ?? false,
       });
       result.unloaded.push(status);
     } catch (err) {
@@ -165,22 +171,35 @@ function cleanupSystemdPeers(projectRoot: string): PeerCleanupResult {
   return result;
 }
 
-function probeSystemdPeer(unit: string): PeerStatus | null {
+function probeSystemdPeer(unit: string, projectRoot: string): PeerStatus | null {
   const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', `${unit}.service`);
   try {
     const output = execFileSync(
       'systemctl',
-      ['--user', 'show', '--property=ActiveState,NRestarts', `${unit}.service`],
+      ['--user', 'show', '--property=ActiveState,NRestarts,ExecStart,WorkingDirectory', `${unit}.service`],
       { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' },
     );
     const activeState = /^ActiveState=(.+)$/m.exec(output)?.[1]?.trim() ?? 'unknown';
     const restartsStr = /^NRestarts=(\d+)/m.exec(output)?.[1];
     const runs = restartsStr ? parseInt(restartsStr, 10) : 0;
 
-    const unhealthy =
-      activeState === 'failed' || (activeState !== 'active' && runs > UNHEALTHY_RUNS_THRESHOLD);
-    return { label: unit, configPath: unitPath, state: activeState, runs, unhealthy };
+    const unhealthy = activeState === 'failed' || (activeState !== 'active' && runs > UNHEALTHY_RUNS_THRESHOLD);
+    const duplicateCurrentInstall = systemdShowTargetsProject(output, projectRoot);
+    return { label: unit, configPath: unitPath, state: activeState, runs, unhealthy, duplicateCurrentInstall };
   } catch {
     return null;
   }
+}
+
+export function shouldUnloadPeer(status: Pick<PeerStatus, 'unhealthy' | 'duplicateCurrentInstall'>): boolean {
+  return status.unhealthy || status.duplicateCurrentInstall === true;
+}
+
+export function systemdShowTargetsProject(output: string, projectRoot: string): boolean {
+  const execStart = new RegExp('^ExecStart=(.*)$', 'm').exec(output)?.[1] ?? '';
+  const workingDirectory = new RegExp('^WorkingDirectory=(.*)$', 'm').exec(output)?.[1]?.trim() ?? '';
+  return (
+    execStart.includes(`${projectRoot}/dist/index.js`) ||
+    (workingDirectory === projectRoot && /(?:^|\s)dist\/index\.js(?:\s|;|$)/.test(execStart))
+  );
 }

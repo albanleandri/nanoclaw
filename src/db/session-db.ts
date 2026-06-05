@@ -147,20 +147,25 @@ export function countDueMessages(db: Database.Database): number {
   ).count;
 }
 
-/** Return the timestamp of the oldest due pending trigger message, or null if none. */
+/**
+ * Return the effective wait-start timestamp of the oldest due pending trigger
+ * message, or null if none. Scheduled rows should age from process_after once
+ * they become due; timestamp is the row creation time and may be much older
+ * for recurring tasks.
+ */
 export function getOldestDuePendingTimestamp(db: Database.Database): string | null {
   const row = db
     .prepare(
-      `SELECT timestamp FROM messages_in
+      `SELECT COALESCE(process_after, timestamp) AS waitStartedAt FROM messages_in
        WHERE status = 'pending'
          AND trigger = 1
          AND kind != 'system'
          AND (process_after IS NULL OR datetime(process_after) <= datetime('now'))
-       ORDER BY timestamp ASC
+       ORDER BY datetime(waitStartedAt) ASC
        LIMIT 1`,
     )
-    .get() as { timestamp: string } | undefined;
-  return row?.timestamp ?? null;
+    .get() as { waitStartedAt: string } | undefined;
+  return row?.waitStartedAt ?? null;
 }
 
 export function markMessageFailed(db: Database.Database, messageId: string): void {

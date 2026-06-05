@@ -131,12 +131,25 @@ describe('due trigger queries', () => {
   it('still counts normal due trigger messages', () => {
     const db = makeDueMessageDb();
     db.prepare(
-      `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
-       VALUES ('chat-1', 2, 'chat', '2026-05-30T07:57:05.000Z', 'pending', 1, '{}')`,
+      "INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content) VALUES ('chat-1', 2, 'chat', '2026-05-30T07:57:05.000Z', 'pending', 1, '{}')",
     ).run();
 
     expect(countDueMessages(db)).toBe(1);
     expect(getOldestDuePendingTimestamp(db)).toBe('2026-05-30T07:57:05.000Z');
+    db.close();
+  });
+
+  it('ages due scheduled messages from process_after instead of creation timestamp', () => {
+    const db = makeDueMessageDb();
+    db.prepare(
+      "INSERT INTO messages_in (id, seq, kind, timestamp, status, process_after, trigger, content) VALUES ('task-1', 2, 'task', '2026-06-03 20:51:07', 'pending', datetime('now', '-2 minutes'), 1, '{}')",
+    ).run();
+
+    const row = db.prepare("SELECT process_after AS processAfter FROM messages_in WHERE id = 'task-1'").get() as {
+      processAfter: string;
+    };
+    expect(countDueMessages(db)).toBe(1);
+    expect(getOldestDuePendingTimestamp(db)).toBe(row.processAfter);
     db.close();
   });
 });

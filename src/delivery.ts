@@ -246,8 +246,7 @@ async function deliverMessage(
   inDb: Database.Database,
 ): Promise<string | undefined> {
   if (!deliveryAdapter) {
-    log.warn('No delivery adapter configured, dropping message', { id: msg.id });
-    return;
+    throw new Error('no delivery adapter configured for message ' + msg.id);
   }
 
   const content = JSON.parse(msg.content);
