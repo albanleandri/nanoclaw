@@ -98,7 +98,7 @@ for i in $(seq 1 15); do
 done
 ```
 
-If it never becomes healthy, check if the gateway process is running:
+If it never becomes healthy, check the gateway containers. The gateway is a Docker Compose stack (project `onecli`, compose file at `~/.onecli/docker-compose.yml`). Inspect it through Docker rather than the host process list:
 
 ```bash
 ps aux | grep -i onecli | grep -v grep
