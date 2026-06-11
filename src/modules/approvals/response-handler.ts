@@ -19,7 +19,7 @@ import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { PendingApproval } from '../../types.js';
 import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
-import { getApprovalHandler } from './primitive.js';
+import { getApprovalHandler, notifyApprovalResolved } from './primitive.js';
 
 export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
   // OneCLI credential approvals — resolved via in-memory Promise first.
@@ -73,6 +73,7 @@ async function handleRegisteredApproval(
     notify(`Your ${approval.action} request was rejected by admin.`);
     log.info('Approval rejected', { approvalId: approval.approval_id, action: approval.action, userId });
     deletePendingApproval(approval.approval_id);
+    await notifyApprovalResolved({ approval, session, outcome: 'reject', userId });
     await wakeContainer(session);
     return;
   }
@@ -86,6 +87,7 @@ async function handleRegisteredApproval(
     });
     notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
     deletePendingApproval(approval.approval_id);
+    await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
     await wakeContainer(session);
     return;
   }
@@ -102,5 +104,6 @@ async function handleRegisteredApproval(
   }
 
   deletePendingApproval(approval.approval_id);
+  await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
   await wakeContainer(session);
 }
