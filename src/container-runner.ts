@@ -501,11 +501,41 @@ async function buildContainerArgs(
     args.push('-e', `${key}=${value}`);
   }
 
+  // Egress lockdown when enabled — throws if it can't be established, aborting
+  // the spawn rather than running with open egress. Otherwise the host gateway.
+  if (ensureEgressNetwork()) {
+    args.push(...egressNetworkArgs());
+    log.info('Egress lockdown active', { containerName, network: EGRESS_NETWORK });
+  } else {
+    args.push(...hostGatewayArgs());
+  }
+
+  // User mapping
+  const hostUid = process.getuid?.();
+  const hostGid = process.getgid?.();
+  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+    args.push('--user', `${hostUid}:${hostGid}`);
+    args.push('-e', 'HOME=/home/node');
+  }
+
+  // Volume mounts
+  for (const mount of mounts) {
+    if (mount.readonly) {
+      args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
+    } else {
+      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+    }
+  }
+
   // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
-  // are routed through the agent vault for credential injection. Treated as
-  // a transient hard failure: if we can't wire the gateway, we don't spawn.
-  // The caller (router or host-sweep) catches the throw, leaves the inbound
-  // message pending, and the next sweep tick retries.
+  // are routed through the agent vault for credential injection, and mounts
+  // any credential stubs the gateway serves (e.g. a sentinel auth file).
+  // Runs AFTER the volume mounts so a stub nested inside one of our mounts
+  // (a parent dir mounted RW above it) lands later in the args and isn't
+  // shadowed by it. Treated as a transient hard failure: if we can't wire
+  // the gateway, we don't spawn. The caller (router or host-sweep) catches
+  // the throw, leaves the inbound message pending, and the next sweep tick
+  // retries.
   if (agentIdentifier) {
     await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
   }
@@ -531,26 +561,6 @@ async function buildContainerArgs(
     }
   } catch {
     // No credentials file — API key mode via OneCLI is correct
-  }
-
-  // Host gateway
-  args.push(...hostGatewayArgs());
-
-  // User mapping
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
-  }
-
-  // Volume mounts
-  for (const mount of mounts) {
-    if (mount.readonly) {
-      args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
-    } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
-    }
   }
 
   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
