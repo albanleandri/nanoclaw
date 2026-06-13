@@ -6,6 +6,7 @@ import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
+import type { AgentQuery, ProviderEvent } from './providers/types.js';
 import { formatMessagesWithCommands, processQuery } from './poll-loop.js';
 
 beforeEach(() => {
@@ -355,6 +356,78 @@ describe('mock provider', () => {
     expect(results).toHaveLength(2);
     expect(results[0].text).toBe('Re: First');
     expect(results[1].text).toBe('Re: Second');
+  });
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe('processQuery heartbeat', () => {
+  it('continues heartbeating while waiting for follow-ups after a result', async () => {
+    const provider = new MockProvider({}, () => '<internal>done</internal>');
+    const query = provider.query({ prompt: 'hello', cwd: '/tmp' });
+    const routing = extractRouting([]);
+    let heartbeats = 0;
+
+    const running = processQuery(query, routing, ['m1'], 'mock', {
+      touchHeartbeat: () => {
+        heartbeats += 1;
+      },
+      postResultHeartbeatMs: 5,
+      activePollIntervalMs: 5,
+    });
+
+    for (let i = 0; i < 100 && heartbeats < 4; i += 1) {
+      await sleep(1);
+    }
+    expect(heartbeats).toBeGreaterThanOrEqual(4);
+    const afterResultEvents = heartbeats;
+
+    await sleep(25);
+
+    try {
+      expect(heartbeats).toBeGreaterThan(afterResultEvents);
+    } finally {
+      query.end();
+      await running;
+    }
+  });
+
+  it('does not synthesize heartbeats before the first provider result', async () => {
+    let release: (() => void) | null = null;
+    const query: AgentQuery = {
+      push() {},
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+    const routing = extractRouting([]);
+    let heartbeats = 0;
+
+    const running = processQuery(query, routing, ['m1'], 'mock', {
+      touchHeartbeat: () => {
+        heartbeats += 1;
+      },
+      postResultHeartbeatMs: 5,
+      activePollIntervalMs: 5,
+    });
+
+    await sleep(25);
+
+    expect(heartbeats).toBe(0);
+    query.end();
+    await running;
   });
 });
 

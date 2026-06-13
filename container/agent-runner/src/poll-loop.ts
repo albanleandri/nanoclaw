@@ -17,6 +17,7 @@ import type { AgentProvider, AgentQuery, ProviderEvent } from './providers/types
 
 const POLL_INTERVAL_MS = 1000;
 const ACTIVE_POLL_INTERVAL_MS = 500;
+const POST_RESULT_HEARTBEAT_MS = 10_000;
 
 /**
  * Number of consecutive `database disk image is malformed` errors after which
@@ -295,16 +296,28 @@ interface QueryResult {
   continuation?: string;
 }
 
+interface ProcessQueryOptions {
+  touchHeartbeat?: () => void;
+  postResultHeartbeatMs?: number;
+  activePollIntervalMs?: number;
+}
+
 export async function processQuery(
   query: AgentQuery,
   routing: RoutingContext,
   initialBatchIds: string[],
   providerName: string,
+  opts: ProcessQueryOptions = {},
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
   let unwrappedNudged = false;
   let providerFailureNotified = false;
+  let initialTurnCompleted = false;
+  let lastPostResultHeartbeat = 0;
+  const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
+  const postResultHeartbeatMs = opts.postResultHeartbeatMs ?? POST_RESULT_HEARTBEAT_MS;
+  const activePollIntervalMs = opts.activePollIntervalMs ?? ACTIVE_POLL_INTERVAL_MS;
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open avoids
@@ -324,6 +337,14 @@ export async function processQuery(
 
     void (async () => {
       try {
+        if (initialTurnCompleted) {
+          const now = Date.now();
+          if (now - lastPostResultHeartbeat >= postResultHeartbeatMs) {
+            heartbeat();
+            lastPostResultHeartbeat = now;
+          }
+        }
+
         const pending = getPendingMessages();
 
         // Known native/admin slash commands need a fresh query: /clear resets
@@ -417,12 +438,12 @@ export async function processQuery(
         pollInFlight = false;
       }
     })();
-  }, ACTIVE_POLL_INTERVAL_MS);
+  }, activePollIntervalMs);
 
   try {
     for await (const event of query.events) {
       handleEvent(event, routing);
-      touchHeartbeat();
+      heartbeat();
 
       if (event.type === 'init') {
         queryContinuation = event.continuation;
@@ -449,6 +470,8 @@ export async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
+        initialTurnCompleted = true;
+        lastPostResultHeartbeat = Date.now();
         if (event.text) {
           if (isBareProviderUsageLimitError(event.text)) {
             if (!providerFailureNotified) {
