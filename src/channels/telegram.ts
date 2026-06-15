@@ -262,12 +262,13 @@ function createTelegramChannelAdapter(options: {
 
 registerChannelAdapter('telegram', {
   factory: () => {
-    const env = readEnvFile(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_POOL']);
-    if (!env.TELEGRAM_BOT_TOKEN) return null;
+    const env = readEnvFile(['TELEGRAM_CLAUDE_BOT_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_POOL']);
+    const token = env.TELEGRAM_CLAUDE_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN;
+    if (!token) return null;
     return createTelegramChannelAdapter({
       registrationName: 'telegram',
       channelType: 'telegram',
-      token: env.TELEGRAM_BOT_TOKEN,
+      token,
       poolTokens: env.TELEGRAM_BOT_POOL,
     });
   },
