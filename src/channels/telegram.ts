@@ -113,6 +113,7 @@ async function sendPairingConfirmation(token: string, platformId: string): Promi
 }
 
 function createPairingInterceptor(
+  channelType: string,
   botUsernamePromise: Promise<string | null>,
   hostOnInbound: ChannelSetup['onInbound'],
   token: string,
@@ -144,7 +145,7 @@ function createPairingInterceptor(
       // code-bearing message never reaches an agent. Privilege is now a
       // property of the paired user, not the chat: upsert the user, and if
       // this instance has no owner yet, promote them to owner.
-      const existing = getMessagingGroupByPlatform('telegram', platformId);
+      const existing = getMessagingGroupByPlatform(channelType, platformId);
       if (existing) {
         updateMessagingGroup(existing.id, {
           is_group: consumed.consumed!.isGroup ? 1 : 0,
@@ -152,7 +153,7 @@ function createPairingInterceptor(
       } else {
         createMessagingGroup({
           id: `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          channel_type: 'telegram',
+          channel_type: channelType,
           platform_id: platformId,
           name: consumed.consumed!.name,
           is_group: consumed.consumed!.isGroup ? 1 : 0,
@@ -197,61 +198,89 @@ function createPairingInterceptor(
   };
 }
 
+function createTelegramChannelAdapter(options: {
+  registrationName: string;
+  channelType: string;
+  token: string;
+  poolTokens?: string;
+}): ChannelAdapter {
+  const { channelType, token } = options;
+  const telegramAdapter = createTelegramAdapter({
+    botToken: token,
+    mode: 'polling',
+  });
+  const bridge = createChatSdkBridge({
+    adapter: telegramAdapter,
+    concurrency: 'concurrent',
+    extractReplyContext,
+    supportsThreads: false,
+    transformOutboundText: (text: string) => sanitizeTelegramLegacyMarkdown(parseTextStyles(text, 'telegram')),
+    maxTextLength: 4000,
+  });
+
+  const botUsernamePromise = fetchBotUsername(token);
+
+  if (options.poolTokens) {
+    const poolTokens = options.poolTokens
+      .split(',')
+      .map((t: string) => t.trim())
+      .filter(Boolean);
+    if (poolTokens.length > 0) {
+      initTelegramPool(poolTokens).catch((err) => log.error('Pool init failed', { err }));
+    }
+  }
+
+  const wrapped: ChannelAdapter = {
+    ...bridge,
+    name: options.registrationName,
+    channelType,
+    resolveChannelName: async (platformId: string) => {
+      const chatId = platformId.split(':').slice(1).join(':');
+      if (!chatId) return null;
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getChat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId }),
+        });
+        const data = (await res.json()) as { ok?: boolean; result?: { title?: string } };
+        return data.ok ? (data.result?.title ?? null) : null;
+      } catch {
+        return null;
+      }
+    },
+    async setup(hostConfig: ChannelSetup) {
+      const intercepted: ChannelSetup = {
+        ...hostConfig,
+        onInbound: createPairingInterceptor(channelType, botUsernamePromise, hostConfig.onInbound, token),
+      };
+      return withRetry(() => bridge.setup(intercepted), `${options.registrationName}.setup`);
+    },
+  };
+  return wrapped;
+}
+
 registerChannelAdapter('telegram', {
   factory: () => {
     const env = readEnvFile(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_POOL']);
     if (!env.TELEGRAM_BOT_TOKEN) return null;
-    const token = env.TELEGRAM_BOT_TOKEN;
-    const telegramAdapter = createTelegramAdapter({
-      botToken: token,
-      mode: 'polling',
+    return createTelegramChannelAdapter({
+      registrationName: 'telegram',
+      channelType: 'telegram',
+      token: env.TELEGRAM_BOT_TOKEN,
+      poolTokens: env.TELEGRAM_BOT_POOL,
     });
-    const bridge = createChatSdkBridge({
-      adapter: telegramAdapter,
-      concurrency: 'concurrent',
-      extractReplyContext,
-      supportsThreads: false,
-      transformOutboundText: (text: string) => sanitizeTelegramLegacyMarkdown(parseTextStyles(text, 'telegram')),
-      maxTextLength: 4000,
+  },
+});
+
+registerChannelAdapter('telegram_codex', {
+  factory: () => {
+    const env = readEnvFile(['TELEGRAM_CODEX_BOT_TOKEN']);
+    if (!env.TELEGRAM_CODEX_BOT_TOKEN) return null;
+    return createTelegramChannelAdapter({
+      registrationName: 'telegram_codex',
+      channelType: 'telegram_codex',
+      token: env.TELEGRAM_CODEX_BOT_TOKEN,
     });
-
-    const botUsernamePromise = fetchBotUsername(token);
-
-    // Initialize pool bots if TELEGRAM_BOT_POOL is configured
-    if (env.TELEGRAM_BOT_POOL) {
-      const poolTokens = env.TELEGRAM_BOT_POOL.split(',')
-        .map((t: string) => t.trim())
-        .filter(Boolean);
-      if (poolTokens.length > 0) {
-        initTelegramPool(poolTokens).catch((err) => log.error('Pool init failed', { err }));
-      }
-    }
-
-    const wrapped: ChannelAdapter = {
-      ...bridge,
-      resolveChannelName: async (platformId: string) => {
-        const chatId = platformId.split(':').slice(1).join(':');
-        if (!chatId) return null;
-        try {
-          const res = await fetch(`https://api.telegram.org/bot${token}/getChat`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId }),
-          });
-          const data = (await res.json()) as { ok?: boolean; result?: { title?: string } };
-          return data.ok ? (data.result?.title ?? null) : null;
-        } catch {
-          return null;
-        }
-      },
-      async setup(hostConfig: ChannelSetup) {
-        const intercepted: ChannelSetup = {
-          ...hostConfig,
-          onInbound: createPairingInterceptor(botUsernamePromise, hostConfig.onInbound, token),
-        };
-        return withRetry(() => bridge.setup(intercepted), 'bridge.setup');
-      },
-    };
-    return wrapped;
   },
 });
