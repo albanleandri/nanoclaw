@@ -27,6 +27,10 @@ export interface ProviderContainerContext {
   sessionDir: string;
   /** Agent group ID, for any per-group logic. */
   agentGroupId: string;
+  /** Host path to the agent group's persistent folder. */
+  groupDir: string;
+  /** Effective skill selection from the materialized container config. */
+  selectedSkills: string[] | 'all';
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
 }

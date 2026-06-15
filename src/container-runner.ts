@@ -234,6 +234,8 @@ function resolveProviderContribution(
     ? fn({
         sessionDir: sessionDir(agentGroup.id, session.id),
         agentGroupId: agentGroup.id,
+        groupDir: path.resolve(GROUPS_DIR, agentGroup.folder),
+        selectedSkills: containerConfig.skills,
         hostEnv: process.env,
       })
     : {};
