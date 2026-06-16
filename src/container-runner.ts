@@ -501,14 +501,7 @@ async function buildContainerArgs(
     args.push('-e', `${key}=${value}`);
   }
 
-  // Egress lockdown when enabled — throws if it can't be established, aborting
-  // the spawn rather than running with open egress. Otherwise the host gateway.
-  if (ensureEgressNetwork()) {
-    args.push(...egressNetworkArgs());
-    log.info('Egress lockdown active', { containerName, network: EGRESS_NETWORK });
-  } else {
-    args.push(...hostGatewayArgs());
-  }
+  args.push(...hostGatewayArgs());
 
   // User mapping
   const hostUid = process.getuid?.();
