@@ -10,14 +10,12 @@
  *   - ~/.codex — a per-GROUP private state dir (`.codex-shared`), persistent
  *     across sessions so thread metadata and config.toml survive respawns.
  *
- * Credentials: NONE here — v2's invariant is that containers never receive
- * raw API keys; OneCLI is the sole credential path. The OpenAI key (or
- * ChatGPT token) lives in the OneCLI vault with an api.openai.com /
- * chatgpt.com host pattern; codex's traffic already rides the gateway proxy
- * (every spawn applies it — see container-runner.ts), which injects the real
- * credential in flight. The container only ever sees the `onecli-managed`
- * placeholder. Model/effort come from container_config (`ncl groups config
- * update --model/--effort`), not env.
+ * Credentials: no API key env is mounted. When the host has a Codex
+ * ChatGPT/OAuth login in ~/.codex/auth.json, the per-group Codex state is
+ * seeded with that auth file on spawn so the Codex CLI can refresh and manage
+ * its own OAuth tokens. OpenAI API-key mode still belongs in OneCLI rather
+ * than OPENAI_API_KEY. Model/effort come from container_config (`ncl groups
+ * config update --model/--effort`), not env.
  *
  * Memory and exchange archiving are NOT handled here either — the
  * container-side provider declares `usesMemoryScaffold` (the runner
@@ -32,6 +30,46 @@ import { getAgentGroup } from '../db/agent-groups.js';
 import { composeGroupAgentsMd } from './codex-agents-md.js';
 import { registerProviderContainerConfig } from './provider-container-registry.js';
 
+interface CodexAuthFile {
+  auth_mode?: unknown;
+  tokens?: {
+    access_token?: unknown;
+    refresh_token?: unknown;
+    id_token?: unknown;
+    account_id?: unknown;
+  };
+}
+
+function hasOauthTokens(auth: CodexAuthFile): boolean {
+  return (
+    auth.auth_mode === 'chatgpt' &&
+    typeof auth.tokens?.access_token === 'string' &&
+    typeof auth.tokens?.refresh_token === 'string'
+  );
+}
+
+function readCodexAuth(pathname: string): CodexAuthFile | null {
+  try {
+    const raw = fs.readFileSync(pathname, 'utf8');
+    if (!raw.trim()) return null;
+    return JSON.parse(raw) as CodexAuthFile;
+  } catch {
+    return null;
+  }
+}
+
+function seedCodexOauthAuth(targetAuthPath: string): void {
+  const existing = readCodexAuth(targetAuthPath);
+  if (existing && hasOauthTokens(existing)) return;
+
+  const hostAuthPath = path.join(process.env.HOME ?? '', '.codex', 'auth.json');
+  const hostAuth = readCodexAuth(hostAuthPath);
+  if (!hostAuth || !hasOauthTokens(hostAuth)) return;
+
+  fs.copyFileSync(hostAuthPath, targetAuthPath);
+  fs.chmodSync(targetAuthPath, 0o600);
+}
+
 registerProviderContainerConfig('codex', (ctx) => {
   // Per-group codex state (config.toml, thread metadata).
   const codexDir = path.join(DATA_DIR, 'v2-sessions', ctx.agentGroupId, '.codex-shared');
@@ -42,7 +80,9 @@ registerProviderContainerConfig('codex', (ctx) => {
   // exit 125), so it must exist before first spawn. Re-created here per
   // spawn because a group reset that wipes .codex-shared re-triggers it.
   // The 'a' flag creates the file if missing, never truncates an existing one.
-  fs.closeSync(fs.openSync(path.join(codexDir, 'auth.json'), 'a'));
+  const authPath = path.join(codexDir, 'auth.json');
+  fs.closeSync(fs.openSync(authPath, 'a'));
+  seedCodexOauthAuth(authPath);
 
   // Compose this group's AGENTS.md and sync codex-native skill links.
   const group = getAgentGroup(ctx.agentGroupId);
