@@ -22,7 +22,11 @@ afterEach(() => {
   closeSessionDb();
 });
 
-function insertMessage(id: string, content: object, opts?: { platformId?: string; channelType?: string; threadId?: string }) {
+function insertMessage(
+  id: string,
+  content: object,
+  opts?: { platformId?: string; channelType?: string; threadId?: string },
+) {
   getInboundDb()
     .prepare(
       `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, thread_id, content)
@@ -33,7 +37,11 @@ function insertMessage(id: string, content: object, opts?: { platformId?: string
 
 describe('poll loop integration', () => {
   it('should pick up a message, process it, and write a response', async () => {
-    insertMessage('m1', { sender: 'Alice', text: 'What is the meaning of life?' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-1' });
+    insertMessage(
+      'm1',
+      { sender: 'Alice', text: 'What is the meaning of life?' },
+      { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-1' },
+    );
 
     const provider = new MockProvider({}, () => '<message to="discord-test">42</message>');
 
@@ -85,12 +93,21 @@ describe('poll loop integration', () => {
       .run();
 
     // Insert messages from each destination with distinct thread IDs
-    insertMessage('m-discord', { sender: 'Alice', text: 'from discord' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread-1' });
-    insertMessage('m-slack', { sender: 'Bob', text: 'from slack' }, { platformId: 'chan-2', channelType: 'slack', threadId: 'slack-thread-99' });
+    insertMessage(
+      'm-discord',
+      { sender: 'Alice', text: 'from discord' },
+      { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread-1' },
+    );
+    insertMessage(
+      'm-slack',
+      { sender: 'Bob', text: 'from slack' },
+      { platformId: 'chan-2', channelType: 'slack', threadId: 'slack-thread-99' },
+    );
 
     // Agent replies to both destinations
-    const provider = new MockProvider({}, () =>
-      '<message to="discord-test">reply-d</message><message to="slack-test">reply-s</message>',
+    const provider = new MockProvider(
+      {},
+      () => '<message to="discord-test">reply-d</message><message to="slack-test">reply-s</message>',
     );
     const controller = new AbortController();
     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
@@ -153,6 +170,34 @@ describe('poll loop integration', () => {
     await loopPromise.catch(() => {});
   });
 
+  it('allows replying to the current sender via unknown fallback routing', async () => {
+    getInboundDb().prepare('DELETE FROM destinations').run();
+    insertMessage(
+      'm1',
+      { sender: 'Alb', text: 'hi' },
+      { platformId: 'telegram:6413334350', channelType: 'telegram_codex' },
+    );
+
+    const provider = new MockProvider(
+      {},
+      () => '<message to="unknown:telegram_codex:telegram:6413334350">delivered</message>',
+    );
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+    controller.abort();
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe('delivered');
+    expect(out[0].platform_id).toBe('telegram:6413334350');
+    expect(out[0].channel_type).toBe('telegram_codex');
+    expect(out[0].in_reply_to).toBe('m1');
+
+    await loopPromise.catch(() => {});
+  });
+
   it('multiple <message> blocks each produce an outbound message', async () => {
     getInboundDb()
       .prepare(
@@ -195,7 +240,11 @@ describe('poll loop integration', () => {
       .run();
 
     // Only insert a message from discord — slack-new has never sent anything
-    insertMessage('m1', { sender: 'Alice', text: 'tell slack' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' });
+    insertMessage(
+      'm1',
+      { sender: 'Alice', text: 'tell slack' },
+      { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' },
+    );
 
     const provider = new MockProvider({}, () => '<message to="slack-new">hello slack</message>');
     const controller = new AbortController();
@@ -214,8 +263,16 @@ describe('poll loop integration', () => {
 
   it('resolves most recent thread_id when destination has multiple inbound messages', async () => {
     // Two messages from same destination, different threads
-    insertMessage('m-old', { sender: 'Alice', text: 'old' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-old' });
-    insertMessage('m-new', { sender: 'Alice', text: 'new' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-new' });
+    insertMessage(
+      'm-old',
+      { sender: 'Alice', text: 'old' },
+      { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-old' },
+    );
+    insertMessage(
+      'm-new',
+      { sender: 'Alice', text: 'new' },
+      { platformId: 'chan-1', channelType: 'discord', threadId: 'thread-new' },
+    );
 
     const provider = new MockProvider({}, () => '<message to="discord-test">reply</message>');
     const controller = new AbortController();
@@ -255,7 +312,8 @@ describe('poll loop integration', () => {
 
     const provider = new MockProvider(
       {},
-      () => '<internal>thinking about this...</internal><message to="discord-test">answer</message><internal>done thinking</internal>',
+      () =>
+        '<internal>thinking about this...</internal><message to="discord-test">answer</message><internal>done thinking</internal>',
     );
     const controller = new AbortController();
     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
@@ -294,7 +352,6 @@ describe('poll loop integration', () => {
 
     await loopPromise.catch(() => {});
   });
-
 });
 
 // Helper: run poll loop until aborted or timeout
@@ -304,6 +361,7 @@ async function runPollLoopWithTimeout(provider: MockProvider, signal: AbortSigna
       provider,
       providerName: 'mock',
       cwd: '/tmp',
+      stopSignal: signal,
     }),
     new Promise<void>((_, reject) => {
       signal.addEventListener('abort', () => reject(new Error('aborted')));

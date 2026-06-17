@@ -63,6 +63,7 @@ export interface PollLoopConfig {
   systemContext?: {
     instructions?: string;
   };
+  stopSignal?: AbortSignal;
 }
 
 /**
@@ -106,7 +107,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
   let pollCount = 0;
   let isFirstPoll = true;
-  while (true) {
+  while (!config.stopSignal?.aborted) {
     // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
     const messages = getPendingMessages(isFirstPoll).filter((m) => m.kind !== 'system');
     isFirstPoll = false;
@@ -219,7 +220,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
     try {
-      const result = await processQuery(query, routing, processingIds, config.providerName);
+      const result = await processQuery(query, routing, processingIds, config.providerName, {
+        stopSignal: config.stopSignal,
+      });
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
         setContinuation(config.providerName, continuation);
@@ -300,6 +303,7 @@ interface ProcessQueryOptions {
   touchHeartbeat?: () => void;
   postResultHeartbeatMs?: number;
   activePollIntervalMs?: number;
+  stopSignal?: AbortSignal;
 }
 
 export async function processQuery(
@@ -318,6 +322,11 @@ export async function processQuery(
   const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
   const postResultHeartbeatMs = opts.postResultHeartbeatMs ?? POST_RESULT_HEARTBEAT_MS;
   const activePollIntervalMs = opts.activePollIntervalMs ?? ACTIVE_POLL_INTERVAL_MS;
+  const abortQuery = () => {
+    done = true;
+    query.abort();
+  };
+  opts.stopSignal?.addEventListener('abort', abortQuery, { once: true });
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open avoids
@@ -498,6 +507,7 @@ export async function processQuery(
       }
     }
   } finally {
+    opts.stopSignal?.removeEventListener('abort', abortQuery);
     done = true;
     clearInterval(pollHandle);
   }
@@ -569,7 +579,7 @@ function dispatchResultText(text: string, routing: RoutingContext): { sent: numb
     const body = match[2].trim();
     lastIndex = MESSAGE_RE.lastIndex;
 
-    const dest = findByName(toName);
+    const dest = resolveMessageDestination(toName, routing);
     if (!dest) {
       log(`Unknown destination in <message to="${toName}">, dropping block`);
       scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
@@ -593,6 +603,35 @@ function dispatchResultText(text: string, routing: RoutingContext): { sent: numb
     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
   }
   return { sent, hasUnwrapped };
+}
+
+function resolveMessageDestination(toName: string, routing: RoutingContext): DestinationEntry | undefined {
+  const configured = findByName(toName);
+  if (configured) return configured;
+
+  const fallback = parseUnknownDestinationName(toName);
+  if (!fallback) return undefined;
+  if (fallback.channelType !== routing.channelType || fallback.platformId !== routing.platformId) return undefined;
+
+  return {
+    name: toName,
+    displayName: toName,
+    type: 'channel',
+    channelType: fallback.channelType,
+    platformId: fallback.platformId,
+  };
+}
+
+function parseUnknownDestinationName(name: string): { channelType: string; platformId: string } | null {
+  const prefix = 'unknown:';
+  if (!name.startsWith(prefix)) return null;
+  const rest = name.slice(prefix.length);
+  const separator = rest.indexOf(':');
+  if (separator <= 0 || separator === rest.length - 1) return null;
+  return {
+    channelType: rest.slice(0, separator),
+    platformId: rest.slice(separator + 1),
+  };
 }
 
 function sendToDestination(dest: DestinationEntry, body: string, routing: RoutingContext): void {

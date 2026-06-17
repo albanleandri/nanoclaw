@@ -70,6 +70,12 @@ export type CodexReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high
 // defaults in config.toml; threads and turns inherit them, never override them.
 const CODEX_SANDBOX_MODE = 'danger-full-access';
 const CODEX_APPROVAL_POLICY = 'never';
+const CHATGPT_NO_PROXY_HOSTS = ['chatgpt.com', '.chatgpt.com'];
+
+interface CodexAuthJson {
+  auth_mode?: string;
+  tokens?: { access_token?: string; refresh_token?: string };
+}
 
 const CODEX_ENV_ALLOWLIST = new Set([
   'ALL_PROXY',
@@ -414,7 +420,38 @@ export function buildCodexProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
   }
   if (!next.CODEX_HOME) next.CODEX_HOME = next.HOME ? path.join(next.HOME, '.codex') : '/home/node/.codex';
   if (!next.HOME) next.HOME = '/home/node';
+  if (hasChatGptAuth(next.CODEX_HOME)) addNoProxyHosts(next, CHATGPT_NO_PROXY_HOSTS);
   return next;
+}
+
+function hasChatGptAuth(codexHome: string | undefined): boolean {
+  if (!codexHome) return false;
+  try {
+    const auth = JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf-8')) as CodexAuthJson;
+    return auth.auth_mode === 'chatgpt' && !!auth.tokens?.access_token && !!auth.tokens?.refresh_token;
+  } catch {
+    return false;
+  }
+}
+
+function addNoProxyHosts(env: NodeJS.ProcessEnv, hosts: string[]): void {
+  const merged = mergeNoProxy(env.NO_PROXY || env.no_proxy || '', hosts);
+  env.NO_PROXY = merged;
+  env.no_proxy = merged;
+}
+
+function mergeNoProxy(existing: string, hosts: string[]): string {
+  const parts = existing
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set(parts.map((part) => part.toLowerCase()));
+  for (const host of hosts) {
+    if (seen.has(host.toLowerCase())) continue;
+    parts.push(host);
+    seen.add(host.toLowerCase());
+  }
+  return parts.join(',');
 }
 
 export function tomlBasicString(value: string): string {
