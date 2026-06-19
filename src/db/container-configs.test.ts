@@ -33,6 +33,7 @@ function makeConfig(agentGroupId: string) {
     packages_npm: '[]',
     additional_mounts: '[]',
     cli_scope: 'group',
+    shared_resources: '[]',
     updated_at: now(),
   };
 }
@@ -137,6 +138,12 @@ describe('updateContainerConfigJson', () => {
     updateContainerConfigJson('ag-1', 'mcp_servers', { 'my-tool': server });
     const row = getContainerConfig('ag-1')!;
     expect(JSON.parse(row.mcp_servers)['my-tool'].command).toBe('npx');
+  });
+
+  it('overwrites shared_resources wholesale', () => {
+    updateContainerConfigJson('ag-1', 'shared_resources', ['knowledge', 'docs']);
+    const row = getContainerConfig('ag-1')!;
+    expect(JSON.parse(row.shared_resources)).toEqual(['knowledge', 'docs']);
   });
 
   it('throws on an invalid JSON column', () => {

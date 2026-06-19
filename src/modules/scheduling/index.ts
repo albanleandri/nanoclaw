@@ -21,12 +21,14 @@
 import { registerDeliveryAction } from '../../delivery.js';
 import {
   handleCancelTask,
+  handleListTasks,
   handlePauseTask,
   handleResumeTask,
   handleScheduleTask,
   handleUpdateTask,
 } from './actions.js';
 
+registerDeliveryAction('list_tasks', handleListTasks);
 registerDeliveryAction('schedule_task', handleScheduleTask);
 registerDeliveryAction('cancel_task', handleCancelTask);
 registerDeliveryAction('pause_task', handlePauseTask);

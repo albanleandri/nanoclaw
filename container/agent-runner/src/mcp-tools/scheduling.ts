@@ -5,8 +5,9 @@
  * Scheduling operations are sent as system actions via messages_out — the host
  * reads them during delivery and applies the changes to inbound.db.
  */
-import { getInboundDb } from '../db/connection.js';
+import { openInboundDb } from '../db/connection.js';
 import { writeMessageOut } from '../db/messages-out.js';
+import { markCompleted } from '../db/messages-in.js';
 import { getSessionRouting } from '../db/session-routing.js';
 import { TIMEZONE, parseZonedToUtc } from '../timezone.js';
 import { registerTools } from './server.js';
@@ -14,6 +15,31 @@ import type { McpToolDefinition } from './types.js';
 
 function log(msg: string): void {
   console.error(`[mcp-tools] ${msg}`);
+}
+
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForScheduleAdminResponse(requestId: string, timeoutMs = 5000): Promise<Record<string, unknown> | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const inbound = openInboundDb();
+    try {
+      const row = inbound
+        .prepare("SELECT id, content FROM messages_in WHERE kind = 'system' AND status = 'pending' AND content LIKE ? ORDER BY seq DESC LIMIT 1")
+        .get(`%"requestId":"${requestId}"%`) as { id: string; content: string } | undefined;
+      if (row) {
+        markCompleted([row.id]);
+        return JSON.parse(row.content) as Record<string, unknown>;
+      }
+    } finally {
+      inbound.close();
+    }
+    await sleep(100);
+  }
+  return null;
 }
 
 function generateId(): string {
@@ -113,44 +139,29 @@ export const listTasks: McpToolDefinition = {
     },
   },
   async handler(args) {
-    const status = args.status as string | undefined;
-    const db = getInboundDb();
-    // One row per series — the live (pending or paused) occurrence. Recurring
-    // tasks accumulate one completed row per firing plus one live follow-up;
-    // exposing the whole pile to the agent is noisy and confuses task identity
-    // ("which id do I cancel?"). The series_id is the stable handle.
-    //
-    // SQLite quirk: when MAX(seq) appears in the SELECT list of a GROUP BY
-    // query, the bare columns take values from the row that contains that max
-    // — that's how we pick "the latest live row per series" in one pass.
-    let rows;
-    if (status) {
-      rows = db
-        .prepare(
-          `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
-             FROM messages_in
-            WHERE kind = 'task' AND status = ?
-            GROUP BY series_id
-            ORDER BY process_after ASC`,
-        )
-        .all(status);
-    } else {
-      rows = db
-        .prepare(
-          `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
-             FROM messages_in
-            WHERE kind = 'task' AND status IN ('pending', 'paused')
-            GROUP BY series_id
-            ORDER BY process_after ASC`,
-        )
-        .all();
-    }
+    const requestId = `schedule-list-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeMessageOut({
+      id: requestId,
+      kind: 'system',
+      content: JSON.stringify({ action: 'list_tasks', requestId, status: args.status as string | undefined }),
+    });
 
-    if ((rows as unknown[]).length === 0) return ok('No tasks found.');
+    const response = await waitForScheduleAdminResponse(requestId);
+    if (!response) return err('Timed out waiting for scheduled task list from host');
+    if (response.ok !== true) return err(String(response.error ?? 'Host failed to list tasks'));
 
-    const lines = (rows as Array<{ id: string; status: string; process_after: string | null; recurrence: string | null; content: string }>).map((r) => {
-      const content = JSON.parse(r.content);
-      const prompt = (content.prompt as string || '').slice(0, 80);
+    const rows = (response.tasks as Array<{
+      id: string;
+      status: string;
+      process_after: string | null;
+      recurrence: string | null;
+      content: string;
+    }>) ?? [];
+    if (rows.length === 0) return ok('No tasks found.');
+
+    const lines = rows.map((r) => {
+      const content = JSON.parse(r.content) as Record<string, unknown>;
+      const prompt = ((content.prompt as string) || '').slice(0, 80);
       return `- ${r.id} [${r.status}] at=${r.process_after || 'now'} ${r.recurrence ? `recur=${r.recurrence} ` : ''}→ ${prompt}`;
     });
 

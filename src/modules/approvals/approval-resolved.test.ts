@@ -13,10 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import { createSession, createPendingApproval } from '../../db/sessions.js';
+import { createSession, createPendingApproval, getPendingApproval } from '../../db/sessions.js';
 import { upsertUser } from '../permissions/db/users.js';
 import { grantRole } from '../permissions/db/user-roles.js';
-import { initSessionFolder } from '../../session-manager.js';
+import { initSessionFolder, openInboundDb } from '../../session-manager.js';
+import { wakeContainer } from '../../container-runner.js';
 import { handleApprovalsResponse } from './response-handler.js';
 import { registerApprovalHandler, registerApprovalResolvedHandler, type ApprovalResolvedEvent } from './primitive.js';
 
@@ -148,5 +149,70 @@ describe('approval-resolved callbacks', () => {
 
     expect(claimed).toBe(true);
     expect(events).toEqual(['boom', 'after']);
+  });
+
+  it('notifies the agent and drops the row when an approved action has no registered handler', async () => {
+    seedApproval('appr-no-handler-1', 'test_no_handler_action');
+
+    const claimed = await handleApprovalsResponse({
+      questionId: 'appr-no-handler-1',
+      value: 'approve',
+      userId: 'slack:admin-1',
+      channelType: 'slack',
+      platformId: 'slack:C1',
+      threadId: null,
+    });
+
+    expect(claimed).toBe(true);
+    expect(getPendingApproval('appr-no-handler-1')).toBeUndefined();
+    expect(wakeContainer).toHaveBeenCalledWith(expect.objectContaining({ id: 'sess-1' }));
+
+    const sessionDb = openInboundDb('ag-1', 'sess-1');
+    try {
+      const notice = sessionDb
+        .prepare("SELECT content FROM messages_in WHERE kind = 'chat' ORDER BY seq ASC")
+        .get() as { content: string };
+      expect(JSON.parse(notice.content)).toMatchObject({
+        text: 'Your test_no_handler_action was approved, but no handler is installed to apply it.',
+        sender: 'system',
+        senderId: 'system',
+      });
+    } finally {
+      sessionDb.close();
+    }
+  });
+
+  it('notifies the agent, drops the row, and wakes the session when an approval handler throws', async () => {
+    registerApprovalHandler('test_throwing_action', async () => {
+      throw new Error('apply failed');
+    });
+    seedApproval('appr-throw-1', 'test_throwing_action');
+
+    const claimed = await handleApprovalsResponse({
+      questionId: 'appr-throw-1',
+      value: 'approve',
+      userId: 'slack:admin-1',
+      channelType: 'slack',
+      platformId: 'slack:C1',
+      threadId: null,
+    });
+
+    expect(claimed).toBe(true);
+    expect(getPendingApproval('appr-throw-1')).toBeUndefined();
+    expect(wakeContainer).toHaveBeenCalledWith(expect.objectContaining({ id: 'sess-1' }));
+
+    const sessionDb = openInboundDb('ag-1', 'sess-1');
+    try {
+      const notice = sessionDb
+        .prepare("SELECT content FROM messages_in WHERE kind = 'chat' ORDER BY seq ASC")
+        .get() as { content: string };
+      expect(JSON.parse(notice.content)).toMatchObject({
+        text: 'Your test_throwing_action was approved, but applying it failed: apply failed.',
+        sender: 'system',
+        senderId: 'system',
+      });
+    } finally {
+      sessionDb.close();
+    }
   });
 });

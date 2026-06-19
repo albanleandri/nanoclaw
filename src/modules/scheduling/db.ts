@@ -35,6 +35,37 @@ export function insertTask(
   });
 }
 
+export interface LiveTaskRow {
+  id: string;
+  status: string;
+  process_after: string | null;
+  recurrence: string | null;
+  content: string;
+}
+
+export function listLiveTasks(db: Database.Database, status?: string): LiveTaskRow[] {
+  if (status) {
+    return db
+      .prepare(
+        `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
+           FROM messages_in
+          WHERE kind = 'task' AND status = ?
+          GROUP BY series_id
+          ORDER BY process_after ASC`,
+      )
+      .all(status) as LiveTaskRow[];
+  }
+  return db
+    .prepare(
+      `SELECT series_id AS id, status, process_after, recurrence, content, MAX(seq) AS _seq
+         FROM messages_in
+        WHERE kind = 'task' AND status IN ('pending', 'paused')
+        GROUP BY series_id
+        ORDER BY process_after ASC`,
+    )
+    .all() as LiveTaskRow[];
+}
+
 export function cancelTask(db: Database.Database, taskId: string): void {
   db.prepare(
     "UPDATE messages_in SET status = 'completed', recurrence = NULL WHERE (id = ? OR series_id = ?) AND kind = 'task' AND status IN ('pending', 'paused')",

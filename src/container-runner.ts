@@ -311,6 +311,18 @@ function buildMounts(
     mounts.push({ hostPath: globalDir, containerPath: '/workspace/global', readonly: true });
   }
 
+  // Shared resources are opt-in per group. Symlinks land in the group workspace
+  // so both /workspace/agent/shared and /workspace/group/shared work.
+  syncSharedResourceSymlinks(groupDir, containerConfig);
+  const sharedResourcesDir = path.join(GROUPS_DIR, 'shared');
+  if (fs.existsSync(sharedResourcesDir)) {
+    mounts.push({ hostPath: sharedResourcesDir, containerPath: '/app/shared', readonly: false });
+  }
+  const docsDir = path.join(projectRoot, 'docs');
+  if (fs.existsSync(docsDir)) {
+    mounts.push({ hostPath: docsDir, containerPath: '/app/docs', readonly: true });
+  }
+
   // Shared CLAUDE.md — read-only, imported by the composed entry point via
   // the `.claude-shared.md` symlink inside the group dir.
   const sharedClaudeMd = path.join(process.cwd(), 'container', 'CLAUDE.md');
@@ -466,6 +478,73 @@ export function syncSkillSymlinks(
       }
     } catch {
       /* missing — fall through to create */
+    }
+    fs.symlinkSync(containerTarget, linkPath);
+  }
+}
+
+
+/**
+ * Sync shared-resource symlinks in <groupDir>/shared/ to match the
+ * container.json `sharedResources` selection. Symlink targets are container
+ * paths, dangling on the host but valid once /app/shared and /app/docs mount.
+ */
+export function syncSharedResourceSymlinks(
+  groupDir: string,
+  containerConfig: import('./container-config.js').ContainerConfig,
+): void {
+  const linksDir = path.join(groupDir, 'shared');
+  if (!fs.existsSync(linksDir)) fs.mkdirSync(linksDir, { recursive: true });
+
+  const projectRoot = process.cwd();
+  const sharedResourcesRoot = path.join(projectRoot, 'groups', 'shared');
+  const available = new Map<string, string>();
+
+  if (fs.existsSync(sharedResourcesRoot)) {
+    for (const entry of fs.readdirSync(sharedResourcesRoot)) {
+      try {
+        if (fs.statSync(path.join(sharedResourcesRoot, entry)).isDirectory()) {
+          available.set(entry, `/app/shared/${entry}`);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  if (fs.existsSync(path.join(projectRoot, 'docs'))) {
+    available.set('docs', '/app/docs');
+  }
+
+  const desired = new Map<string, string>();
+  for (const resource of containerConfig.sharedResources ?? []) {
+    const target = available.get(resource);
+    if (!target || desired.has(resource)) continue;
+    desired.set(resource, target);
+  }
+
+  for (const entry of fs.readdirSync(linksDir)) {
+    const entryPath = path.join(linksDir, entry);
+    try {
+      if (fs.lstatSync(entryPath).isSymbolicLink() && !desired.has(entry)) {
+        fs.unlinkSync(entryPath);
+      }
+    } catch {
+      /* skip */
+    }
+  }
+
+  for (const [resource, containerTarget] of desired) {
+    const linkPath = path.join(linksDir, resource);
+    try {
+      const stat = fs.lstatSync(linkPath);
+      if (stat.isSymbolicLink()) {
+        if (fs.readlinkSync(linkPath) === containerTarget) continue;
+        fs.unlinkSync(linkPath);
+      } else {
+        fs.rmSync(linkPath, { recursive: true, force: true });
+      }
+    } catch {
+      /* missing */
     }
     fs.symlinkSync(containerTarget, linkPath);
   }

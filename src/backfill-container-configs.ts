@@ -21,6 +21,7 @@ interface LegacyContainerJson {
   imageTag?: string;
   additionalMounts?: AdditionalMountConfig[];
   skills?: string[] | 'all';
+  sharedResources?: string[];
   provider?: string;
   assistantName?: string;
   maxMessagesPerPrompt?: number;
@@ -65,6 +66,7 @@ export function backfillContainerConfigs(): void {
       packages_npm: JSON.stringify(legacy.packages?.npm ?? []),
       additional_mounts: JSON.stringify(legacy.additionalMounts ?? []),
       cli_scope: 'group',
+      shared_resources: JSON.stringify(legacy.sharedResources ?? []),
       updated_at: new Date().toISOString(),
     };
 

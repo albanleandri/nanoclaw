@@ -23,6 +23,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     assistant_name: row.assistant_name,
     max_messages_per_prompt: row.max_messages_per_prompt,
     skills: JSON.parse(row.skills),
+    shared_resources: JSON.parse(row.shared_resources),
     mcp_servers: JSON.parse(row.mcp_servers),
     packages_apt: JSON.parse(row.packages_apt),
     packages_npm: JSON.parse(row.packages_npm),
@@ -299,6 +300,46 @@ registerResource({
         updateContainerConfigJson(id, 'mcp_servers', servers);
 
         return { removed: name };
+      },
+    },
+
+    'config set-shared-resources': {
+      access: 'approval',
+      description:
+        'Set the full list of shared resources (groups/shared/<name>, plus "docs" for repo docs). ' +
+        'Requires `ncl groups restart` to take effect. Use --id <group-id> --shared-resources <json-array|none>.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const raw = (args['shared-resources'] ?? args.shared_resources) as string | undefined;
+        if (raw === undefined) throw new Error('--shared-resources is required');
+
+        const row = getContainerConfig(id);
+        if (!row) throw new Error(`No container config for group: ${id}`);
+
+        let resources: string[];
+        if (raw.trim().toLowerCase() === 'none') {
+          resources = [];
+        } else {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            throw new Error('--shared-resources must be "none" or a JSON array of strings');
+          }
+          if (!Array.isArray(parsed) || !parsed.every((r) => typeof r === 'string')) {
+            throw new Error('--shared-resources must be "none" or a JSON array of strings');
+          }
+          resources = [];
+          for (const resource of parsed) {
+            const trimmed = resource.trim();
+            if (!trimmed) throw new Error('--shared-resources entries must be non-empty strings');
+            if (!resources.includes(trimmed)) resources.push(trimmed);
+          }
+        }
+
+        updateContainerConfigJson(id, 'shared_resources', resources);
+        return presentConfig(getContainerConfig(id)!);
       },
     },
     'config add-package': {

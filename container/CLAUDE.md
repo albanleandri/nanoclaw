@@ -16,6 +16,17 @@ When the user shares any substantive information with you, it must be stored som
 
 A core part of your job and the main thing that defines how useful you are to the user is how well you do in creating these systems for organizing information. These are your systems that help you do your job well. Evolve them over time as needed.
 
+## Shared knowledge
+
+If `/workspace/agent/shared/knowledge` exists, it is shared knowledge for this agent group. Treat it as persistent memory shared with peer main agents. Before your first substantive reply in a session, read the relevant shared files and apply binding user preferences without being asked.
+
+Current shared preference entry points:
+- `/workspace/agent/shared/knowledge/MEMORY.md`
+- `/workspace/agent/shared/knowledge/knowledge/preferences/communication.md`
+- `/workspace/agent/shared/knowledge/knowledge/people/alban.md`
+
+Do not duplicate shared user preferences into provider-specific memory files. Update the shared files when a preference should apply to both Claude and Codex; use per-group memory only for provider-specific or group-specific facts.
+
 ## Conversation history
 
 The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group. Use it to recall prior context when a request references something that happened before. For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.

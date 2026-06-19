@@ -4,7 +4,12 @@ import path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
-import { buildGroupWorkspaceMounts, resolveProviderName, syncSkillSymlinks } from './container-runner.js';
+import {
+  buildGroupWorkspaceMounts,
+  resolveProviderName,
+  syncSharedResourceSymlinks,
+  syncSkillSymlinks,
+} from './container-runner.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -55,6 +60,91 @@ describe('syncSkillSymlinks', () => {
       const linkPath = path.join(claudeDir, 'skills', 'stock-market-investing');
       expect(fs.lstatSync(linkPath).isSymbolicLink()).toBe(true);
       expect(fs.readlinkSync(linkPath)).toBe('/app/skills/custom/stock-market-investing');
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('syncSharedResourceSymlinks', () => {
+  it('symlinks selected shared resources and docs into groupDir/shared/', () => {
+    const previousCwd = process.cwd();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-shared-resources-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'groups', 'shared', 'knowledge'), { recursive: true });
+      fs.mkdirSync(path.join(tmp, 'groups', 'shared', 'trading-scripts'), { recursive: true });
+      fs.mkdirSync(path.join(tmp, 'docs'), { recursive: true });
+      const groupDir = path.join(tmp, 'groups', 'telegram_main');
+      fs.mkdirSync(groupDir, { recursive: true });
+
+      process.chdir(tmp);
+      syncSharedResourceSymlinks(groupDir, {
+        mcpServers: {},
+        packages: { apt: [], npm: [] },
+        additionalMounts: [],
+        skills: 'all',
+        sharedResources: ['knowledge', 'docs'],
+      });
+
+      expect(fs.readlinkSync(path.join(groupDir, 'shared', 'knowledge'))).toBe('/app/shared/knowledge');
+      expect(fs.readlinkSync(path.join(groupDir, 'shared', 'docs'))).toBe('/app/docs');
+      expect(fs.existsSync(path.join(groupDir, 'shared', 'trading-scripts'))).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces stale shared-resource links and stale directories for selected resources', () => {
+    const previousCwd = process.cwd();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-shared-resources-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'groups', 'shared', 'knowledge'), { recursive: true });
+      fs.mkdirSync(path.join(tmp, 'docs'), { recursive: true });
+      const groupDir = path.join(tmp, 'groups', 'telegram_main');
+      fs.mkdirSync(path.join(groupDir, 'shared'), { recursive: true });
+
+      fs.symlinkSync('/old/knowledge', path.join(groupDir, 'shared', 'knowledge'));
+      fs.mkdirSync(path.join(groupDir, 'shared', 'docs'));
+      fs.writeFileSync(path.join(groupDir, 'shared', 'docs', 'stale.txt'), 'stale');
+
+      process.chdir(tmp);
+      syncSharedResourceSymlinks(groupDir, {
+        mcpServers: {},
+        packages: { apt: [], npm: [] },
+        additionalMounts: [],
+        skills: 'all',
+        sharedResources: ['knowledge', 'docs'],
+      });
+
+      expect(fs.readlinkSync(path.join(groupDir, 'shared', 'knowledge'))).toBe('/app/shared/knowledge');
+      expect(fs.readlinkSync(path.join(groupDir, 'shared', 'docs'))).toBe('/app/docs');
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('removes a symlink when its resource is deselected', () => {
+    const previousCwd = process.cwd();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-shared-resources-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'groups', 'shared', 'knowledge'), { recursive: true });
+      const groupDir = path.join(tmp, 'groups', 'telegram_main');
+      fs.mkdirSync(groupDir, { recursive: true });
+      process.chdir(tmp);
+      const config = {
+        mcpServers: {},
+        packages: { apt: [], npm: [] },
+        additionalMounts: [],
+        skills: 'all' as const,
+        sharedResources: ['knowledge'],
+      };
+      syncSharedResourceSymlinks(groupDir, config);
+      expect(fs.lstatSync(path.join(groupDir, 'shared', 'knowledge')).isSymbolicLink()).toBe(true);
+      syncSharedResourceSymlinks(groupDir, { ...config, sharedResources: [] });
+      expect(fs.existsSync(path.join(groupDir, 'shared', 'knowledge'))).toBe(false);
     } finally {
       process.chdir(previousCwd);
       fs.rmSync(tmp, { recursive: true, force: true });

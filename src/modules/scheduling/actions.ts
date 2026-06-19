@@ -8,13 +8,80 @@
  * change to inbound.db here.
  */
 import type Database from 'better-sqlite3';
+import fs from 'fs';
 
 import { wakeContainer } from '../../container-runner.js';
-import { getSession } from '../../db/sessions.js';
+import { findSessionByAgentGroup, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
-import { writeSessionMessage } from '../../session-manager.js';
+import { inboundDbPath, openInboundDb, writeSessionMessage } from '../../session-manager.js';
 import type { Session } from '../../types.js';
-import { cancelTask, insertTask, pauseTask, resumeTask, updateTask, type TaskUpdate } from './db.js';
+import { cancelTask, insertTask, listLiveTasks, pauseTask, resumeTask, updateTask, type TaskUpdate } from './db.js';
+
+const PINOVA_AGENT_GROUP_ID = 'ag-1778748709932-a8wsn1';
+const PINOVA_CODEX_AGENT_GROUP_ID = 'b3b36ece-a953-42f9-af6c-da0f901c27d6';
+
+function sessionHasLiveTasks(session: Session): boolean {
+  const dbPath = inboundDbPath(session.agent_group_id, session.id);
+  if (!fs.existsSync(dbPath)) return false;
+  const db = openInboundDb(session.agent_group_id, session.id);
+  try {
+    const row = db
+      .prepare("SELECT 1 FROM messages_in WHERE kind = 'task' AND status IN ('pending', 'paused') LIMIT 1")
+      .get();
+    return Boolean(row);
+  } finally {
+    db.close();
+  }
+}
+
+function resolveScheduleOwner(session: Session): Session {
+  if (session.agent_group_id !== PINOVA_CODEX_AGENT_GROUP_ID) return session;
+
+  const ownerWithTasks = getSessionsByAgentGroup(PINOVA_AGENT_GROUP_ID)
+    .filter((candidate) => candidate.status === 'active')
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .find(sessionHasLiveTasks);
+  if (ownerWithTasks) return ownerWithTasks;
+
+  const owner = findSessionByAgentGroup(PINOVA_AGENT_GROUP_ID);
+  if (!owner) throw new Error('shared schedule owner session not found for Pinova');
+  return owner;
+}
+
+function withScheduleDb<T>(session: Session, currentDb: Database.Database, fn: (db: Database.Database) => T): T {
+  const owner = resolveScheduleOwner(session);
+  if (owner.id === session.id) return fn(currentDb);
+  const db = openInboundDb(owner.agent_group_id, owner.id);
+  try {
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
+function writeScheduleAdminResponse(session: Session, requestId: string, payload: Record<string, unknown>): void {
+  writeSessionMessage(session.agent_group_id, session.id, {
+    id: `schedule-admin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'system',
+    timestamp: new Date().toISOString(),
+    platformId: session.agent_group_id,
+    channelType: 'agent',
+    threadId: null,
+    trigger: 0,
+    content: JSON.stringify({ action: 'schedule_admin_response', requestId, ...payload }),
+  });
+}
+
+export async function handleListTasks(
+  content: Record<string, unknown>,
+  session: Session,
+  inDb: Database.Database,
+): Promise<void> {
+  const requestId = content.requestId as string;
+  const status = typeof content.status === 'string' ? content.status : undefined;
+  const rows = withScheduleDb(session, inDb, (db) => listLiveTasks(db, status));
+  writeScheduleAdminResponse(session, requestId, { ok: true, tasks: rows });
+}
 
 export async function handleScheduleTask(
   content: Record<string, unknown>,
@@ -27,15 +94,17 @@ export async function handleScheduleTask(
   const processAfter = content.processAfter as string;
   const recurrence = (content.recurrence as string) || null;
 
-  insertTask(inDb, {
-    id: taskId,
-    processAfter,
-    recurrence,
-    platformId: (content.platformId as string) ?? null,
-    channelType: (content.channelType as string) ?? null,
-    threadId: (content.threadId as string) ?? null,
-    content: JSON.stringify({ prompt, script }),
-  });
+  withScheduleDb(_session, inDb, (db) =>
+    insertTask(db, {
+      id: taskId,
+      processAfter,
+      recurrence,
+      platformId: (content.platformId as string) ?? null,
+      channelType: (content.channelType as string) ?? null,
+      threadId: (content.threadId as string) ?? null,
+      content: JSON.stringify({ prompt, script }),
+    }),
+  );
   log.info('Scheduled task created', { taskId, processAfter, recurrence });
 }
 
@@ -45,7 +114,7 @@ export async function handleCancelTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  cancelTask(inDb, taskId);
+  withScheduleDb(_session, inDb, (db) => cancelTask(db, taskId));
   log.info('Task cancelled', { taskId });
 }
 
@@ -55,7 +124,7 @@ export async function handlePauseTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  pauseTask(inDb, taskId);
+  withScheduleDb(_session, inDb, (db) => pauseTask(db, taskId));
   log.info('Task paused', { taskId });
 }
 
@@ -65,7 +134,7 @@ export async function handleResumeTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  resumeTask(inDb, taskId);
+  withScheduleDb(_session, inDb, (db) => resumeTask(db, taskId));
   log.info('Task resumed', { taskId });
 }
 
@@ -84,7 +153,7 @@ export async function handleUpdateTask(
   if (content.script === null || typeof content.script === 'string') {
     update.script = content.script as string | null;
   }
-  const touched = updateTask(inDb, taskId, update);
+  const touched = withScheduleDb(session, inDb, (db) => updateTask(db, taskId, update));
   log.info('Task updated', { taskId, touched, fields: Object.keys(update) });
   if (touched === 0) {
     // Notify the agent that update_task matched nothing. Replicates the
