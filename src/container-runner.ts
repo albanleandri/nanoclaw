@@ -483,7 +483,6 @@ export function syncSkillSymlinks(
   }
 }
 
-
 /**
  * Sync shared-resource symlinks in <groupDir>/shared/ to match the
  * container.json `sharedResources` selection. Symlink targets are container
