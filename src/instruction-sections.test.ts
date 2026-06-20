@@ -55,6 +55,8 @@ describe('collectInstructionSections', () => {
     writeFile(projectRoot, 'container/skills/calendar/instructions.md', 'calendar instructions');
     writeFile(projectRoot, 'container/skills/stocks/instructions.md', 'stocks instructions');
     writeFile(projectRoot, 'container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule instructions');
+    // A resource is only advertised when its backing mount source exists on host.
+    fs.mkdirSync(path.join(projectRoot, 'groups', 'shared', 'knowledge'), { recursive: true });
 
     const sections = collectInstructionSections({
       projectRoot,
@@ -133,5 +135,22 @@ describe('collectInstructionSections', () => {
 
     expect(sections.map((section) => section.id)).toContain('module-scheduling');
     expect(sections.map((section) => section.id)).not.toContain('module-cli');
+  });
+
+  it('does not advertise a shared resource whose mount source is absent', () => {
+    const projectRoot = tempProject();
+    // `present` has a backing dir; `missing` does not.
+    fs.mkdirSync(path.join(projectRoot, 'groups', 'shared', 'present'), { recursive: true });
+
+    const sections = collectInstructionSections({
+      projectRoot,
+      profile: profile({
+        resources: { sharedResources: ['present', 'missing'] },
+      }),
+    });
+
+    const resourceIds = sections.filter((section) => section.kind === 'resource').map((section) => section.id);
+    expect(resourceIds).toContain('resource-present');
+    expect(resourceIds).not.toContain('resource-missing');
   });
 });

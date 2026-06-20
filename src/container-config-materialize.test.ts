@@ -82,4 +82,22 @@ describe('materializeContainerJson agent profile', () => {
     });
     expect(written.agentProfile).toEqual(config.agentProfile);
   });
+
+  it('keeps the neutral profile consistent with the top-level config fields it mirrors', () => {
+    createContainerConfig(configRow());
+
+    const config = materializeContainerJson(group.id);
+    const profile = config.agentProfile;
+
+    // The profile is derived state. These fields are duplicated into the profile
+    // for introspection and must never drift from their top-level source.
+    expect(profile).toBeDefined();
+    expect(profile?.agentGroupId).toBe(config.agentGroupId);
+    expect(profile?.groupName).toBe(config.groupName);
+    expect(profile?.assistantName).toBe(config.assistantName);
+    expect(profile?.tools.skills).toEqual(config.skills);
+    expect(profile?.tools.mcpServers).toEqual(config.mcpServers);
+    expect(profile?.tools.cliScope).toBe(config.cliScope);
+    expect(profile?.resources.sharedResources).toEqual(config.sharedResources);
+  });
 });

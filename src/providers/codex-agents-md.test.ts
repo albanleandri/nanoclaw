@@ -66,6 +66,8 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     fs.mkdirSync(moduleDir, { recursive: true });
     fs.writeFileSync(path.join(moduleDir, 'scheduling.instructions.md'), 'schedule work through the shared module');
     fs.writeFileSync(path.join(moduleDir, 'cli.instructions.md'), 'do not include cli instructions when disabled');
+    // Backing source for the `knowledge` shared resource so it is advertised.
+    fs.mkdirSync(path.join(projectRoot, 'groups', 'shared', 'knowledge'), { recursive: true });
     createContainerConfig({
       agent_group_id: group.id,
       provider: 'codex',

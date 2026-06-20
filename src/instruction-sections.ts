@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import type { AgentProfile } from './agent-profile.js';
+import { resolveAvailableSharedResources } from './shared-resources.js';
 
 const RUNTIME_CONTRACT_CONTAINER_PATH = '/app/CLAUDE.md';
 const SHARED_SKILLS_CONTAINER_BASE = '/app/skills';
@@ -76,7 +77,12 @@ export function collectInstructionSections(options: CollectInstructionSectionsOp
     });
   }
 
+  // Only advertise shared resources whose mount will actually be present in
+  // the container. The resolver is the same one the symlink sync uses, so the
+  // instruction and the mount cannot disagree.
+  const availableResources = resolveAvailableSharedResources(projectRoot);
   for (const resource of [...profile.resources.sharedResources].sort()) {
+    if (!availableResources.has(resource)) continue;
     sections.push({
       id: `resource-${resource}`,
       title: `Shared Resource: ${resource}`,

@@ -13,7 +13,6 @@ export interface RunnerAgentProfile {
   agentGroupId: string;
   groupName: string;
   assistantName: string;
-  roleInstructions?: string;
   memory: {
     workspacePath: string;
     localMemoryFile: string;

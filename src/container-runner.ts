@@ -27,6 +27,7 @@ import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
+import { resolveAvailableSharedResources } from './shared-resources.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { readEnvFileByPrefix } from './env.js';
@@ -495,24 +496,7 @@ export function syncSharedResourceSymlinks(
   const linksDir = path.join(groupDir, 'shared');
   if (!fs.existsSync(linksDir)) fs.mkdirSync(linksDir, { recursive: true });
 
-  const projectRoot = process.cwd();
-  const sharedResourcesRoot = path.join(projectRoot, 'groups', 'shared');
-  const available = new Map<string, string>();
-
-  if (fs.existsSync(sharedResourcesRoot)) {
-    for (const entry of fs.readdirSync(sharedResourcesRoot)) {
-      try {
-        if (fs.statSync(path.join(sharedResourcesRoot, entry)).isDirectory()) {
-          available.set(entry, `/app/shared/${entry}`);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  if (fs.existsSync(path.join(projectRoot, 'docs'))) {
-    available.set('docs', '/app/docs');
-  }
+  const available = resolveAvailableSharedResources(process.cwd());
 
   const desired = new Map<string, string>();
   for (const resource of containerConfig.sharedResources ?? []) {

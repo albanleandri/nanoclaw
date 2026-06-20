@@ -70,6 +70,11 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
   };
+  // The neutral profile is *derived* from the same config (and group) above, so
+  // the top-level fields and `agentProfile` cannot disagree at build time. It is
+  // materialized for runner introspection and future providers — see
+  // docs/agent-profile.md. The derivation invariant is locked by
+  // container-config-materialize.test.ts; keep it that way if this changes.
   config.agentProfile = buildAgentProfile(group, config);
   return config;
 }

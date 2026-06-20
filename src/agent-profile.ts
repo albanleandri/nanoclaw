@@ -23,7 +23,6 @@ export interface AgentProfile {
   agentGroupId: string;
   groupName: string;
   assistantName: string;
-  roleInstructions?: string;
   memory: AgentMemoryProfile;
   tools: AgentToolProfile;
   resources: AgentResourceProfile;
