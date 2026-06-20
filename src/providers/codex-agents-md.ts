@@ -3,22 +3,25 @@
  *
  * AGENTS.md is Codex's project doc (its CLAUDE.md equivalent). Composed fresh
  * on every spawn by the codex provider contribution (see ./codex.ts) from:
- *   - the shared base (`container/AGENTS.md`)
+ *   - the shared NanoClaw runtime contract
  *   - a pointer to the runner-scaffolded memory system (created container-side
  *     at boot via the `usesMemoryScaffold` capability — nothing is written here)
  *   - a pointer to codex-native skills under `.agents/skills`
  *   - each enabled NanoClaw module's `*.instructions.md` fragment
  *   - MCP server `instructions` from container.json
+ *   - provider-neutral resource pointers from the agent profile
  *
  * Codex hard-caps project-doc loading (`project_doc_max_bytes`, mirrored in
- * the container provider's config.toml writer) — compose fails loudly rather
- * than letting Codex truncate silently.
+ * the container provider's config.toml writer) — compose degrades explicitly
+ * rather than letting Codex truncate silently.
  */
 import fs from 'fs';
 import path from 'path';
 
-import type { McpServerConfig } from '../container-config.js';
+import { buildAgentProfile } from '../agent-profile.js';
+import { configFromDb, type ContainerConfig } from '../container-config.js';
 import { getContainerConfig } from '../db/container-configs.js';
+import { collectInstructionSections, type InstructionSection } from '../instruction-sections.js';
 import { log } from '../log.js';
 import type { AgentGroup } from '../types.js';
 
@@ -26,6 +29,8 @@ export const CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
 export const CODEX_PROJECT_DOC_WARN_BYTES = 28 * 1024;
 
 const HEADER = '<!-- Composed at spawn. Do not edit. Edit memory/system/definition.md for memory behavior. -->';
+const RUNTIME_CONTRACT_HOST_SUBPATH = path.join('container', 'CLAUDE.md');
+const MCP_TOOLS_CONTAINER_PREFIX = '/app/src/mcp-tools/';
 const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
 
 const MEMORY_POINTER = [
@@ -66,10 +71,11 @@ interface AgentsMdSection {
 export function composeGroupAgentsMd(group: AgentGroup, groupDir: string): void {
   if (!fs.existsSync(groupDir)) fs.mkdirSync(groupDir, { recursive: true });
 
+  const projectRoot = process.cwd();
   const configRow = getContainerConfig(group.id);
-  const mcpServers: Record<string, McpServerConfig> = configRow
-    ? (JSON.parse(configRow.mcp_servers) as Record<string, McpServerConfig>)
-    : {};
+  const containerConfig = configRow ? configFromDb(configRow, group) : defaultContainerConfig(group);
+  const profile = buildAgentProfile(group, containerConfig);
+  const instructionSections = collectInstructionSections({ projectRoot, profile });
 
   const sections: AgentsMdSection[] = [{ name: 'header', content: HEADER }];
   const pushSection = (name: string, ...content: string[]): void => {
@@ -80,34 +86,38 @@ export function composeGroupAgentsMd(group: AgentGroup, groupDir: string): void 
     if (body) sections.push({ name, content: `# ${name}\n\n${body}` });
   };
 
-  const sharedBase = path.join(process.cwd(), 'container', 'CLAUDE.md');
-  if (fs.existsSync(sharedBase)) {
-    pushSection('NanoClaw Runtime Contract', fs.readFileSync(sharedBase, 'utf-8'));
-  }
+  const runtimeContent = readRuntimeContract(projectRoot, instructionSections);
+  if (runtimeContent) pushSection('NanoClaw Runtime Contract', runtimeContent);
 
   pushSection('Memory System', MEMORY_POINTER, memoryIndexInline(groupDir));
   pushSection('Native Runtime Skills', NATIVE_RUNTIME_SKILLS_POINTER);
 
-  const cliDisabled = configRow?.cli_scope === 'disabled';
-  const mcpToolsHostDir = path.join(process.cwd(), MCP_TOOLS_HOST_SUBPATH);
-  if (fs.existsSync(mcpToolsHostDir)) {
-    for (const entry of fs.readdirSync(mcpToolsHostDir).sort()) {
-      const match = entry.match(/^(.+)\.instructions\.md$/);
-      if (!match) continue;
-      const moduleName = match[1];
-      if (moduleName === 'cli' && cliDisabled) continue;
-      pushSection(`NanoClaw Module: ${moduleName}`, fs.readFileSync(path.join(mcpToolsHostDir, entry), 'utf-8'));
-    }
-  }
-
-  for (const [name, mcp] of Object.entries(mcpServers)) {
-    if (mcp.instructions) {
-      pushSection(`MCP Server: ${name}`, mcp.instructions);
-    }
+  for (const section of instructionSections) {
+    if (section.kind === 'runtime' || section.kind === 'skill') continue;
+    const content = readInstructionSectionContent(projectRoot, section);
+    if (content) pushSection(section.title, content);
   }
 
   const content = fitAgentsMdToCap(group, sections);
   writeAtomic(path.join(groupDir, 'AGENTS.md'), content);
+}
+
+function readRuntimeContract(projectRoot: string, sections: InstructionSection[]): string {
+  const runtimeSection = sections.find((section) => section.kind === 'runtime');
+  if (!runtimeSection) return '';
+  const runtimeContractPath = path.join(projectRoot, RUNTIME_CONTRACT_HOST_SUBPATH);
+  if (!fs.existsSync(runtimeContractPath)) return '';
+  return fs.readFileSync(runtimeContractPath, 'utf-8');
+}
+
+function readInstructionSectionContent(projectRoot: string, section: InstructionSection): string {
+  if (section.content) return section.content;
+  if (section.kind !== 'module' || !section.containerPath?.startsWith(MCP_TOOLS_CONTAINER_PREFIX)) return '';
+
+  const fileName = section.containerPath.slice(MCP_TOOLS_CONTAINER_PREFIX.length);
+  const hostPath = path.join(projectRoot, MCP_TOOLS_HOST_SUBPATH, fileName);
+  if (!fs.existsSync(hostPath)) return '';
+  return fs.readFileSync(hostPath, 'utf-8');
 }
 
 function renderAgentsMd(sections: AgentsMdSection[]): string {
@@ -179,6 +189,20 @@ function fitAgentsMdToCap(group: AgentGroup, sections: AgentsMdSection[]): strin
     });
   }
   return content;
+}
+
+function defaultContainerConfig(group: AgentGroup): ContainerConfig {
+  return {
+    mcpServers: {},
+    packages: { apt: [], npm: [] },
+    additionalMounts: [],
+    skills: 'all',
+    sharedResources: [],
+    cliScope: 'group',
+    groupName: group.name,
+    assistantName: group.name,
+    agentGroupId: group.id,
+  };
 }
 
 function writeAtomic(filePath: string, content: string): void {

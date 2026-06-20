@@ -18,21 +18,18 @@ import fs from 'fs';
 import path from 'path';
 
 import { GROUPS_DIR } from './config.js';
-import type { McpServerConfig } from './container-config.js';
+import { configFromDb, type ContainerConfig } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
+import { collectInstructionSections } from './instruction-sections.js';
 import { log } from './log.js';
 import type { AgentGroup } from './types.js';
+import { buildAgentProfile } from './agent-profile.js';
+
+export { collectSkillInstructionFragments } from './instruction-sections.js';
 
 // Symlink targets are container paths — dangling on host (hence the readlink
 // dance instead of existsSync), valid inside the container via RO mounts.
 const SHARED_CLAUDE_MD_CONTAINER_PATH = '/app/CLAUDE.md';
-const SHARED_SKILLS_CONTAINER_BASE = '/app/skills';
-const SHARED_MCP_TOOLS_CONTAINER_BASE = '/app/src/mcp-tools';
-
-// Host-side source paths used to discover fragment sources at compose time.
-// Resolved at call time (process.cwd() = project root) so tests can swap cwd.
-const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
-
 const COMPOSED_HEADER = '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->';
 
 /**
@@ -54,52 +51,17 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
     fs.mkdirSync(fragmentsDir, { recursive: true });
   }
 
-  // Desired fragment set.
   const configRow = getContainerConfig(group.id);
-  const mcpServers: Record<string, McpServerConfig> = configRow
-    ? (JSON.parse(configRow.mcp_servers) as Record<string, McpServerConfig>)
-    : {};
+  const containerConfig = configRow ? configFromDb(configRow, group) : defaultContainerConfig(group);
+  const profile = buildAgentProfile(group, containerConfig);
   const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
 
-  // Skill fragments — only for skills selected in container_configs.skills.
-  // The actual runtime skill symlinks are synced from the same selection in
-  // container-runner.ts; keeping instructions aligned prevents the agent from
-  // being taught about skills it cannot load.
-  const selectedSkills = parseSkillSelection(configRow?.skills);
-  for (const fragment of collectSkillInstructionFragments(process.cwd(), selectedSkills)) {
-    desired.set(`skill-${fragment.name}.md`, {
-      type: 'symlink',
-      content: fragment.containerPath,
-    });
-  }
-
-  // Built-in module fragments — every MCP tool source file that ships a
-  // sibling `<name>.instructions.md`. These describe how the agent should
-  // use that module's MCP tools (schedule_task, install_packages, etc.).
-  // Skip cli.instructions.md when cli_scope is disabled.
-  const cliDisabled = configRow?.cli_scope === 'disabled';
-  const mcpToolsHostDir = path.join(process.cwd(), MCP_TOOLS_HOST_SUBPATH);
-  if (fs.existsSync(mcpToolsHostDir)) {
-    for (const entry of fs.readdirSync(mcpToolsHostDir)) {
-      const match = entry.match(/^(.+)\.instructions\.md$/);
-      if (!match) continue;
-      const moduleName = match[1];
-      if (moduleName === 'cli' && cliDisabled) continue;
-      desired.set(`module-${moduleName}.md`, {
-        type: 'symlink',
-        content: `${SHARED_MCP_TOOLS_CONTAINER_BASE}/${entry}`,
-      });
-    }
-  }
-
-  // MCP server fragments — inline instructions from container.json for
-  // user-added external MCP servers.
-  for (const [name, mcp] of Object.entries(mcpServers)) {
-    if (mcp.instructions) {
-      desired.set(`mcp-${name}.md`, {
-        type: 'inline',
-        content: mcp.instructions,
-      });
+  for (const section of collectInstructionSections({ projectRoot: process.cwd(), profile })) {
+    if (section.kind === 'runtime') continue;
+    if (section.containerPath) {
+      desired.set(section.id + '.md', { type: 'symlink', content: section.containerPath });
+    } else if (section.content) {
+      desired.set(section.id + '.md', { type: 'inline', content: section.content });
     }
   }
 
@@ -202,80 +164,21 @@ function syncSymlink(linkPath: string, target: string): void {
 }
 
 function writeAtomic(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp-${process.pid}`;
+  const tmp = filePath + '.tmp-' + process.pid;
   fs.writeFileSync(tmp, content);
   fs.renameSync(tmp, filePath);
 }
 
-type SkillSelection = string[] | 'all';
-
-interface SkillInstructionFragment {
-  name: string;
-  containerPath: string;
-}
-
-function parseSkillSelection(raw: string | undefined): SkillSelection {
-  if (!raw) return 'all';
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed === 'all') return 'all';
-    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
-  } catch {
-    /* fall through */
-  }
-  return 'all';
-}
-
-/**
- * Discover selected skill instruction fragments. Built-in skills live under
- * container/skills/<name>; custom skills under container/skills/custom/<name>.
- * Custom wins on name collision, matching container-runner.ts symlink sync.
- */
-export function collectSkillInstructionFragments(
-  projectRoot: string,
-  selection: SkillSelection,
-): SkillInstructionFragment[] {
-  const sharedSkillsDir = path.join(projectRoot, 'container', 'skills');
-  const customSkillsDir = path.join(sharedSkillsDir, 'custom');
-  const available = new Map<string, SkillInstructionFragment>();
-
-  function addSkill(name: string, hostDir: string, containerBase: string): void {
-    const hostFragment = path.join(hostDir, name, 'instructions.md');
-    if (!fs.existsSync(hostFragment)) return;
-    available.set(name, {
-      name,
-      containerPath: `${containerBase}/${name}/instructions.md`,
-    });
-  }
-
-  if (fs.existsSync(sharedSkillsDir)) {
-    for (const entry of fs.readdirSync(sharedSkillsDir)) {
-      if (entry === 'custom') continue;
-      try {
-        if (fs.statSync(path.join(sharedSkillsDir, entry)).isDirectory()) {
-          addSkill(entry, sharedSkillsDir, SHARED_SKILLS_CONTAINER_BASE);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  if (fs.existsSync(customSkillsDir)) {
-    for (const entry of fs.readdirSync(customSkillsDir)) {
-      try {
-        if (fs.statSync(path.join(customSkillsDir, entry)).isDirectory()) {
-          addSkill(entry, customSkillsDir, `${SHARED_SKILLS_CONTAINER_BASE}/custom`);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  const names = selection === 'all' ? [...available.keys()] : selection;
-  return names
-    .map((name) => available.get(name))
-    .filter((fragment): fragment is SkillInstructionFragment => fragment !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name));
+function defaultContainerConfig(group: AgentGroup): ContainerConfig {
+  return {
+    mcpServers: {},
+    packages: { apt: [], npm: [] },
+    additionalMounts: [],
+    skills: 'all',
+    sharedResources: [],
+    cliScope: 'group',
+    groupName: group.name,
+    assistantName: group.name,
+    agentGroupId: group.id,
+  };
 }

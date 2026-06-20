@@ -13,8 +13,8 @@
  *     outbound.db       ← container-owned session DB
  *     .heartbeat        ← container touches for liveness detection
  *     outbox/           ← outbound files
- *     agent/            ← agent group folder (CLAUDE.md, container.json, working files)
- *       container.json  ← per-group config (RO nested mount)
+ *     agent/            ← persistent agent workspace (provider-native docs, config, working files)
+ *       container.json  ← per-group config + neutral agentProfile (RO nested mount)
  *     global/           ← shared global memory (RO)
  *   /app/src/           ← shared agent-runner source (RO)
  *   /app/skills/        ← shared skills (RO)
@@ -46,11 +46,9 @@ async function main(): Promise<void> {
   log(`Starting v2 agent-runner (provider: ${providerName})`);
 
   // Runtime-generated system-prompt addendum: agent identity (name) plus
-  // the live destinations map. Everything else (capabilities, per-module
-  // instructions, per-channel formatting) is loaded by Claude Code from
-  // /workspace/agent/CLAUDE.md — the composed entry imports the shared
-  // base (/app/CLAUDE.md) and each enabled module's fragment. Per-group
-  // memory lives in /workspace/agent/CLAUDE.local.md (auto-loaded).
+  // the live destinations map. Provider-native project docs in the persistent
+  // /workspace/agent workspace carry capabilities, module instructions, and
+  // memory conventions for the selected provider.
   const instructions = buildSystemPromptAddendum(config.assistantName || undefined);
 
   // Discover additional directories mounted at /workspace/extra/*

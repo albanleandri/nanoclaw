@@ -11,6 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { buildAgentProfile, type AgentProfile } from './agent-profile.js';
 import { GROUPS_DIR } from './config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { getAgentGroup } from './db/agent-groups.js';
@@ -37,6 +38,7 @@ export interface ContainerConfig {
   additionalMounts: AdditionalMountConfig[];
   skills: string[] | 'all';
   sharedResources?: string[];
+  cliScope?: 'disabled' | 'group' | 'global';
   provider?: string;
   groupName?: string;
   assistantName?: string;
@@ -44,11 +46,12 @@ export interface ContainerConfig {
   maxMessagesPerPrompt?: number;
   model?: string;
   effort?: string;
+  agentProfile?: AgentProfile;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
 export function configFromDb(row: ContainerConfigRow, group: AgentGroup): ContainerConfig {
-  return {
+  const config: ContainerConfig = {
     mcpServers: JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>,
     packages: {
       apt: JSON.parse(row.packages_apt) as string[],
@@ -58,6 +61,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     additionalMounts: JSON.parse(row.additional_mounts) as AdditionalMountConfig[],
     skills: JSON.parse(row.skills) as string[] | 'all',
     sharedResources: JSON.parse(row.shared_resources) as string[],
+    cliScope: row.cli_scope === 'disabled' || row.cli_scope === 'global' ? row.cli_scope : 'group',
     provider: row.provider ?? undefined,
     groupName: group.name,
     assistantName: row.assistant_name ?? group.name,
@@ -66,6 +70,8 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
   };
+  config.agentProfile = buildAgentProfile(group, config);
+  return config;
 }
 
 /**

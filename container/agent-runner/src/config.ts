@@ -9,6 +9,29 @@ import fs from 'fs';
 
 const CONFIG_PATH = '/workspace/agent/container.json';
 
+export interface RunnerAgentProfile {
+  agentGroupId: string;
+  groupName: string;
+  assistantName: string;
+  roleInstructions?: string;
+  memory: {
+    workspacePath: string;
+    localMemoryFile: string;
+    neutralMemoryRoot: string;
+  };
+  tools: {
+    skills: string[] | 'all';
+    mcpServers: Record<
+      string,
+      { command: string; args?: string[]; env?: Record<string, string>; instructions?: string }
+    >;
+    cliScope: 'disabled' | 'group' | 'global';
+  };
+  resources: {
+    sharedResources: string[];
+  };
+}
+
 export interface RunnerConfig {
   provider: string;
   assistantName: string;
@@ -18,6 +41,7 @@ export interface RunnerConfig {
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
   model?: string;
   effort?: string;
+  agentProfile?: RunnerAgentProfile;
 }
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -47,6 +71,7 @@ export function loadConfig(): RunnerConfig {
     mcpServers: (raw.mcpServers as RunnerConfig['mcpServers']) || {},
     model: (raw.model as string) || undefined,
     effort: (raw.effort as string) || undefined,
+    agentProfile: (raw.agentProfile as RunnerAgentProfile) || undefined,
   };
 
   return _config;

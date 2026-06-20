@@ -17,9 +17,21 @@ Each agent session has a mounted SQLite DB. The DB is the one and only IO mechan
 - Everything is a message: chat, tasks, webhooks, system actions, agent-to-agent — all use these two tables
 - One DB per session, not per agent group
 
-## Agent Groups vs Sessions
+## Agent Groups, Profiles, and Sessions
 
-An agent group has its own filesystem — folder, CLAUDE.md, skills, container config. Multiple sessions can share the same agent group (same filesystem, same skills) but each session gets its own DB mounted at a known path. Each session = a separate container with the same agent group's filesystem but a different session DB.
+An agent group is the durable agent identity: central DB row, stable folder, display name, channel wiring, and persistent workspace. Multiple sessions can share the same agent group, so they share the same workspace and tool configuration but each session gets its own DB mounted at a known path. Each session = a separate container with the same agent group's workspace but a different session DB.
+
+At spawn time the host derives a provider-neutral `agentProfile` from the agent group plus `container_configs`. The profile is embedded in `groups/<folder>/container.json`, which is mounted read-only into the container. It describes identity, workspace/memory conventions, selected skills, MCP servers, CLI scope, and shared resources. See [agent-profile.md](agent-profile.md).
+
+Provider selection is separate from identity. The session can override the provider, otherwise `container_configs.provider` is used, otherwise NanoClaw defaults to Claude. Model and effort are provider settings, not agent identity.
+
+Provider-native instruction files are generated compatibility artifacts:
+- `CLAUDE.md` for Claude-compatible runners
+- `AGENTS.md` for Codex-compatible runners
+- `.claude-fragments/` for Claude import fragments
+- `CLAUDE.local.md` for existing Claude-compatible local memory/instructions
+
+The long-term boundary is: the host owns group/profile/workspace intent; provider adapters translate that intent into the files, mounts, auth state, SDK calls, and sandbox settings each runner needs.
 
 ## Message Flow
 
@@ -32,7 +44,7 @@ Platform event
   → Host calls wakeUpAgent(session)
   → Container spins up (or is already running)
   → Agent-runner polls its session DB, finds new messages
-  → Agent-runner processes with Claude
+  → Agent-runner processes with the selected provider
   → Agent-runner writes response to session DB
   → Host polls active session DBs for responses
   → Host reads response, looks up conversation, delivers through channel adapter
@@ -393,7 +405,7 @@ This is documented as a pattern, not a built-in feature.
 ## Core Properties
 - Container isolation via filesystem mounts
 - Credential proxy (OneCLI)
-- Per-agent-group workspace (folder, CLAUDE.md, skills)
+- Per-agent-group workspace (folder, generated provider docs, skills, materialized container config)
 - Polling-based (not event-driven)
 - Per-agent-group agent-runner recompilation on container startup (agent can modify its own source, request rebuild/restart, changes persist across teardowns)
 - Host ↔ container IO through mounted session DBs (`messages_in` / `messages_out`) — no stdin piping, no IPC files
@@ -408,22 +420,25 @@ This is documented as a pattern, not a built-in feature.
 
 ## Design Decisions
 
-**Session DB location:** Not in the agent group folder. Separate directory (e.g., `sessions/{session_id}/`). Each session gets its own folder containing `session.db` and the Claude SDK's `.claude/` directory. The session identity IS the folder — no need to track Claude SDK session IDs.
+**Session DB location:** Not in the agent group folder. Each session gets its own folder under the session store containing `inbound.db`, `outbound.db`, heartbeat state, outbox files, and any provider-specific session state. The session identity is the folder plus central DB row. Provider continuation IDs are stored separately per provider.
 
 **Container mount structure:**
 
 ```
 /workspace/                 ← mount: session folder (read-write)
-  .claude/                  ← Claude SDK session data (auto-created)
-  session.db                ← session SQLite DB
+  inbound.db                ← host-owned session DB, read by agent-runner
+  outbound.db               ← agent-runner-owned session DB, read by host
+  .heartbeat                ← liveness heartbeat touched by container
   outbox/                   ← agent-runner writes outbound files here
-  agent/                    ← mount: agent group folder (nested, read-write)
-    CLAUDE.md               ← agent instructions
-    skills/                 ← agent skills
+  agent/                    ← mount: persistent agent workspace (nested, read-write)
+    container.json          ← materialized config + agentProfile (read-only nested mount)
+    CLAUDE.md               ← generated Claude project doc when used
+    AGENTS.md               ← generated Codex project doc when used
+    shared/                 ← compatibility links for selected shared resources
     ... working files
 ```
 
-Directory mounts: session folder at `/workspace`, agent group folder at `/workspace/agent/`, and the same agent group folder also mounted at legacy path `/workspace/group/` for skills and scheduled tasks that still use that durable-state path. The agent-runner CDs into `/workspace/agent/` to run the agent. Claude SDK writes `.claude/` at `/workspace/.claude/` (root of the workspace). The session DB is at `/workspace/session.db`.
+Directory mounts: session folder at `/workspace`, agent group folder at `/workspace/agent/`, and the same agent group folder also mounted at legacy path `/workspace/group/` for skills and scheduled tasks that still use that durable-state path. The agent-runner CDs into `/workspace/agent/` to run the agent. Provider-specific state mounts are contributed by provider adapters.
 
 This works on both Docker (nested bind mounts) and Apple Container (directory mounts only — no file-level mounts, but nested directory mounts are supported).
 
@@ -598,7 +613,7 @@ src/db/
 
 ```
 container/agent-runner/src/db/
-  connection.ts          ← open session.db at fixed path, WAL mode
+  connection.ts          ← open inbound/outbound DBs at fixed paths
   messages-in.ts         ← read pending, update status
   messages-out.ts        ← write results, outbox queries
   index.ts               ← barrel
@@ -610,7 +625,7 @@ These are the building blocks. None require special abstractions — they fall o
 
 1. **Multiple agent groups on the same channel with content-based routing.** Different messages in the same thread can route to different agent groups based on content (e.g., @mention routes to supervisor, normal messages route to worker). The channel adapter's routing logic — custom code — decides.
 
-2. **Per-thread sessions from a shared agent group.** Multiple sessions share the same agent group (filesystem, skills, CLAUDE.md) but each gets its own session DB. Standard for worker pools.
+2. **Per-thread sessions from a shared agent group.** Multiple sessions share the same agent group workspace and tools but each gets its own session DBs. Standard for worker pools.
 
 3. **Session reset and replay.** Create a new session for the same thread. Mark old messages as unhandled so the poll picks them up again. Old output stays visible in the platform (e.g., Discord thread) for comparison. This is an action an agent can request — not automatic.
 
@@ -790,7 +805,7 @@ stopped → running → idle → stopped
 
 ## Agent-Runner Architecture
 
-The agent-runner is the process inside the container. It mediates between the session DB and the Claude SDK — polling for work, formatting messages for the agent, translating tool calls into DB rows, and managing the agent lifecycle.
+The agent-runner is the process inside the container. It mediates between the session DBs and the selected provider — polling for work, formatting messages for the agent, translating tool calls into DB rows, and managing the agent lifecycle.
 
 ### IO Model
 
@@ -806,7 +821,7 @@ All IO goes through the session DB. No stdin, no stdout markers, no IPC files.
 1. Query `messages_in WHERE status = 'pending' AND (process_after IS NULL OR process_after <= now())`
 2. If rows found: set `status = 'processing'`, `status_changed = now()` on each
 3. Batch messages into a single prompt (strip routing fields, format by kind)
-4. Push into Claude SDK's MessageStream
+4. Send the prompt to the selected provider adapter
 5. Process agent output → write `messages_out` rows
 6. Set processed messages to `status = 'completed'`
 7. Back to step 1. If no messages found, sleep briefly and re-poll (container stays warm for idle timeout)
@@ -894,8 +909,8 @@ Pre-scripts: if a task message has a `script` field, run it first. If `wakeAgent
 
 - AgentProvider interface wraps SDK-specific query logic (trunk ships the `claude` provider; additional providers like OpenCode install via `/add-<provider>` skills)
 - Session resume via provider-specific mechanisms
-- System prompt loading from CLAUDE.md files
-- PreCompact hook for transcript archiving (Claude provider)
+- Provider-native project docs generated from shared instruction sections (`CLAUDE.md`, `AGENTS.md`, etc.)
+- Provider-specific hooks and transcript archival stay inside each provider adapter
 - Script execution for task-kind messages
 
 ## Open Questions

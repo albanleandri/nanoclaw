@@ -10,7 +10,7 @@ Access layer: `src/db/`. Authoritative schema reference: `src/db/schema.ts` (com
 
 ### 1.1 `agent_groups`
 
-Agent workspaces. Each maps 1:1 to a `groups/<folder>/` directory containing `CLAUDE.md` and skills. Container config lives in `container_configs` (see §1.x below); a `container.json` file is materialized at spawn time for the container runner to read.
+Agent workspaces. Each maps 1:1 to a `groups/<folder>/` directory containing provider-native generated docs, skills, memory/work files, and materialized runtime config. Container config lives in `container_configs` (see §1.x below); a `container.json` file with an embedded `agentProfile` is materialized at spawn time for the container runner to read.
 
 ```sql
 CREATE TABLE agent_groups (
@@ -296,7 +296,7 @@ CREATE TABLE schema_version (
 
 ### 1.15 `container_configs`
 
-Per-agent-group container runtime config. Source of truth for provider, model, packages, MCP servers, mounts, CLI scope, etc. Materialized to `groups/<folder>/container.json` at spawn time.
+Per-agent-group container runtime config. Source of truth for provider, model, packages, MCP servers, mounts, CLI scope, shared resources, etc. Materialized to `groups/<folder>/container.json` at spawn time. The host also derives a provider-neutral `agentProfile` from this row plus `agent_groups` and embeds it in the materialized JSON for runtime introspection.
 
 ```sql
 CREATE TABLE container_configs (
@@ -313,11 +313,12 @@ CREATE TABLE container_configs (
   packages_npm           TEXT NOT NULL DEFAULT '[]',
   additional_mounts      TEXT NOT NULL DEFAULT '[]',
   cli_scope              TEXT NOT NULL DEFAULT 'group',   -- disabled | group | global
+  shared_resources       TEXT NOT NULL DEFAULT '[]',
   updated_at             TEXT NOT NULL
 );
 ```
 
-- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`
+- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`, `src/providers/codex-agents-md.ts`
 - **Writers:** `src/db/container-configs.ts`, `src/modules/self-mod/apply.ts`, `src/backfill-container-configs.ts`
 
 ---
