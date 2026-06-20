@@ -21,7 +21,7 @@
 
 [OpenClaw](https://github.com/openclaw/openclaw) is an impressive project, but I wouldn't have been able to sleep if I had given complex software I didn't understand full access to my life. OpenClaw has nearly half a million lines of code, 53 config files, and 70+ dependencies. Its security is at the application level (allowlists, pairing codes) rather than true OS-level isolation. Everything runs in one Node process with shared memory.
 
-NanoClaw provides that same core functionality, but in a codebase small enough to understand: one process and a handful of files. Claude agents run in their own Linux containers with filesystem isolation, not merely behind permission checks.
+NanoClaw provides that same core functionality, but in a codebase small enough to understand: one host process, one container-side runner, and a small set of explicit boundaries. Agents run in their own Linux containers with filesystem isolation, not merely behind permission checks.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ cd nanoclaw-v2
 bash nanoclaw.sh
 ```
 
-`nanoclaw.sh` walks you from a fresh machine to a named agent you can message. It installs Node, pnpm, and Docker if missing, registers your Anthropic credential with OneCLI, builds the agent container, and pairs your first channel (Telegram, Discord, WhatsApp, or a local CLI). If a step fails, Claude Code is invoked automatically to diagnose and resume from where it broke.
+`nanoclaw.sh` walks you from a fresh machine to a named agent you can message. It installs Node, pnpm, and Docker if missing, registers the initial Claude credential with OneCLI, builds the agent container, and pairs your first channel (Telegram, Discord, WhatsApp, or a local CLI). If a step fails, Claude Code is invoked automatically to diagnose and resume from where it broke.
 
 <details>
 <summary><strong>Migrating from NanoClaw v1?</strong></summary>
@@ -64,20 +64,20 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 
 **Built for the individual user.** NanoClaw isn't a monolithic framework; it's software that fits each user's exact needs. Instead of becoming bloatware, NanoClaw is designed to be bespoke. You make your own fork and have Claude Code modify it to match your needs.
 
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that it's safe to make changes.
+**Customization = code changes.** NanoClaw avoids a large configuration surface. Runtime choices such as provider, model, skills, MCP servers, CLI scope, and shared resources are DB-backed and materialized at spawn; deeper behavior changes are ordinary code changes in a small codebase.
 
 **AI-native, hybrid by design.** The install and onboarding flow is an optimized scripted path, fast and deterministic. When a step needs judgment, whether a failed install, a guided decision, or a customization, control hands off to Claude Code seamlessly. Beyond setup there's no monitoring dashboard or debugging UI either: describe the problem in chat and Claude Code handles it.
 
-**Skills over features.** Trunk ships the registry and infrastructure, not specific channel adapters or alternative agent providers. Channels (Discord, Slack, Telegram, WhatsApp, …) live on a long-lived `channels` branch; alternative providers (OpenCode, Ollama) live on `providers`. You run `/add-telegram`, `/add-opencode`, etc. and the skill copies exactly the module(s) you need into your fork. No feature you didn't ask for.
+**Skills over features.** Trunk stays focused on the registry, orchestration, and the provider/runtime paths that are part of the base system. Optional channel adapters and provider integrations are installed by skills from long-lived branches such as `channels` and `providers`. You run `/add-telegram`, `/add-opencode`, etc. and the skill copies exactly the module(s) you need into your fork. No feature you didn't ask for.
 
-**Best harness, best model.** NanoClaw natively uses Claude Code via Anthropic's official Claude Agent SDK, so you get the latest Claude models and Claude Code's full toolset, including the ability to modify and expand your own NanoClaw fork. Other providers are drop-in options: `/add-codex` for OpenAI's Codex (ChatGPT subscription or API key), `/add-opencode` for OpenRouter, Google, DeepSeek and more via OpenCode, and `/add-ollama-provider` for local open-weight models. Provider is configurable per agent group.
+**Provider-aware, not provider-shaped.** The container runner stays on Bun and `@anthropic-ai/claude-agent-sdk`, with Claude as the default provider. NanoClaw also has provider adapter boundaries for Codex-like and future runners: provider, model, effort, skills, MCP servers, and shared resources are selected per agent group and materialized into a neutral agent profile plus provider-native project docs.
 
 ## What It Supports
 
-- **Multi-channel messaging** — WhatsApp, Telegram, Discord, Slack, Microsoft Teams, iMessage, Matrix, Google Chat, Webex, Linear, GitHub, WeChat, and email via Resend. Installed on demand with `/add-<channel>` skills. Run one or many at the same time.
+- **Multi-channel messaging** — channel adapters are installed on demand with `/add-<channel>` skills. Telegram support is present in this tree; other adapters such as Discord, Slack, WhatsApp, GitHub, Linear, Matrix, Google Chat, Webex, WeChat, Microsoft Teams, iMessage, and email belong to channel skills or forks.
 - **Flexible isolation** — connect each channel to its own agent for full privacy, share one agent across many channels for unified memory with separate conversations, or fold multiple channels into a single shared session so one conversation spans many surfaces. Pick per channel via `/manage-channels`. See [docs/isolation-model.md](docs/isolation-model.md).
-- **Per-agent workspace** — each agent group has its own `CLAUDE.md`, its own memory, its own container, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
-- **Scheduled tasks** — recurring jobs that run Claude and can message you back
+- **Per-agent workspace** — each agent group has a durable workspace, generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex), a materialized `container.json` with a neutral `agentProfile`, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
+- **Scheduled tasks** — one-shot or recurring jobs that wake the selected agent/provider and can message you back
 - **Web access** — search and fetch content from the web
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation or Apple Container as a macOS-native opt-in
 - **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
@@ -101,7 +101,7 @@ From a channel you own or administer, you can manage groups and tasks:
 
 ## Customizing
 
-NanoClaw doesn't use configuration files. To make changes, just tell Claude Code what you want:
+NanoClaw keeps configuration deliberately small. For behavior changes, tell Claude Code what you want:
 
 - "Change the trigger word to @Bob"
 - "Remember in the future to make responses shorter and more direct"
@@ -116,9 +116,9 @@ The codebase is small enough that Claude can safely modify it.
 
 **Don't add features. Add skills.**
 
-If you want to add a new channel or agent provider, don't add it to trunk. New channel adapters land on the `channels` branch; new agent providers land on `providers`. Users install them in their own fork with `/add-<name>` skills, which copy the relevant module(s) into the standard paths, wire the registration, and pin dependencies.
+If you want to add a new channel or optional agent provider, prefer a skill. New channel adapters land on the `channels` branch; optional providers land on `providers`. Users install them in their own fork with `/add-<name>` skills, which copy the relevant module(s) into the standard paths, wire the registration, and pin dependencies.
 
-This keeps trunk as pure registry and infra, and every fork stays lean — users get the channels and providers they asked for and nothing else.
+This keeps the base system lean, and every fork stays focused — users get the channels and optional providers they asked for and nothing else.
 
 ### RFS (Request for Skills)
 
@@ -137,12 +137,12 @@ Skills we'd like to see:
 ## Architecture
 
 ```
-messaging apps → host process (router) → inbound.db → container (Bun, Claude Agent SDK) → outbound.db → host process (delivery) → messaging apps
+messaging apps → host process (router) → inbound.db → container (Bun agent-runner, selected provider) → outbound.db → host process (delivery) → messaging apps
 ```
 
-A single Node host orchestrates per-session agent containers. When a message arrives, the host routes it via the entity model (user → messaging group → agent group → session), writes it to the session's `inbound.db`, and wakes the container. The agent-runner inside the container polls `inbound.db`, runs Claude, and writes responses to `outbound.db`. The host polls `outbound.db` and delivers back through the channel adapter.
+A single Node host orchestrates per-session agent containers. When a message arrives, the host routes it via the entity model (user → messaging group → agent group → session), writes it to the session's `inbound.db`, and wakes the container. The Bun agent-runner inside the container polls `inbound.db`, invokes the selected provider, and writes responses to `outbound.db`. The host polls `outbound.db` and delivers back through the channel adapter.
 
-Two SQLite files per session, each with exactly one writer — no cross-mount contention, no IPC, no stdin piping. Channels and alternative providers self-register at startup; trunk ships the registry and the Chat SDK bridge, while the adapters themselves are skill-installed per fork.
+Two SQLite files per session, each with exactly one writer — no cross-mount contention, no IPC, no stdin piping. Channel adapters and provider adapters self-register at startup; the base system ships the registry and Chat SDK bridge, while optional adapters are skill-installed per fork.
 
 For the full architecture writeup see [docs/architecture.md](docs/architecture.md); for the three-level isolation model see [docs/isolation-model.md](docs/isolation-model.md).
 
@@ -152,12 +152,12 @@ Key files:
 - `src/delivery.ts` — polls `outbound.db`, delivers via adapter, handles system actions
 - `src/host-sweep.ts` — 60s sweep: stale detection, due-message wake, recurrence
 - `src/session-manager.ts` — resolves sessions, opens `inbound.db` / `outbound.db`
-- `src/container-runner.ts` — spawns per-agent-group containers, OneCLI credential injection
+- `src/container-runner.ts` — spawns per-session containers, materializes `container.json`, OneCLI credential injection
 - `src/db/` — central DB (users, roles, agent groups, messaging groups, wiring, migrations)
 - `src/channels/` — channel adapter infra (adapters installed via `/add-<channel>` skills)
-- `src/providers/` — host-side provider config (`claude` baked in; others via skills)
+- `src/providers/` — host-side provider config and provider-contributed mounts/env
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
-- `groups/<folder>/` — per-agent-group filesystem (`CLAUDE.md`, skills, container config)
+- `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, materialized `container.json`)
 
 ## FAQ
 
@@ -175,13 +175,13 @@ Agents run in containers, not behind application-level permission checks. They c
 
 **Why no configuration files?**
 
-We don't want configuration sprawl. Every user should customize NanoClaw so that the code does exactly what they want, rather than configuring a generic system. If you prefer having config files, you can tell Claude to add them.
+We don't want configuration sprawl. NanoClaw has DB-backed runtime config for providers, models, skills, MCP servers, CLI scope, shared resources, and mounts, but broader behavior is meant to be customized in code rather than hidden behind a generic dashboard. If you prefer additional config files, you can tell Claude Code to add them.
 
 **Can I use third-party or open-source models?**
 
-Yes. The supported path is `/add-opencode` (OpenRouter, OpenAI, Google, DeepSeek, and more via OpenCode config) or `/add-ollama-provider` (local open-weight models via Ollama). Both are configurable per agent group, so different agents can run on different backends in the same install.
+Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and optional providers such as OpenCode (`/add-opencode`) or Ollama (`/add-ollama-provider`) can be installed through provider skills.
 
-For one-off experiments, any Claude API-compatible endpoint also works via `.env`:
+For one-off Claude-compatible endpoint experiments, `.env` can override the Anthropic endpoint:
 
 ```bash
 ANTHROPIC_BASE_URL=https://your-api-endpoint.com

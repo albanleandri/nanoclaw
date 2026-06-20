@@ -84,6 +84,7 @@
 - Do not silently change public interfaces.
 - Do not change deployment behavior, secrets handling, or service startup commands without documenting it.
 - When adding or changing a capability, update the relevant docs and operator notes in the same patch.
+- When changing user-facing behavior, setup, architecture, runtime/provider behavior, workspace layout, supported capabilities, or commands, review `README.md` in the same patch and update it if any claim would become stale.
 - Prefer editing existing files over introducing new abstractions unless there is a clear benefit.
 
 ## Handoff protocol
