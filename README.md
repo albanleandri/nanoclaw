@@ -80,6 +80,19 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation or Apple Container as a macOS-native opt-in
 - **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
 
+## This Fork vs Upstream
+
+This fork stays close to upstream NanoClaw's host/container/session-DB architecture, but carries a few runtime and operator changes:
+
+- **Provider-neutral runtime profile** — agent identity, provider, model, skills, MCP servers, CLI scope, mounts, and shared resources are materialized into a neutral `agentProfile` at spawn time.
+- **First-class Codex runtime path** — Codex support is present in this tree, including provider adapters, generated `AGENTS.md`, Codex CLI install data, and container-side runner support.
+- **DB-backed per-group runtime config** — provider, model, effort, skills, MCP servers, CLI scope, and shared resources are selected per agent group instead of living only in instruction files.
+- **Shared resources across providers** — shared mounts and resources are resolved once and exposed through provider-specific docs and runtime config.
+- **Built-in Telegram adapter and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, and optional pool routing via explicit `bot_index`.
+- **Private skills submodule** — fork-specific skills can live in `container/skills/custom` as a private submodule while the public tree stays generic.
+- **Durable job/action framework** — host-side long-running jobs can persist progress, expose delivery actions, and report failures through the normal messaging path.
+- **Local operator tooling** — helper scripts cover read-only SQLite inspection, backup/restore, token refresh, and systemd service management.
+
 ## Usage
 
 Talk to your assistant with the trigger word (default: `@Andy`):
