@@ -819,12 +819,19 @@ All IO goes through the session DB. No stdin, no stdout markers, no IPC files.
 ### Poll Loop
 
 1. Query `messages_in WHERE status = 'pending' AND (process_after IS NULL OR process_after <= now())`
-2. If rows found: set `status = 'processing'`, `status_changed = now()` on each
+2. If rows found: write `processing_ack(status='processing')` rows in `outbound.db`
 3. Batch messages into a single prompt (strip routing fields, format by kind)
 4. Send the prompt to the selected provider adapter
 5. Process agent output → write `messages_out` rows
-6. Set processed messages to `status = 'completed'`
+6. Write `processing_ack(status='completed')` for processed rows; host sweep syncs those acknowledgements back to `messages_in.status`
 7. Back to step 1. If no messages found, sleep briefly and re-poll (container stays warm for idle timeout)
+
+While a provider query is active, the poll loop continues checking for new
+`messages_in` rows. Follow-ups are marked `processing` and pushed to the
+active provider query, but they are not marked `completed` merely because the
+push was accepted. The provider must acknowledge after the specific follow-up
+turn produces a result; that acknowledgement is what lets the poll loop write
+`processing_ack(status='completed')`.
 
 ### Message Formatting by Kind
 

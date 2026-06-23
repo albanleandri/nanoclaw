@@ -54,8 +54,14 @@ interface McpServerConfig {
 }
 
 interface AgentQuery {
-  /** Push a follow-up message into the active query */
-  push(message: string): void;
+  /**
+   * Push a follow-up message into the active query.
+   *
+   * The optional acknowledgement must be called only after the provider has
+   * produced a result for the turn that consumed the follow-up. The poll loop
+   * uses it to mark the corresponding messages_in rows completed.
+   */
+  push(message: string, onTurnResult?: () => void): void;
 
   /** Signal that no more input will be sent */
   end(): void;
@@ -88,6 +94,13 @@ type ProviderEvent =
 - **`result`** — emitted when the agent produces a complete response. May be emitted multiple times per query (e.g., Claude's multi-turn with subagents). The agent-runner writes each result to messages_out.
 - **`error`** — emitted on failure. `retryable` indicates whether the agent-runner should retry. `classification` is optional detail (e.g., 'quota', 'auth', 'transport').
 - **`progress`** — optional, for logging. The agent-runner logs these but doesn't act on them.
+
+Follow-up acknowledgement is separate from result emission. When the poll loop
+finds new inbound rows while a query is active, it marks them `processing`,
+calls `provider.push(prompt, ack)`, and leaves them processing until the
+provider invokes `ack` after the specific follow-up turn produces a result.
+Providers must not call `ack` merely because they accepted or queued the input;
+otherwise a dropped provider turn can silently lose a user message.
 
 ## Provider Implementations
 
@@ -233,7 +246,9 @@ class CodexProvider implements AgentProvider {
 **Codex-specific behavior inside the provider:**
 - `developer_instructions` for system prompt (loaded from CLAUDE.md)
 - `git init` in workspace (Codex requires a git repo)
-- Abort+restart pattern for follow-up messages
+- Follow-up messages are queued as explicit turns. The provider does not
+  acknowledge a follow-up until that turn produces a result; accepting or
+  queueing the input is not enough to complete the inbound row.
 - `sandboxMode`, `approvalPolicy`, `networkAccessEnabled` from env vars
 - Conversation archiving (Codex doesn't have PreCompact)
 
@@ -331,7 +346,7 @@ Everything below is handled by the agent-runner, not the provider.
 │                                         │
 │  3. While query is active:              │
 │     - Continue polling messages_in      │
-│     - New messages → provider.push()    │
+│     - New messages → provider.push(ack) │
 │                                         │
 │  4. When query finishes:                │
 │     - Back to step 1                    │
@@ -340,7 +355,7 @@ Everything below is handled by the agent-runner, not the provider.
 └─────────────────────────────────────────┘
 ```
 
-**Concurrent polling during active query:** While the provider is running a query, the agent-runner continues polling messages_in on a short interval (~500ms). New pending messages are formatted and pushed into the active query via `provider.push()`. This lets follow-up messages arrive while the agent is processing — Claude handles this natively, Codex/OpenCode handle it via abort+restart internally.
+**Concurrent polling during active query:** While the provider is running a query, the agent-runner continues polling messages_in on a short interval (~500ms). New pending messages are marked `processing`, formatted, and pushed into the active query via `provider.push(prompt, ack)`. The poll loop marks those follow-up rows `completed` only when the provider calls `ack` after the follow-up turn produces a result. This lets follow-up messages arrive while the agent is processing without treating "input accepted" as "input processed."
 
 **Idle behavior:** When no messages are pending and no query is active, the agent-runner sleeps briefly (1s) and re-polls. The container stays warm until the host kills it (idle timeout).
 
@@ -434,16 +449,17 @@ MCP tools that target a different destination (e.g., `send_to_agent`, `send_mess
 
 ### Status Management
 
-The agent-runner manages the `status` and `status_changed` fields on messages_in:
+The agent-runner manages message lifecycle through `processing_ack` rows in
+`outbound.db`; the host syncs those rows back to `messages_in.status`:
 
 ```
 pending → processing → completed
                     → failed (if provider returns error and max retries exhausted)
 ```
 
-- **Pick up:** `UPDATE messages_in SET status = 'processing', status_changed = now(), tries = tries + 1 WHERE id IN (...)`
-- **Complete:** `UPDATE messages_in SET status = 'completed', status_changed = now() WHERE id IN (...)`
-- **Error:** Agent-runner does NOT set `failed` — it leaves the message as `processing`. The host detects stale processing via `status_changed` and handles retry logic (reset to pending with backoff). This keeps retry policy on the host side.
+- **Pick up:** container writes `processing_ack(status='processing')`
+- **Complete:** container writes `processing_ack(status='completed')`
+- **Error:** agent-runner normally leaves the message as `processing`. The host detects stale processing via `processing_ack.status_changed` and handles retry logic (reset to pending with backoff). This keeps retry policy on the host side.
 
 ### MCP Tools
 

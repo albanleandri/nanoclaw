@@ -163,6 +163,13 @@ CREATE TABLE processing_ack (
 
 Crash recovery: on container startup, stale `processing` entries get cleared. Host-side sync: `syncProcessingAcks()` in `src/host-sweep.ts`.
 
+Follow-up messages that arrive while a provider query is active move to
+`processing` when the poll loop pushes them into the active query. They move to
+`completed` only after the provider acknowledges that the follow-up turn
+produced a result. This distinction is important: accepting or queueing a
+follow-up is not enough to complete the inbound row, because a provider can
+drop or no-op a late push.
+
 ### 4.3 `session_state`
 
 Persistent container-owned KV store. Main consumer is the Chat SDK session ID — storing it here lets the agent's conversation resume across container restarts. Cleared by `/clear`.

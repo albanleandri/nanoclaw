@@ -25,7 +25,7 @@ export class MockProvider implements AgentProvider {
   }
 
   query(input: QueryInput): AgentQuery {
-    const pending: string[] = [];
+    const pending: Array<{ message: string; onTurnResult?: () => void }> = [];
     let waiting: (() => void) | null = null;
     let ended = false;
     let aborted = false;
@@ -50,8 +50,9 @@ export class MockProvider implements AgentProvider {
         // Process any pushed follow-ups
         while (!ended && !aborted) {
           if (pending.length > 0) {
-            const msg = pending.shift()!;
-            yield { type: 'result', text: responseFactory(msg) };
+            const item = pending.shift()!;
+            yield { type: 'result', text: responseFactory(item.message) };
+            item.onTurnResult?.();
             continue;
           }
           // Wait for push() or end()
@@ -63,15 +64,16 @@ export class MockProvider implements AgentProvider {
 
         // Drain remaining
         while (pending.length > 0) {
-          const msg = pending.shift()!;
-          yield { type: 'result', text: responseFactory(msg) };
+          const item = pending.shift()!;
+          yield { type: 'result', text: responseFactory(item.message) };
+          item.onTurnResult?.();
         }
       },
     };
 
     return {
-      push(message: string) {
-        pending.push(message);
+      push(message: string, onTurnResult?: () => void) {
+        pending.push({ message, onTurnResult });
         waiting?.();
       },
       end() {

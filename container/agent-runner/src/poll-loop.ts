@@ -304,6 +304,9 @@ interface ProcessQueryOptions {
   postResultHeartbeatMs?: number;
   activePollIntervalMs?: number;
   stopSignal?: AbortSignal;
+  getPendingMessages?: typeof getPendingMessages;
+  markProcessing?: typeof markProcessing;
+  markCompleted?: typeof markCompleted;
 }
 
 export async function processQuery(
@@ -320,6 +323,9 @@ export async function processQuery(
   let initialTurnCompleted = false;
   let lastPostResultHeartbeat = 0;
   const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
+  const readPendingMessages = opts.getPendingMessages ?? getPendingMessages;
+  const claimMessages = opts.markProcessing ?? markProcessing;
+  const completeMessages = opts.markCompleted ?? markCompleted;
   const postResultHeartbeatMs = opts.postResultHeartbeatMs ?? POST_RESULT_HEARTBEAT_MS;
   const activePollIntervalMs = opts.activePollIntervalMs ?? ACTIVE_POLL_INTERVAL_MS;
   const abortQuery = () => {
@@ -354,7 +360,7 @@ export async function processQuery(
           }
         }
 
-        const pending = getPendingMessages();
+        const pending = readPendingMessages();
 
         // Known native/admin slash commands need a fresh query: /clear resets
         // the SDK's resume id (fixed at sdkQuery() time), and commands such
@@ -380,7 +386,7 @@ export async function processQuery(
         if (newMessages.length === 0) return;
 
         const newIds = newMessages.map((m) => m.id);
-        markProcessing(newIds);
+        claimMessages(newIds);
 
         // Run pre-task scripts on follow-ups too — without this, a task that
         // arrives during an active query (e.g. a */10 monitoring cron) bypasses
@@ -394,7 +400,7 @@ export async function processQuery(
         keep = preTask.keep;
         skipped = preTask.skipped;
         if (skipped.length > 0) {
-          markCompleted(skipped);
+          completeMessages(skipped);
           log(`Pre-task script skipped ${skipped.length} follow-up task(s): ${skipped.join(', ')}`);
         }
         // MODULE-HOOK:scheduling-pre-task-followup:end
@@ -409,8 +415,7 @@ export async function processQuery(
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
-        query.push(prompt);
-        markCompleted(keptIds);
+        query.push(prompt, () => completeMessages(keptIds));
       } catch (err) {
         // Without this catch the rejection escapes the void IIFE and Node
         // terminates the container on unhandled-rejection. The initial-batch
@@ -468,7 +473,7 @@ export async function processQuery(
         // The container cannot retry (the limit is account-wide), so there is
         // no value in keeping the stream open. Mark messages completed so the
         // host sweep does not reset them to pending and immediately re-wake.
-        markCompleted(initialBatchIds);
+        completeMessages(initialBatchIds);
         writeUsageLimitNotification(routing);
         break;
       } else if (event.type === 'result') {
@@ -478,7 +483,7 @@ export async function processQuery(
         // follow-up pushes. The agent may have responded via MCP
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
-        markCompleted(initialBatchIds);
+        completeMessages(initialBatchIds);
         initialTurnCompleted = true;
         lastPostResultHeartbeat = Date.now();
         if (event.text) {

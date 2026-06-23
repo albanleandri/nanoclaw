@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './db/connection.js';
-import { getPendingMessages, markCompleted } from './db/messages-in.js';
+import { getPendingMessages, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError } from './poll-loop.js';
@@ -364,6 +364,140 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('processQuery heartbeat', () => {
+  async function waitFor(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+    const start = Date.now();
+    while (!condition()) {
+      if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
+      await sleep(5);
+    }
+  }
+
+  function followUpRow(id: string): MessageInRow {
+    return {
+      id,
+      seq: null,
+      kind: 'chat',
+      timestamp: new Date().toISOString(),
+      status: 'pending',
+      process_after: null,
+      recurrence: null,
+      tries: 0,
+      trigger: 1,
+      platform_id: null,
+      channel_type: null,
+      thread_id: null,
+      content: JSON.stringify({ sender: 'A', text: 'follow up' }),
+    };
+  }
+
+  it('does not complete a follow-up just because provider.push accepted it', async () => {
+    let release: (() => void) | null = null;
+    let pushedAck: (() => void) | null = null;
+    let pendingReturned = false;
+    const ackStatus = new Map<string, string>();
+    const query: AgentQuery = {
+      push(_message: string, ack?: () => void) {
+        pushedAck = ack ?? null;
+      },
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'init', continuation: 'session-1' };
+          yield { type: 'result', text: '<internal>initial done</internal>' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+
+    const running = processQuery(
+      query,
+      extractRouting([]),
+      ['m-initial'],
+      'mock',
+      {
+        postResultHeartbeatMs: 5,
+        activePollIntervalMs: 5,
+        getPendingMessages: () => {
+          if (pendingReturned) return [];
+          pendingReturned = true;
+          return [followUpRow('m-follow-up')];
+        },
+        markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
+        markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+      },
+    );
+
+    try {
+      await waitFor(() => ackStatus.get('m-follow-up') === 'processing' && pushedAck !== null);
+      expect(pushedAck).toBeTypeOf('function');
+      expect(ackStatus.get('m-follow-up')).toBe('processing');
+    } finally {
+      query.end();
+      await running;
+    }
+  });
+
+  it('completes a pushed follow-up when the provider acknowledges its result', async () => {
+    let release: (() => void) | null = null;
+    let pushedAck: (() => void) | null = null;
+    let pendingReturned = false;
+    const ackStatus = new Map<string, string>();
+    const query: AgentQuery = {
+      push(_message: string, ack?: () => void) {
+        pushedAck = ack ?? null;
+      },
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'init', continuation: 'session-1' };
+          yield { type: 'result', text: '<internal>initial done</internal>' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+
+    const running = processQuery(
+      query,
+      extractRouting([]),
+      ['m-initial'],
+      'mock',
+      {
+        postResultHeartbeatMs: 5,
+        activePollIntervalMs: 5,
+        getPendingMessages: () => {
+          if (pendingReturned) return [];
+          pendingReturned = true;
+          return [followUpRow('m-follow-up')];
+        },
+        markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
+        markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+      },
+    );
+
+    try {
+      await waitFor(() => ackStatus.get('m-follow-up') === 'processing' && pushedAck !== null);
+      pushedAck!();
+      await waitFor(() => ackStatus.get('m-follow-up') === 'completed');
+    } finally {
+      query.end();
+      await running;
+    }
+  });
+
   it('continues heartbeating while waiting for follow-ups after a result', async () => {
     const provider = new MockProvider({}, () => '<internal>done</internal>');
     const query = provider.query({ prompt: 'hello', cwd: '/tmp' });

@@ -75,20 +75,30 @@ interface SDKUserMessage {
   session_id: string;
 }
 
+interface QueuedSDKUserMessage {
+  message: SDKUserMessage;
+  onTurnResult?: () => void;
+}
+
 /**
  * Push-based async iterable for streaming user messages to the Claude SDK.
  */
 class MessageStream {
-  private queue: SDKUserMessage[] = [];
+  private queue: QueuedSDKUserMessage[] = [];
   private waiting: (() => void) | null = null;
   private done = false;
 
-  push(text: string): void {
+  constructor(private readonly onDequeuedFollowUp?: (onTurnResult: () => void) => void) {}
+
+  push(text: string, onTurnResult?: () => void): void {
     this.queue.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: '',
+      message: {
+        type: 'user',
+        message: { role: 'user', content: text },
+        parent_tool_use_id: null,
+        session_id: '',
+      },
+      onTurnResult,
     });
     this.waiting?.();
   }
@@ -101,7 +111,9 @@ class MessageStream {
   async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
     while (true) {
       while (this.queue.length > 0) {
-        yield this.queue.shift()!;
+        const item = this.queue.shift()!;
+        if (item.onTurnResult) this.onDequeuedFollowUp?.(item.onTurnResult);
+        yield item.message;
       }
       if (this.done) return;
       await new Promise<void>((r) => {
@@ -391,7 +403,8 @@ export class ClaudeProvider implements AgentProvider {
   }
 
   query(input: QueryInput): AgentQuery {
-    const stream = new MessageStream();
+    const followUpAcks: Array<() => void> = [];
+    const stream = new MessageStream((ack) => followUpAcks.push(ack));
     stream.push(input.prompt);
 
     const instructions = input.systemContext?.instructions;
@@ -442,6 +455,7 @@ export class ClaudeProvider implements AgentProvider {
         } else if (message.type === 'result') {
           const text = 'result' in message ? (message as { result?: string }).result ?? null : null;
           yield { type: 'result', text };
+          followUpAcks.shift()?.();
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'rate_limit_event') {
@@ -459,7 +473,7 @@ export class ClaudeProvider implements AgentProvider {
     }
 
     return {
-      push: (msg) => stream.push(msg),
+      push: (msg, onTurnResult) => stream.push(msg, onTurnResult),
       end: () => stream.end(),
       events: translateEvents(),
       abort: () => {

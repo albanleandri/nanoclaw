@@ -93,7 +93,7 @@ export class CodexProvider implements AgentProvider {
   }
 
   query(input: QueryInput): AgentQuery {
-    const pending: string[] = [input.prompt];
+    const pending: Array<{ message: string; onTurnResult?: () => void }> = [{ message: input.prompt }];
     let waiting: (() => void) | null = null;
     let ended = false;
     let aborted = false;
@@ -107,15 +107,13 @@ export class CodexProvider implements AgentProvider {
       waiting = null;
     };
 
-    const pushOrSteer = (message: string): void => {
-      if (activeServer && activeThreadId && activeTurnId) {
-        void this.runtime.steerCodexTurn(activeServer, activeThreadId, activeTurnId, message).catch(() => {
-          pending.push(message);
-          wake();
-        });
-        return;
-      }
-      pending.push(message);
+    const pushOrQueue = (message: string, onTurnResult?: () => void): void => {
+      // Do not steer follow-ups into an active Codex turn. turn/steer can
+      // resolve as a no-op when the turn has just completed, which makes the
+      // poll-loop believe a user message was consumed when it was silently
+      // dropped. Queue every follow-up as its own turn so acknowledgement is
+      // tied to a concrete turn result.
+      pending.push({ message, onTurnResult });
       wake();
     };
 
@@ -148,11 +146,11 @@ export class CodexProvider implements AgentProvider {
           if (aborted) return;
           if (pending.length === 0 && ended) return;
 
-          const text = pending.shift()!;
+          const item = pending.shift()!;
           yield* runOneTurn(
             server,
             threadId,
-            text,
+            item.message,
             self.model,
             self.effort,
             input.cwd,
@@ -172,6 +170,7 @@ export class CodexProvider implements AgentProvider {
             },
             self.runtime.startCodexTurn,
           );
+          if (!aborted) item.onTurnResult?.();
         }
       } finally {
         activeTurnId = null;
@@ -183,7 +182,7 @@ export class CodexProvider implements AgentProvider {
     }
 
     return {
-      push: pushOrSteer,
+      push: pushOrQueue,
       end: () => {
         ended = true;
         wake();

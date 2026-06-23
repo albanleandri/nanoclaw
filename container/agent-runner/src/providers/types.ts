@@ -81,8 +81,16 @@ export interface McpServerConfig {
 }
 
 export interface AgentQuery {
-  /** Push a follow-up message into the active query. */
-  push(message: string): void;
+  /**
+   * Push a follow-up message into the active query.
+   *
+   * `onTurnResult` must be called only after the provider has produced a
+   * result for the turn that consumed this input. The poll-loop uses that as
+   * the durable processing acknowledgement for the inbound DB rows behind the
+   * follow-up. Calling it merely because input was accepted or queued can lose
+   * user messages if the provider silently drops the turn.
+   */
+  push(message: string, onTurnResult?: () => void): void;
 
   /** Signal that no more input will be sent. */
   end(): void;
