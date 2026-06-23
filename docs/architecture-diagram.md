@@ -23,7 +23,7 @@ flowchart TB
     Central[("Central DB<br/>data/v2.db<br/>agent_groups<br/>messaging_groups<br/>messaging_group_agents<br/>sessions<br/>pending_approvals")]
   end
 
-  subgraph OneCLI["OneCLI Gateway (0.3.1)"]
+  subgraph OneCLI["OneCLI Gateway (@onecli-sh/sdk 2.2.1)"]
     Vault["Agent Vault<br/>secrets + OAuth"]
     Approvals["configureManualApproval<br/>-> pending_approvals"]
   end
@@ -31,7 +31,7 @@ flowchart TB
   subgraph Session["Per-Session Container (Docker / Apple Container)"]
     direction TB
     PollLoop["Poll Loop<br/>(container/agent-runner)"]
-    Provider["Agent providers<br/>(claude, opencode, mock; todo: codex)"]
+    Provider["Agent providers<br/>(claude, codex, mock; opencode via skill)"]
     MCP["MCP Tools<br/>send_message, send_file, edit_message,<br/>add_reaction, send_card, ask_user_question,<br/>schedule_task, create_agent,<br/>install_packages, add_mcp_server"]
     Skills["Container Skills<br/>(container/skills/)"]
     InDB[("inbound.db<br/>host writes<br/>even seq<br/>messages_in<br/>destinations<br/>processing_ack")]

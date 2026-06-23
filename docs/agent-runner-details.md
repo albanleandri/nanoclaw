@@ -8,7 +8,7 @@ The agent-runner has two layers:
 
 1. **Agent-runner core** — owns the poll loop, message formatting, DB reads/writes, MCP tool implementations, routing, status management, media handling. This is NanoClaw-specific and shared across all providers.
 
-2. **Agent provider** — owns the SDK interaction. Takes formatted prompts, pushes them to the SDK, yields events back. Trunk ships the `claude` provider; additional providers (OpenCode, Codex, etc.) are installed by `/add-<provider>` skills from the `providers` branch.
+2. **Agent provider** — owns the SDK/runtime interaction. Takes formatted prompts, pushes them to the provider, yields events back. Trunk ships two providers: `claude` (the default, on the Anthropic Agent SDK + Bun) and `codex` (spawns a `codex app-server` subprocess). Additional providers (OpenCode, Ollama, etc.) are installed by `/add-<provider>` skills from the `providers` branch.
 
 The boundary: the agent-runner decides **what** to send and **what to do** with results. The provider decides **how** to talk to the SDK.
 
@@ -104,7 +104,7 @@ otherwise a dropped provider turn can silently lose a user message.
 
 ## Provider Implementations
 
-Only the `claude` provider ships in trunk. The Codex and OpenCode sections below document the provider interface for reference and for skills that install additional providers — they are not baked into the core image.
+The `claude` and `codex` providers ship in trunk (registered in `container/agent-runner/src/providers/index.ts`). The OpenCode section below documents the provider interface for reference and for skills that install additional providers — OpenCode and other non-default providers are not baked into the core image.
 
 ### Claude Provider
 
@@ -166,91 +166,51 @@ class ClaudeProvider implements AgentProvider {
 
 ### Codex Provider
 
-Wraps `@openai/codex-sdk`.
+Spawns a `codex app-server` subprocess and drives it over JSON-RPC on stdio — it does **not** wrap an in-process SDK. The transport and protocol live in `codex-app-server.ts`; `codex.ts` orchestrates threads and turns on top of it.
 
 ```typescript
 class CodexProvider implements AgentProvider {
   query(input: QueryInput): AgentQuery {
-    const codex = new Codex(this.buildOptions(input));
-    const thread = input.sessionId
-      ? codex.resumeThread(input.sessionId, this.threadOptions(input))
-      : codex.startThread(this.threadOptions(input));
+    // (simplified — see container/agent-runner/src/providers/codex.ts)
+    async function* gen(): AsyncGenerator<ProviderEvent> {
+      // 1. Write codex config.toml (MCP servers, model, reasoning effort)
+      writeCodexConfigToml(this.mcpServers, { model, effort });
 
-    const abortController = new AbortController();
-    let pendingFollowUp: string | null = null;
+      // 2. Spawn `codex app-server --listen stdio://` and wire auto-approval
+      const server = spawnCodexAppServer();
+      attachCodexAutoApproval(server);
+      await initializeCodexAppServer(server);
 
-    return {
-      push: (msg) => {
-        // Codex doesn't support streaming input.
-        // Store the follow-up and abort the current turn.
-        pendingFollowUp = msg;
-        abortController.abort();
-      },
-      end: () => { /* no-op — Codex turns end naturally */ },
-      abort: () => abortController.abort(),
-      events: this.run(thread, input.prompt, abortController, () => pendingFollowUp),
-    };
-  }
+      // 3. Start (or resume) a thread; emit its id as the session id
+      const { threadId } = await startOrResumeCodexThread(server, input.continuation);
+      yield { type: 'init', sessionId: threadId };
 
-  private async *run(thread, prompt, abortController, getPendingFollowUp): AsyncIterable<ProviderEvent> {
-    let currentPrompt = prompt;
-
-    while (true) {
-      try {
-        const streamed = await thread.runStreamed(currentPrompt, {
-          signal: abortController.signal,
-        });
-
-        let sessionId: string | undefined;
-        let resultText = '';
-
-        for await (const event of streamed.events) {
-          if (event.type === 'thread.started') {
-            sessionId = event.thread_id;
-            yield { type: 'init', sessionId };
-          }
-          if (event.type === 'item.completed' && event.item.type === 'agent_message') {
-            resultText = event.item.text || resultText;
-          }
-          if (event.type === 'turn.failed') {
-            yield { type: 'error', message: event.error.message, retryable: false };
-            return;
-          }
-        }
-
-        yield { type: 'result', text: resultText || null };
-
-        // Check if a follow-up was queued during this turn
-        const followUp = getPendingFollowUp();
-        if (followUp) {
-          currentPrompt = followUp;
-          // Reset for next iteration
-          continue;
-        }
-
-        return;
-      } catch (err) {
-        if (abortController.signal.aborted && getPendingFollowUp()) {
-          // Aborted because of follow-up — restart with new prompt
-          currentPrompt = getPendingFollowUp();
-          abortController = new AbortController();
-          continue;
-        }
-        throw err;
+      // 4. Run a turn per prompt; map app-server notifications → ProviderEvent
+      for await (const prompt of prompts) {
+        const turnId = await startCodexTurn(server, threadId, prompt);
+        // ... await turn-complete / item notifications, yield 'result' / 'error'
       }
     }
+    // push() queues another turn; abort() interrupts the active turn and kills
+    // the app-server.
   }
 }
 ```
 
+JSON-RPC helpers (`spawnCodexAppServer`, `initializeCodexAppServer`, `startOrResumeCodexThread`, `startCodexTurn`, `steerCodexTurn`, `interruptCodexTurn`, `killCodexAppServer`) are injected as `CodexRuntimeDeps`, which keeps the provider unit-testable.
+
 **Codex-specific behavior inside the provider:**
-- `developer_instructions` for system prompt (loaded from CLAUDE.md)
-- `git init` in workspace (Codex requires a git repo)
-- Follow-up messages are queued as explicit turns. The provider does not
-  acknowledge a follow-up until that turn produces a result; accepting or
-  queueing the input is not enough to complete the inbound row.
-- `sandboxMode`, `approvalPolicy`, `networkAccessEnabled` from env vars
-- Conversation archiving (Codex doesn't have PreCompact)
+- App-server subprocess lifecycle (spawn on first query, kill on abort)
+- JSON-RPC over stdio (no in-process SDK)
+- Config written to `config.toml` (MCP servers, model, reasoning effort)
+- Server-side thread/turn state — resume by thread id (`input.continuation`)
+- Follow-up messages are queued as explicit turns. The provider no longer
+  steers follow-ups into the current turn because Codex can no-op a late steer
+  after turn completion; explicit turns give the poll loop a reliable
+  acknowledgement point.
+- Auto-approval handler for the app-server's permission requests
+- Stale-thread detection (`STALE_THREAD_RE` / `isSessionInvalid`)
+- Opt-in to the runner's persistent `memory/` scaffold (Codex has no native NanoClaw memory)
 
 ### OpenCode Provider
 
@@ -355,7 +315,7 @@ Everything below is handled by the agent-runner, not the provider.
 └─────────────────────────────────────────┘
 ```
 
-**Concurrent polling during active query:** While the provider is running a query, the agent-runner continues polling messages_in on a short interval (~500ms). New pending messages are marked `processing`, formatted, and pushed into the active query via `provider.push(prompt, ack)`. The poll loop marks those follow-up rows `completed` only when the provider calls `ack` after the follow-up turn produces a result. This lets follow-up messages arrive while the agent is processing without treating "input accepted" as "input processed."
+**Concurrent polling during active query:** While the provider is running a query, the agent-runner continues polling messages_in on a short interval (~500ms). New pending messages are marked `processing`, formatted, and pushed into the active query via `provider.push(prompt, ack)`. The poll loop marks those follow-up rows `completed` only when the provider calls `ack` after the follow-up turn produces a result. This lets follow-up messages arrive while the agent is processing without treating "input accepted" as "input processed." Claude handles pushed input through its SDK stream; Codex queues each follow-up as an explicit app-server turn so it has a reliable completion point.
 
 **Idle behavior:** When no messages are pending and no query is active, the agent-runner sleeps briefly (1s) and re-polls. The container stays warm until the host kills it (idle timeout).
 
@@ -411,7 +371,7 @@ The agent-runner transforms messages_in rows into a prompt string. The provider 
   ```
   [SYSTEM RESPONSE]
 
-  Action: register_agent_group
+  Action: create_agent
   Status: success
   Result: {"agent_group_id": "ag-456"}
   ```
@@ -465,7 +425,7 @@ pending → processing → completed
 
 The agent-runner runs an MCP server that exposes NanoClaw tools to the agent. All tools write to the session DB.
 
-**DB path:** The MCP server receives the session DB path via environment variable. It opens a second connection to the same SQLite file (WAL mode allows concurrent access).
+**DB paths:** The MCP server is a separate stdio process (spawned by the provider via `mcpServers` config). It reaches the session DBs through the same connection layer (`db/connection.ts`) — `inbound.db` read-only, `outbound.db` read-write. Tools write their output as `messages_out` rows on `outbound.db`.
 
 #### send_message
 
@@ -643,25 +603,21 @@ Modify a scheduled task.
 
 Implementation: cancel/pause/resume update the live row(s) directly. update_task is sent as a system action — the host reads current content, merges supplied fields, and writes back. All four match by `(id = ? OR series_id = ?) AND kind='task' AND status IN ('pending','paused')`, so they reach the live next occurrence of a recurring task even when the agent passes the original (now-completed) id.
 
-#### register_agent_group
+#### create_agent
 
-Register a new agent group (admin only).
+Create a long-lived companion sub-agent (admin only). The new agent's name becomes a destination for the caller.
 
 ```typescript
 {
-  name: 'register_agent_group',
+  name: 'create_agent',
   params: {
-    name: string,
-    folder: string,
-    platformId: string,        // messaging group to wire to
-    channelType: string,
-    triggerRules?: object,
-    sessionMode?: 'shared' | 'per-thread',
+    name: string,            // human-readable name (also the destination name)
+    instructions?: string,   // CLAUDE.md content for the new agent (optional)
   }
 }
 ```
 
-Implementation: write a `messages_out` row with `kind: 'system'`, `action: 'register_agent_group'`. The host reads, validates admin permission, creates the entity rows in the central DB, and writes a `system` messages_in response.
+Implementation: write a `messages_out` row with `kind: 'system'`, `action: 'create_agent'`. The host reads, validates admin permission, creates the entity rows in the central DB, wires the new agent as a destination, and writes a `system` messages_in response. Non-admin containers never see this tool.
 
 ### Media Handling
 
@@ -728,9 +684,9 @@ These are ephemeral to the container's lifetime. When the container is killed an
 
 The agent-runner receives configuration via:
 
-- **Environment variables:** `AGENT_PROVIDER` (claude/codex/opencode), `NANOCLAW_ADMIN_USER_ID`, provider-specific vars (API keys, model overrides), `TZ`
-- **Fixed mount paths:** Session DB at `/workspace/session.db`. Agent group folder at `/workspace/agent/`. System prompt from `/workspace/agent/CLAUDE.md` and `/workspace/global/CLAUDE.md`.
-- **Optional startup config:** Some config may be passed as a JSON file at a fixed path (e.g., `/workspace/config.json`) for things like the session ID to resume, assistant name, and admin user ID. This avoids overloading environment variables.
+- **Container config file:** The runner reads `/workspace/agent/container.json` at startup (`config.ts`). It holds the `provider` name, assistant name, group name, agent group id, MCP server configs, model/effort overrides, and the agent profile. NanoClaw-specific configuration lives here rather than in environment variables.
+- **Environment variables:** `NANOCLAW_ADMIN_USER_IDS` (admin sender allowlist, see `formatter.ts`), provider-specific vars (API keys, model overrides), `TZ`.
+- **Fixed mount paths:** The session folder is mounted at `/workspace`, containing two separate SQLite files — `inbound.db` (host writes, container opens **read-only**) and `outbound.db` (container writes, host opens read-only) — plus `outbox/` and the `.heartbeat` file. Agent group folder at `/workspace/agent/`. System prompt from `/workspace/agent/CLAUDE.md` and `/workspace/global/CLAUDE.md`.
 
 The agent-runner reads config, creates the provider, and enters the poll loop. No stdin, no initial prompt — messages are already in the session DB.
 
@@ -740,16 +696,16 @@ The agent-runner reads config, creates the provider, and enters the poll loop. N
 type ProviderName = 'claude' | string;
 
 function createProvider(name: ProviderName, config: ProviderConfig): AgentProvider {
-  // Trunk registers 'claude'; additional providers self-register when installed via skills.
+  // Trunk registers 'claude' and 'codex'; additional providers self-register when installed via skills.
   const factory = providerRegistry.get(name);
   if (!factory) throw new Error(`Unknown provider: ${name}`);
   return factory(config);
 }
 ```
 
-The provider name comes from the container's environment (`AGENT_PROVIDER` env var), set by the host based on `agent_groups.agent_provider` or `sessions.agent_provider`.
+The provider name comes from the `provider` field of `/workspace/agent/container.json` (read by `config.ts` as `raw.provider`, defaulting to `claude`). The host materializes that file from the central DB's container config based on the agent group's / session's provider setting — it is **not** passed as an `AGENT_PROVIDER` environment variable.
 
-`ProviderConfig` contains provider-specific settings (API keys, model overrides, etc.) passed via environment variables — not via the interface. Each provider reads what it needs from `env`.
+Provider-specific settings (model, reasoning effort, MCP servers) also come from `container.json`. Credentials are injected per-request by the OneCLI gateway rather than read from `container.json`.
 
 ## Agent-Runner Properties
 

@@ -1,0 +1,81 @@
+# NanoClaw project-scoped Codex approvals.
+# Keep this file focused on durable repo workflows. One-off operational repairs
+# should stay interactive unless they become a named, validated script.
+
+prefix_rule(
+    pattern = ["pnpm", "test"],
+    decision = "allow",
+    justification = "Host test suite is the canonical verification command.",
+)
+
+prefix_rule(
+    pattern = ["pnpm", "test:coverage"],
+    decision = "allow",
+    justification = "Coverage run is read/verify oriented and scoped to the repo.",
+)
+
+prefix_rule(
+    pattern = ["pnpm", "run", ["build", "typecheck", "lint", "format:check", "container:build"]],
+    decision = "allow",
+    justification = "Repo scripts for build, static checks, lint, formatting, and container image build are expected verification steps.",
+)
+
+prefix_rule(
+    pattern = ["pnpm", "exec", ["vitest", "tsc", "tsx", "prettier"]],
+    decision = "allow",
+    justification = "Pinned pnpm exec tooling is part of normal NanoClaw development.",
+)
+
+prefix_rule(
+    pattern = ["bun", ["test", "install"]],
+    decision = "allow",
+    justification = "Agent-runner uses Bun and these commands are routine runner verification/setup.",
+)
+
+prefix_rule(
+    pattern = ["./container/build.sh"],
+    decision = "allow",
+    justification = "Container rebuild is a canonical NanoClaw command.",
+)
+
+prefix_rule(
+    pattern = ["npm", "run", ["service:status", "service:restart"]],
+    decision = "allow",
+    justification = "NanoClaw service status/restart are canonical local operator commands.",
+)
+
+prefix_rule(
+    pattern = ["docker", ["ps", "logs", "inspect"]],
+    decision = "allow",
+    justification = "Read-only Docker inspection is a routine NanoClaw debugging workflow.",
+)
+
+prefix_rule(
+    pattern = ["journalctl", "--user", "-u", "nanoclaw"],
+    decision = "allow",
+    justification = "User service logs are needed for local NanoClaw debugging.",
+)
+
+prefix_rule(
+    pattern = ["systemctl", "--user", "show"],
+    decision = "allow",
+    justification = "Read-only systemd user-unit inspection is routine service debugging.",
+)
+
+prefix_rule(
+    pattern = ["git", ["status", "diff", "log", "show", "ls-files", "rev-parse", "branch", "submodule"]],
+    decision = "allow",
+    justification = "Read-only git inspection is routine repository context gathering.",
+)
+
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "allow",
+    justification = "Staging selected files is expected when the user asks for commits.",
+)
+
+prefix_rule(
+    pattern = ["git", "commit", "-m"],
+    decision = "allow",
+    justification = "Non-interactive commits with explicit messages are expected when requested.",
+)

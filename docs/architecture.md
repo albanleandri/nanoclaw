@@ -914,7 +914,7 @@ Pre-scripts: if a task message has a `script` field, run it first. If `wakeAgent
 
 ### Agent-Runner Properties
 
-- AgentProvider interface wraps SDK-specific query logic (trunk ships the `claude` provider; additional providers like OpenCode install via `/add-<provider>` skills)
+- AgentProvider interface wraps SDK-specific query logic (trunk ships the `claude` provider as the default plus `codex` in-tree; additional providers like OpenCode and Ollama install via `/add-<provider>` skills)
 - Session resume via provider-specific mechanisms
 - Provider-native project docs generated from shared instruction sections (`CLAUDE.md`, `AGENTS.md`, etc.)
 - Provider-specific hooks and transcript archival stay inside each provider adapter

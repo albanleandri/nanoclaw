@@ -2,24 +2,18 @@
 
 ## Overview
 
-NanoClaw automatically backs up its databases and configuration to a local directory. Up to **3 rotating snapshots** are kept. The backup runs nightly at 03:00 UTC by default.
+NanoClaw backs up its central database and group state to a local directory. Up to **3 rotating snapshots** are kept. The backup is typically run nightly via cron.
 
 ## Where backups are stored
 
 ```
 ~/nanoclaw-backups/
-  2026-05-08T03-00-00Z/      ← timestamped snapshot (chmod 700)
-    messages.db              ← scheduled tasks, sessions, chat history
-    nanoclaw.db              ← app state
-    investments.db           ← stock portfolio & screener data
-    polymarket_cache.db      ← Polymarket market data
-    stock_screener.db        ← screener results
-    tips.db                  ← tips data
-    available_groups.json    ← group configuration
-    current_tasks.json       ← in-progress task state
-    tips_config.json         ← tips service config
+  2026-06-20T03-00-00Z/      ← timestamped snapshot (chmod 700)
+    v2.db                    ← central DB (users, agent groups, wirings, roles, schedules…)
+    *.db                     ← configured per-group SQLite databases
+    *.json                   ← configured per-group config/state files
     backup.log               ← manifest of this snapshot
-  latest -> 2026-05-08T03-00-00Z   ← symlink to most recent
+  latest -> 2026-06-20T03-00-00Z   ← symlink to most recent
 ```
 
 Credentials (`.env`, container env) are **not** included — recover them from OneCLI Agent Vault after a restore.
@@ -29,36 +23,37 @@ The directory is created automatically on first run. To change the location, set
 ## Running a manual backup
 
 ```bash
-npm run backup
+pnpm run backup
 # or directly:
 bash scripts/backup.sh
 ```
 
 ## Setting up automatic backups (cron)
 
-Run `crontab -e` and add:
+Run `crontab -e` and add (adjust the path to your install root):
 
 ```
-0 3 * * * /bin/bash /home/nanoclaw/nanoclaw/scripts/backup.sh >> ~/nanoclaw-backups/cron.log 2>&1
+0 3 * * * /bin/bash /path/to/nanoclaw-v2/scripts/backup.sh >> ~/nanoclaw-backups/cron.log 2>&1
 ```
 
 This runs at 03:00 UTC daily. Check the log at `~/nanoclaw-backups/cron.log`.
 
 ## What is backed up
 
-| File | Description |
+| Item | Description |
 |------|-------------|
-| `messages.db` | Core app DB: scheduled tasks, sessions, message log |
-| `nanoclaw.db` | NanoClaw app state |
-| `investments.db` | Stock portfolio holdings and screener history |
-| `polymarket_cache.db` | Polymarket market cache |
-| `stock_screener.db` | Screener scan results |
-| `tips.db` | Tips service data |
-| `available_groups.json` | Group definitions |
-| `current_tasks.json` | Active agent task state |
-| `tips_config.json` | Tips service configuration |
+| `data/v2.db` | Central DB — the source of truth for persistent state: users, roles, agent groups, messaging groups, wirings, schedules, approvals, and other non-per-session data |
+| Configured per-group databases | The explicit database paths listed in `scripts/backup.sh`; missing optional databases are skipped |
+| Configured per-group state | The explicit JSON state paths copied by `scripts/backup.sh`; missing optional files are skipped |
 
-**Credentials are intentionally excluded.** `.env` and the container environment file contain API keys and bot tokens — these are managed by OneCLI Agent Vault and should be recovered from there after a restore, not from a backup file.
+The per-group file list is explicit rather than discovered automatically. When
+adding a new persistent group database or state file, add it to
+`scripts/backup.sh` so it is included in future snapshots.
+
+**What is intentionally not backed up:**
+
+- **Per-session databases.** Each session has an `inbound.db` and `outbound.db` under `data/v2-sessions/<agent-group>/<session>/`. These are an ephemeral IO surface between the host and a running container — the central DB is the source of truth for persistent state, so the session DBs are not snapshotted.
+- **Credentials.** `.env` and the container environment file contain API keys and bot tokens — these are managed by OneCLI Agent Vault and should be recovered from there after a restore, not from a backup file.
 
 The databases are backed up using the [better-sqlite3 online backup API](https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#backupdestination-options---promise), which is safe to run while the service is live.
 
@@ -77,7 +72,7 @@ bash scripts/restore.sh --list
 bash scripts/restore.sh --backup latest
 
 # Restore a specific snapshot
-bash scripts/restore.sh --backup 2026-05-08T03-00-00Z
+bash scripts/restore.sh --backup 2026-06-20T03-00-00Z
 
 # Skip the confirmation prompt
 bash scripts/restore.sh --backup latest --yes
@@ -104,7 +99,7 @@ onecli --help
 Confirm the service is healthy:
 
 ```bash
-npm run service:status
+pnpm run service:status
 ```
 
 ## Rotation policy
