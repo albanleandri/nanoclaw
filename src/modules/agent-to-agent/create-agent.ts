@@ -1,20 +1,22 @@
 /**
  * `create_agent` delivery-action handler.
  *
- * Spawns a new agent group on demand from the parent agent, wires bidirectional
- * agent_destinations rows, projects the new destination into the parent's
- * running container, and notifies the parent.
+ * SECURITY: this writes central DB and host filesystem state. The container's
+ * MCP tool gate is not trusted, so authorization is enforced here: global
+ * CLI-scope groups create directly; confined groups require admin approval.
  */
 import path from 'path';
 
 import { GROUPS_DIR } from '../../config.js';
 import { createAgentGroup, getAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
+import { getContainerConfig } from '../../db/container-configs.js';
 import { getSession } from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { AgentGroup, Session } from '../../types.js';
+import { requestApproval, type ApprovalHandler } from '../approvals/index.js';
 import { createDestination, getDestinationByName, normalizeName } from './db/agent-destinations.js';
 import { writeDestinations } from './write-destinations.js';
 
@@ -35,22 +37,68 @@ function notifyAgent(session: Session, text: string): void {
 }
 
 export async function handleCreateAgent(content: Record<string, unknown>, session: Session): Promise<void> {
-  const requestId = content.requestId as string;
-  const name = content.name as string;
-  const instructions = content.instructions as string | null;
+  const name = typeof content.name === 'string' ? content.name : '';
+  const instructions = typeof content.instructions === 'string' ? content.instructions : null;
+
+  if (!name) {
+    notifyAgent(session, 'create_agent failed: name is required.');
+    return;
+  }
 
   const sourceGroup = getAgentGroup(session.agent_group_id);
   if (!sourceGroup) {
-    notifyAgent(session, `create_agent failed: source agent group not found.`);
+    notifyAgent(session, 'create_agent failed: source agent group not found.');
     log.warn('create_agent failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
     return;
   }
 
+  const cliScope = getContainerConfig(session.agent_group_id)?.cli_scope ?? 'group';
+  if (cliScope === 'global') {
+    await performCreateAgent(name, instructions, session, sourceGroup, (text) => notifyAgent(session, text));
+    return;
+  }
+
+  await requestApproval({
+    session,
+    agentName: sourceGroup.name,
+    action: 'create_agent',
+    payload: { name, instructions },
+    title: `Create agent: ${name}`,
+    question: `Agent "${sourceGroup.name}" wants to create a new sub-agent "${name}" with its own workspace and container. Approve?`,
+  });
+}
+
+export const applyCreateAgent: ApprovalHandler = async ({ session, payload, notify }) => {
+  const name = typeof payload.name === 'string' ? payload.name : '';
+  const instructions = typeof payload.instructions === 'string' ? payload.instructions : null;
+
+  if (!name) {
+    notify('create_agent approved but the request had no name.');
+    return;
+  }
+
+  const sourceGroup = getAgentGroup(session.agent_group_id);
+  if (!sourceGroup) {
+    notify('create_agent approved but the source agent group no longer exists.');
+    log.warn('create_agent apply failed: missing source group', { sessionAgentGroup: session.agent_group_id, name });
+    return;
+  }
+
+  await performCreateAgent(name, instructions, session, sourceGroup, notify);
+};
+
+async function performCreateAgent(
+  name: string,
+  instructions: string | null,
+  session: Session,
+  sourceGroup: AgentGroup,
+  notify: (text: string) => void,
+): Promise<void> {
   const localName = normalizeName(name);
 
   // Collision in the creator's destination namespace
   if (getDestinationByName(sourceGroup.id, localName)) {
-    notifyAgent(session, `Cannot create agent "${name}": you already have a destination named "${localName}".`);
+    notify(`Cannot create agent "${name}": you already have a destination named "${localName}".`);
     return;
   }
 
@@ -66,7 +114,7 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
   const resolvedPath = path.resolve(groupPath);
   const resolvedGroupsDir = path.resolve(GROUPS_DIR);
   if (!resolvedPath.startsWith(resolvedGroupsDir + path.sep)) {
-    notifyAgent(session, `Cannot create agent "${name}": invalid folder path.`);
+    notify(`Cannot create agent "${name}": invalid folder path.`);
     log.error('create_agent path traversal attempt', { folder, resolvedPath });
     return;
   }
@@ -115,12 +163,6 @@ export async function handleCreateAgent(content: Record<string, unknown>, sessio
   // tries to send to the newly-created child.
   writeDestinations(session.agent_group_id, session.id);
 
-  // Fire-and-forget notification back to the creator
-  notifyAgent(
-    session,
-    `Agent "${localName}" created. You can now message it with <message to="${localName}">...</message>.`,
-  );
+  notify(`Agent "${localName}" created. You can now message it with <message to="${localName}">...</message>.`);
   log.info('Agent group created', { agentGroupId, name, localName, folder, parent: sourceGroup.id });
-  // Note: requestId is unused — this is fire-and-forget, not request/response.
-  void requestId;
 }

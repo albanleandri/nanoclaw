@@ -7,9 +7,10 @@
  * short interval — but only while the agent is actually WORKING, gated
  * on the heartbeat file's mtime after an initial grace period.
  *
- * After delivering a user-facing message, the refresh is paused for
- * POST_DELIVERY_PAUSE_MS so the client-side indicator can visually
- * clear.
+ * If the wait becomes visible, the module sends one low-noise status
+ * message through the delivery adapter. After delivering a user-facing
+ * message, the refresh is paused for POST_DELIVERY_PAUSE_MS so the
+ * client-side indicator can visually clear.
  *
  * Default module status:
  *   - Lives in src/modules/ for signaling (not really core), but ships
@@ -25,9 +26,18 @@ const TYPING_REFRESH_MS = 4000;
 /**
  * Grace window from startTypingRefresh: fire typing unconditionally
  * for this long regardless of heartbeat state. Covers container
- * spawn/wake latency (5–12s on cold start before first heartbeat).
+ * spawn/wake latency before first heartbeat and lets long-wait UX
+ * land once before giving up on a session that never started.
  */
-const TYPING_GRACE_MS = 15000;
+const TYPING_GRACE_MS = 30000;
+/**
+ * Send a visible, non-spammy status if the user has been waiting long
+ * enough and the agent is still plausibly working.
+ */
+const LONG_WAIT_NOTICE_MS = 25000;
+const STILL_WORKING_NOTICE_MS = 180000;
+const LONG_WAIT_STATUS_TEXT = 'Working on it...';
+const STILL_WORKING_STATUS_TEXT = 'Still working...';
 /**
  * After the grace window, a heartbeat must be mtimed within this
  * many ms of now to count as "agent is working." Heartbeats land
@@ -46,6 +56,7 @@ const POST_DELIVERY_PAUSE_MS = 10000;
 
 interface TypingAdapter {
   setTyping?(channelType: string, platformId: string, threadId: string | null): Promise<void>;
+  sendStatus?(channelType: string, platformId: string, threadId: string | null, text: string): Promise<void>;
 }
 
 interface TypingTarget {
@@ -56,6 +67,8 @@ interface TypingTarget {
   interval: NodeJS.Timeout;
   startedAt: number;
   pausedUntil: number; // epoch ms; 0 = not paused
+  longWaitNoticeSent: boolean;
+  stillWorkingNoticeSent: boolean;
 }
 
 let adapter: TypingAdapter | null = null;
@@ -80,6 +93,19 @@ async function triggerTyping(channelType: string, platformId: string, threadId: 
   }
 }
 
+async function sendStatus(
+  channelType: string,
+  platformId: string,
+  threadId: string | null,
+  text: string,
+): Promise<void> {
+  try {
+    await adapter?.sendStatus?.(channelType, platformId, threadId, text);
+  } catch {
+    // Waiting status is UX-only; never fail routing or delivery.
+  }
+}
+
 function isHeartbeatFresh(agentGroupId: string, sessionId: string): boolean {
   const hbPath = heartbeatPath(agentGroupId, sessionId);
   try {
@@ -87,6 +113,24 @@ function isHeartbeatFresh(agentGroupId: string, sessionId: string): boolean {
     return Date.now() - stat.mtimeMs < HEARTBEAT_FRESH_MS;
   } catch {
     return false;
+  }
+}
+
+function isStillWorking(entry: TypingTarget, sessionId: string): boolean {
+  return Date.now() - entry.startedAt < TYPING_GRACE_MS || isHeartbeatFresh(entry.agentGroupId, sessionId);
+}
+
+function maybeSendWaitingStatus(entry: TypingTarget): void {
+  const elapsed = Date.now() - entry.startedAt;
+  if (!entry.longWaitNoticeSent && elapsed >= LONG_WAIT_NOTICE_MS) {
+    entry.longWaitNoticeSent = true;
+    sendStatus(entry.channelType, entry.platformId, entry.threadId, LONG_WAIT_STATUS_TEXT).catch(() => {});
+    return;
+  }
+
+  if (!entry.stillWorkingNoticeSent && elapsed >= STILL_WORKING_NOTICE_MS) {
+    entry.stillWorkingNoticeSent = true;
+    sendStatus(entry.channelType, entry.platformId, entry.threadId, STILL_WORKING_STATUS_TEXT).catch(() => {});
   }
 }
 
@@ -107,6 +151,12 @@ export function startTypingRefresh(
     triggerTyping(channelType, platformId, threadId).catch(() => {});
     existing.startedAt = Date.now();
     existing.pausedUntil = 0;
+    existing.channelType = channelType;
+    existing.platformId = platformId;
+    existing.threadId = threadId;
+    existing.agentGroupId = agentGroupId;
+    existing.longWaitNoticeSent = false;
+    existing.stillWorkingNoticeSent = false;
     return;
   }
 
@@ -122,9 +172,9 @@ export function startTypingRefresh(
     // expires.
     if (entry.pausedUntil > Date.now()) return;
 
-    const withinGrace = Date.now() - entry.startedAt < TYPING_GRACE_MS;
-    if (withinGrace || isHeartbeatFresh(entry.agentGroupId, sessionId)) {
+    if (isStillWorking(entry, sessionId)) {
       triggerTyping(entry.channelType, entry.platformId, entry.threadId).catch(() => {});
+      maybeSendWaitingStatus(entry);
       return;
     }
 
@@ -142,6 +192,8 @@ export function startTypingRefresh(
     interval,
     startedAt,
     pausedUntil: 0,
+    longWaitNoticeSent: false,
+    stillWorkingNoticeSent: false,
   });
 }
 
@@ -155,6 +207,8 @@ export function pauseTypingRefreshAfterDelivery(sessionId: string): void {
   const entry = typingRefreshers.get(sessionId);
   if (!entry) return;
   entry.pausedUntil = Date.now() + POST_DELIVERY_PAUSE_MS;
+  entry.longWaitNoticeSent = true;
+  entry.stillWorkingNoticeSent = true;
 }
 
 export function stopTypingRefresh(sessionId: string): void {
@@ -162,4 +216,12 @@ export function stopTypingRefresh(sessionId: string): void {
   if (!entry) return;
   clearInterval(entry.interval);
   typingRefreshers.delete(sessionId);
+}
+
+export function resetTypingForTests(): void {
+  for (const entry of typingRefreshers.values()) {
+    clearInterval(entry.interval);
+  }
+  typingRefreshers.clear();
+  adapter = null;
 }

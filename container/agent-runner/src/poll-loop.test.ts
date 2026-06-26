@@ -649,6 +649,58 @@ describe('quota error notification', () => {
   });
 });
 
+function makeResultQuery(result: ProviderEvent): { query: AgentQuery; pushes: string[] } {
+  const pushes: string[] = [];
+  async function* events(): AsyncGenerator<ProviderEvent> {
+    yield { type: 'init', continuation: 'sess-1' };
+    yield result;
+  }
+  return {
+    pushes,
+    query: {
+      push(message: string) {
+        pushes.push(message);
+      },
+      end() {},
+      abort() {},
+      events: events(),
+    },
+  };
+}
+
+describe('error result with no message envelope', () => {
+  const routing = {
+    platformId: 'chan-1',
+    channelType: 'discord',
+    threadId: null,
+    inReplyTo: 'm1',
+  };
+
+  it('delivers a provider-marked billing/budget error to the triggering channel and does not nudge', async () => {
+    const budgetText = 'Spending limit reached. Add your own key at https://example.com/keys';
+    const { query, pushes } = makeResultQuery({ type: 'result', text: budgetText, isError: true } as ProviderEvent);
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe(budgetText);
+    expect(out[0].platform_id).toBe('chan-1');
+    expect(out[0].channel_type).toBe('discord');
+    expect(pushes).toHaveLength(0);
+  });
+
+  it('still nudges a normal unwrapped result', async () => {
+    const { query, pushes } = makeResultQuery({ type: 'result', text: 'bare text, no envelope' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toContain('was not delivered');
+  });
+});
+
 describe('auth error notification', () => {
   function insertWithRouting(id: string): void {
     getInboundDb()

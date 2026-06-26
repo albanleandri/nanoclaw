@@ -112,6 +112,19 @@ async function sendPairingConfirmation(token: string, platformId: string): Promi
   }
 }
 
+export async function sendTelegramTyping(token: string, platformId: string): Promise<void> {
+  const chatId = platformId.split(':').slice(1).join(':');
+  if (!chatId) return;
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+  });
+  if (!res.ok) {
+    log.debug('Telegram typing chat action non-OK', { status: res.status });
+  }
+}
+
 function createPairingInterceptor(
   channelType: string,
   botUsernamePromise: Promise<string | null>,
@@ -248,6 +261,9 @@ function createTelegramChannelAdapter(options: {
       } catch {
         return null;
       }
+    },
+    async setTyping(platformId: string) {
+      await sendTelegramTyping(token, platformId);
     },
     async setup(hostConfig: ChannelSetup) {
       const intercepted: ChannelSetup = {

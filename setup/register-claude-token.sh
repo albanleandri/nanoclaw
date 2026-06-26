@@ -99,12 +99,10 @@ else
   script -q "$tmpfile" $cmd
 fi
 
-# Strip ANSI codes + newlines (TTY wraps the token mid-string), then match
-# the sk-ant-oat…AA token. perl because BSD grep caps {n,m} at 255.
-token=$(sed $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' "$tmpfile" \
-        | tr -d '\n\r' \
-        | perl -ne 'print "$1\n" while /(sk-ant-oat[A-Za-z0-9_-]{80,500}AA)/g' \
-        | tail -1 || true)
+# Extract via the shared parser so the shell flow and setup/lib/claude-assist.ts
+# agree on ANSI/control stripping and token unwrapping.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+token=$(pnpm exec tsx "$SCRIPT_DIR/lib/captured-token.ts" claude "$tmpfile" || true)
 
 if [ -z "$token" ]; then
   keep=$(mktemp -t claude-setup-token-log.XXXXXX)

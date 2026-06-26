@@ -11,9 +11,10 @@
  *   1. Build a handoff prompt from the caller's context: channel, current
  *      step, completed steps, collected values (secrets redacted), relevant
  *      files to read.
- *   2. Spawn `claude --append-system-prompt "<context>"
- *      --permission-mode acceptEdits` with `stdio: 'inherit'` so Claude owns
- *      the terminal.
+ *   2. Spawn `claude "<prompt>" --permission-mode auto` with `stdio: 'inherit'`
+ *      so Claude owns the terminal. The positional prompt is auto-submitted as
+ *      the first user message, so Claude starts orienting immediately and the
+ *      context stays visible in the transcript.
  *   3. When Claude exits (user types /exit, Ctrl-D, or closes the session),
  *      control returns to the setup driver. The driver can then re-offer the
  *      same step (e.g., "How did that go?" select).
@@ -23,6 +24,7 @@
  * attempting to parse it as a real answer.
  */
 import { execSync, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import path from 'path';
 
 import * as p from '@clack/prompts';
@@ -61,8 +63,8 @@ export interface HandoffContext {
 }
 
 /**
- * Spawn interactive Claude with context pre-loaded as a system-prompt
- * append. Returns when Claude exits.
+ * Spawn interactive Claude with the handoff context as an auto-submitted
+ * first prompt. Returns when Claude exits.
  *
  * Silently no-ops (returns `false`) if `claude` isn't on PATH — setup runs
  * where the binary is guaranteed to exist (we install it in the auth step),
@@ -72,36 +74,32 @@ export interface HandoffContext {
  */
 export async function offerClaudeHandoff(ctx: HandoffContext): Promise<boolean> {
   if (!isClaudeUsable()) {
-    p.log.warn(
-      brandBody("Claude isn't installed yet — can't hand you off here. Finish setup first, then retry."),
-    );
+    p.log.warn(brandBody("Claude isn't installed yet — can't hand you off here. Finish setup first, then retry."));
     return false;
   }
-
-  const systemPrompt = buildSystemPrompt(ctx);
 
   note(
     [
       "I'm handing you off to Claude in interactive mode.",
-      "It has the context of where you are in setup.",
-      "",
+      'It has the context of where you are in setup.',
+      '',
       k.dim("Type /exit (or press Ctrl-D) when you're ready to come back to setup."),
     ].join('\n'),
     'Handing off to Claude',
   );
 
+  return spawnInteractiveClaude(buildHandoffPrompt(ctx));
+}
+
+const handoffSessionId = randomUUID();
+let handoffSessionStarted = false;
+
+function spawnInteractiveClaude(prompt: string): Promise<boolean> {
+  const sessionArgs = handoffSessionStarted ? ['--resume', handoffSessionId] : ['--session-id', handoffSessionId];
   return new Promise<boolean>((resolve) => {
-    const child = spawn(
-      'claude',
-      [
-        '--append-system-prompt',
-        systemPrompt,
-        '--permission-mode',
-        'acceptEdits',
-      ],
-      { stdio: 'inherit' },
-    );
+    const child = spawn('claude', [prompt, '--permission-mode', 'auto', ...sessionArgs], { stdio: 'inherit' });
     child.on('close', () => {
+      handoffSessionStarted = true;
       p.log.success(brandBody("Back from Claude. Let's continue."));
       resolve(true);
     });
@@ -164,20 +162,20 @@ function isClaudeUsable(): boolean {
   }
 }
 
-function buildSystemPrompt(ctx: HandoffContext): string {
+function buildHandoffPrompt(ctx: HandoffContext): string {
   const lines: string[] = [
-    `The user is running NanoClaw's interactive \`setup:auto\` flow to wire the ${ctx.channel} channel.`,
-    `They got stuck at the step: "${ctx.step}" (${ctx.stepDescription}) and asked for help.`,
+    `I'm running NanoClaw's interactive \`setup:auto\` flow to wire the ${ctx.channel} channel`,
+    `and got stuck at the step: "${ctx.step}" (${ctx.stepDescription}).`,
     '',
-    "Your job: help them complete this specific step and get back to setup.",
-    "You can read files, run commands (with acceptEdits permissions), search the web,",
-    "and explain concepts. Be concise. When they're ready to resume, tell them to type",
-    "/exit and they'll return to the setup flow at the same step.",
+    'Help me complete this specific step and get back to setup.',
+    'You can read files, run commands, search the web,',
+    "and explain concepts. Be concise. When I'm ready to resume, remind me to type",
+    "/exit and I'll return to the setup flow at the same step.",
     '',
   ];
 
   if (ctx.completedSteps && ctx.completedSteps.length > 0) {
-    lines.push('Steps they have already completed:');
+    lines.push("Steps I've already completed:");
     for (const s of ctx.completedSteps) lines.push(`  ✓ ${s}`);
     lines.push('');
   }
@@ -210,10 +208,7 @@ function buildSystemPrompt(ctx: HandoffContext): string {
  *
  * Drop-in replacement for `offerClaudeAssist` at failure call sites.
  */
-export async function offerClaudeOnFailure(
-  ctx: AssistContext,
-  projectRoot: string = process.cwd(),
-): Promise<boolean> {
+export async function offerClaudeOnFailure(ctx: AssistContext, projectRoot: string = process.cwd()): Promise<boolean> {
   if (process.env.NANOCLAW_SETUP_ASSIST_MODE === 'true' || process.env.NANOCLAW_SETUP_ASSIST_MODE === '1') {
     return offerClaudeAssist(ctx, projectRoot);
   }
@@ -228,10 +223,7 @@ export async function offerClaudeOnFailure(
  * Returns `true` if Claude was launched (the user may have fixed
  * things during the session), `false` if skipped/declined/unavailable.
  */
-async function offerFailureHandoff(
-  ctx: AssistContext,
-  projectRoot: string,
-): Promise<boolean> {
+async function offerFailureHandoff(ctx: AssistContext, projectRoot: string): Promise<boolean> {
   if (process.env.NANOCLAW_SKIP_CLAUDE_ASSIST === '1') return false;
   if (!(await ensureClaudeReady(projectRoot))) return false;
 
@@ -243,66 +235,43 @@ async function offerFailureHandoff(
   );
   if (!want) return false;
 
-  const systemPrompt = buildFailureSystemPrompt(ctx, projectRoot);
-
   note(
     [
-      "Launching Claude to help debug this failure.",
-      "It has the context of what went wrong.",
-      "",
+      'Launching Claude to help debug this failure.',
+      'It has the context of what went wrong.',
+      '',
       k.dim("Type /exit (or press Ctrl-D) when you're ready to come back to setup."),
     ].join('\n'),
     'Handing off to Claude',
   );
 
-  return new Promise<boolean>((resolve) => {
-    const child = spawn(
-      'claude',
-      [
-        '--append-system-prompt',
-        systemPrompt,
-        '--permission-mode',
-        'acceptEdits',
-      ],
-      { stdio: 'inherit' },
-    );
-    child.on('close', () => {
-      p.log.success(brandBody("Back from Claude. Let's continue."));
-      resolve(true);
-    });
-    child.on('error', () => {
-      p.log.error("Couldn't launch Claude. Continuing without handoff.");
-      resolve(false);
-    });
-  });
+  return spawnInteractiveClaude(buildFailurePrompt(ctx, projectRoot));
 }
 
-function buildFailureSystemPrompt(ctx: AssistContext, projectRoot: string): string {
+function buildFailurePrompt(ctx: AssistContext, projectRoot: string): string {
   const stepRefs = STEP_FILES[ctx.stepName] ?? [];
   const references = [
     ...BIG_PICTURE_FILES,
     ...stepRefs,
     'logs/setup.log',
-    ctx.rawLogPath
-      ? path.relative(projectRoot, ctx.rawLogPath)
-      : 'logs/setup-steps/',
+    ctx.rawLogPath ? path.relative(projectRoot, ctx.rawLogPath) : 'logs/setup-steps/',
   ].filter((v, i, a) => a.indexOf(v) === i);
 
   const lines: string[] = [
-    "The user is running NanoClaw's interactive setup flow and hit a failure.",
+    "I'm running NanoClaw's interactive setup flow and hit a failure.",
     '',
     `Failed step: ${ctx.stepName}`,
     `Error: ${ctx.msg}`,
   ];
 
-  if (ctx.hint) lines.push(`Hint: ${ctx.hint}`);
+  if (ctx.hint) lines.push(`Hint shown to me: ${ctx.hint}`);
 
   lines.push(
     '',
-    'Your job: help them diagnose and fix this issue. Read the referenced files',
-    'and logs to understand what went wrong, then help them fix it. You can read',
-    'files, run commands, check logs, and explain what happened. Be concise.',
-    "When they're ready to resume setup, tell them to type /exit.",
+    'Help me diagnose and fix this issue. Read the referenced files and logs',
+    'to understand what went wrong, then help me fix it. You can read files,',
+    'run commands, check logs, and explain what happened. Be concise.',
+    "When I'm ready to resume setup, remind me to type /exit.",
     '',
     'Relevant files (read as needed with the Read tool):',
   );

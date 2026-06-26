@@ -31,6 +31,7 @@ import fs from 'fs';
 
 import { getActiveSessions } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { ensureEgressNetwork } from './egress-lockdown.js';
 import {
   countDueMessages,
   deleteOrphanProcessingClaims,
@@ -155,6 +156,12 @@ export function stopHostSweep(): void {
 
 async function sweep(): Promise<void> {
   if (!running) return;
+
+  try {
+    ensureEgressNetwork();
+  } catch (err) {
+    log.error('Egress lockdown re-heal failed', { err });
+  }
 
   try {
     const sessions = getActiveSessions();

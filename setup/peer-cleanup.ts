@@ -11,6 +11,11 @@
  *   - launchd: `state != running` AND `runs > UNHEALTHY_RUNS_THRESHOLD`
  *   - systemd: unit is in `failed` state, OR `activating` with many restarts
  *
+ * A peer registration is "dead" when the program it launches no longer exists
+ * on disk, usually because a test checkout or old worktree was deleted without
+ * running uninstall. These jobs can sit unloaded/inactive forever, so the
+ * health probes never see them; delete the orphaned config outright.
+ *
  * A peer is also stopped when its effective service definition points at this
  * checkout's dist/index.js. That is not a legitimate peer install; it is a
  * duplicate unit for the same host process and will compete for Telegram
@@ -40,6 +45,7 @@ export interface PeerStatus {
 export interface PeerCleanupResult {
   checked: PeerStatus[];
   unloaded: PeerStatus[];
+  removed: Array<{ label: string; configPath: string }>;
   failures: Array<{ label: string; err: string }>;
 }
 
@@ -55,7 +61,30 @@ export function cleanupUnhealthyPeers(projectRoot: string = process.cwd()): Peer
   if (platform === 'linux') {
     return cleanupSystemdPeers(projectRoot);
   }
-  return { checked: [], unloaded: [], failures: [] };
+  return { checked: [], unloaded: [], removed: [], failures: [] };
+}
+
+function reapDeadPeer(
+  result: PeerCleanupResult,
+  peer: { label: string; configPath: string },
+  unload: () => void,
+  kind: string,
+  missingTarget: string,
+): void {
+  try {
+    unload();
+  } catch {
+    /* job not loaded */
+  }
+  try {
+    fs.rmSync(peer.configPath, { force: true });
+    log.info(`Removed dead peer ${kind}`, { label: peer.label, configPath: peer.configPath, missingTarget });
+    result.removed.push(peer);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`Failed to remove dead peer ${kind}`, { label: peer.label, err: message });
+    result.failures.push({ label: peer.label, err: message });
+  }
 }
 
 // ---- launchd (macOS) --------------------------------------------------------
@@ -63,7 +92,7 @@ export function cleanupUnhealthyPeers(projectRoot: string = process.cwd()): Peer
 function cleanupLaunchdPeers(projectRoot: string): PeerCleanupResult {
   const ownLabel = getLaunchdLabel(projectRoot);
   const agentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
-  const result: PeerCleanupResult = { checked: [], unloaded: [], failures: [] };
+  const result: PeerCleanupResult = { checked: [], unloaded: [], removed: [], failures: [] };
 
   let plists: string[];
   try {
@@ -80,6 +109,18 @@ function cleanupLaunchdPeers(projectRoot: string): PeerCleanupResult {
   for (const plistPath of plists) {
     const label = path.basename(plistPath, '.plist');
     if (label === ownLabel) continue;
+
+    const missingTarget = deadLaunchdTarget(plistPath);
+    if (missingTarget) {
+      reapDeadPeer(
+        result,
+        { label, configPath: plistPath },
+        () => execFileSync('launchctl', ['unload', plistPath], { stdio: 'pipe' }),
+        'launchd plist',
+        missingTarget,
+      );
+      continue;
+    }
 
     const status = probeLaunchdPeer(label, plistPath, uid);
     if (!status) continue;
@@ -126,12 +167,24 @@ function probeLaunchdPeer(label: string, plistPath: string, uid: number): PeerSt
   return { label, configPath: plistPath, state, runs, unhealthy };
 }
 
+function deadLaunchdTarget(plistPath: string): string | undefined {
+  let xml: string;
+  try {
+    xml = fs.readFileSync(plistPath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+  const target = /<string>([^<]*\/dist\/index\.js)<\/string>/.exec(xml)?.[1];
+  if (!target) return undefined;
+  return fs.existsSync(target) ? undefined : target;
+}
+
 // ---- systemd (Linux) --------------------------------------------------------
 
 function cleanupSystemdPeers(projectRoot: string): PeerCleanupResult {
   const ownUnit = getSystemdUnit(projectRoot);
   const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user');
-  const result: PeerCleanupResult = { checked: [], unloaded: [], failures: [] };
+  const result: PeerCleanupResult = { checked: [], unloaded: [], removed: [], failures: [] };
 
   let units: string[];
   try {
@@ -145,6 +198,22 @@ function cleanupSystemdPeers(projectRoot: string): PeerCleanupResult {
 
   for (const unit of units) {
     if (unit === ownUnit) continue;
+
+    const unitPath = path.join(unitDir, `${unit}.service`);
+    const missingTarget = deadSystemdTarget(unitPath);
+    if (missingTarget) {
+      reapDeadPeer(
+        result,
+        { label: unit, configPath: unitPath },
+        () => {
+          execFileSync('systemctl', ['--user', 'disable', '--now', `${unit}.service`], { stdio: 'pipe' });
+          execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'pipe' });
+        },
+        'systemd unit',
+        missingTarget,
+      );
+      continue;
+    }
 
     const status = probeSystemdPeer(unit, projectRoot);
     if (!status) continue;
@@ -202,4 +271,16 @@ export function systemdShowTargetsProject(output: string, projectRoot: string): 
     execStart.includes(`${projectRoot}/dist/index.js`) ||
     (workingDirectory === projectRoot && /(?:^|\s)dist\/index\.js(?:\s|;|$)/.test(execStart))
   );
+}
+
+function deadSystemdTarget(unitPath: string): string | undefined {
+  let unit: string;
+  try {
+    unit = fs.readFileSync(unitPath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+  const target = /^ExecStart=\S+\s+(\S+\/dist\/index\.js)\s*$/m.exec(unit)?.[1];
+  if (!target) return undefined;
+  return fs.existsSync(target) ? undefined : target;
 }

@@ -165,6 +165,10 @@ async function main(): Promise<void> {
       const adapter = getChannelAdapter(channelType);
       await adapter?.setTyping?.(platformId, threadId);
     },
+    async sendStatus(channelType: string, platformId: string, threadId: string | null, text: string): Promise<void> {
+      const adapter = getChannelAdapter(channelType);
+      await adapter?.deliver(platformId, threadId, { kind: 'chat', content: { text } });
+    },
   };
   setDeliveryAdapter(deliveryAdapter);
 

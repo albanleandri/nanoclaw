@@ -25,13 +25,20 @@ vi.mock('./db/sessions.js', () => ({
 
 const mockWriteSessionMessage = vi.fn();
 vi.mock('./session-manager.js', () => ({
+  openInboundDb: () => ({ close: vi.fn() }),
   writeSessionMessage: (...args: unknown[]) => mockWriteSessionMessage(...args),
+}));
+
+const mockCountDueMessages = vi.fn<(_db: unknown) => number>(() => 0);
+vi.mock('./db/session-db.js', () => ({
+  countDueMessages: (db: unknown) => mockCountDueMessages(db),
 }));
 
 import { restartAgentGroupContainers } from './container-restart.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCountDueMessages.mockReturnValue(0);
 });
 
 // --- Helpers ---
@@ -147,5 +154,19 @@ describe('restartAgentGroupContainers', () => {
     // Each session gets its own on-wake message
     expect(mockWriteSessionMessage.mock.calls[0][1]).toBe('s1');
     expect(mockWriteSessionMessage.mock.calls[1][1]).toBe('s2');
+  });
+
+  it('wakes without a wake message when due messages exist', () => {
+    mockGetSessionsByAgentGroup.mockReturnValue([makeSession('s1', 'g1')]);
+    mockIsContainerRunning.mockReturnValue(true);
+    mockCountDueMessages.mockReturnValue(2);
+    mockGetSession.mockReturnValue(makeSession('s1', 'g1'));
+
+    restartAgentGroupContainers('g1', 'provider switch');
+
+    const onExit = mockKillContainer.mock.calls[0][2] as () => void;
+    expect(typeof onExit).toBe('function');
+    onExit();
+    expect(mockWakeContainer).toHaveBeenCalled();
   });
 });

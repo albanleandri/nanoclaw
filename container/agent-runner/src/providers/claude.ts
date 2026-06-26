@@ -453,8 +453,9 @@ export class ClaudeProvider implements AgentProvider {
         if (message.type === 'system' && message.subtype === 'init') {
           yield { type: 'init', continuation: message.session_id };
         } else if (message.type === 'result') {
-          const text = 'result' in message ? (message as { result?: string }).result ?? null : null;
-          yield { type: 'result', text };
+          const result = message as { result?: string; is_error?: boolean; errors?: string[] };
+          const text = result.result ?? (result.errors && result.errors.length > 0 ? result.errors.join('\n') : null);
+          yield { type: 'result', text, isError: result.is_error === true };
           followUpAcks.shift()?.();
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };

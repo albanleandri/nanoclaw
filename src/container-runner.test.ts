@@ -214,3 +214,64 @@ describe('buildContainerArgs ordering invariant (structural)', () => {
     expect(gatewayApply).toBeGreaterThan(mountsLoop);
   });
 });
+
+describe('per-container resource limits (structural)', () => {
+  it('reads both limit knobs from config', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toContain('CONTAINER_CPU_LIMIT');
+    expect(src).toContain('CONTAINER_MEMORY_LIMIT');
+  });
+
+  it('guards --cpus behind a truthy CONTAINER_CPU_LIMIT', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toMatch(/if \(CONTAINER_CPU_LIMIT\) args\.push\('--cpus', CONTAINER_CPU_LIMIT\)/);
+  });
+
+  it('guards --memory behind a truthy CONTAINER_MEMORY_LIMIT and does not set swap policy', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toMatch(/if \(CONTAINER_MEMORY_LIMIT\) args\.push\('--memory', CONTAINER_MEMORY_LIMIT\)/);
+    expect(src).not.toContain('--memory-swap');
+  });
+
+  it('defaults both knobs to empty string in config', () => {
+    const cfg = fs.readFileSync(path.join(process.cwd(), 'src', 'config.ts'), 'utf-8');
+    expect(cfg).toContain("CONTAINER_CPU_LIMIT || envConfig.CONTAINER_CPU_LIMIT || ''");
+    expect(cfg).toContain("CONTAINER_MEMORY_LIMIT || envConfig.CONTAINER_MEMORY_LIMIT || ''");
+  });
+});
+
+describe('egress lockdown wiring (structural)', () => {
+  it('selects the lockdown network instead of the host gateway when enabled', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toContain('ensureEgressNetwork');
+    expect(src).toMatch(/if \(ensureEgressNetwork\(\)\)[\s\S]*?args\.push\(\.\.\.egressNetworkArgs\(\)\)/);
+    expect(src).toMatch(/else \{[\s\S]*?args\.push\(\.\.\.hostGatewayArgs\(\)\)/);
+  });
+
+  it('keeps the OneCLI gateway apply after volume mounts while egress wiring stays before it', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    const egressCheck = src.indexOf('ensureEgressNetwork()');
+    const mountsLoop = src.indexOf('for (const mount of mounts)');
+    const gatewayApply = src.indexOf('onecli.applyContainerConfig');
+    expect(egressCheck).toBeGreaterThan(-1);
+    expect(mountsLoop).toBeGreaterThan(-1);
+    expect(gatewayApply).toBeGreaterThan(-1);
+    expect(gatewayApply).toBeGreaterThan(mountsLoop);
+    expect(gatewayApply).toBeGreaterThan(egressCheck);
+  });
+
+  it('defines opt-in egress lockdown config with .env fallback', () => {
+    const cfg = fs.readFileSync(path.join(process.cwd(), 'src', 'config.ts'), 'utf-8');
+    expect(cfg).toContain('NANOCLAW_EGRESS_LOCKDOWN');
+    expect(cfg).toContain("NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || 'nanoclaw-egress'");
+    expect(cfg).toContain("ONECLI_GATEWAY_CONTAINER || envConfig.ONECLI_GATEWAY_CONTAINER || 'onecli'");
+  });
+});
+
+describe('container boot-failure tripwire (structural)', () => {
+  it('surfaces the stderr tail when the container exits non-zero', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toContain('stderrTail.push(line)');
+    expect(src).toMatch(/Container exited non-zero.*stderrTail/s);
+  });
+});
