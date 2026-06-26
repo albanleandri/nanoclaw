@@ -476,6 +476,15 @@ export async function processQuery(
         completeMessages(initialBatchIds);
         writeUsageLimitNotification(routing);
         break;
+      } else if (event.type === 'error' && event.classification === 'auth') {
+        // Credential/auth failure (e.g. an expired shared OAuth token reaching
+        // the container as a 401). The container cannot fix this itself, and a
+        // tight retry would just re-hit the same dead credential — so mark the
+        // batch completed (no re-wake storm) but SURFACE the failure to the
+        // user instead of finishing silently.
+        completeMessages(initialBatchIds);
+        writeAuthErrorNotification(routing);
+        break;
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
@@ -491,6 +500,19 @@ export async function processQuery(
             if (!providerFailureNotified) {
               providerFailureNotified = true;
               writeUsageLimitNotification(routing);
+            }
+            query.end();
+            break;
+          }
+
+          if (isBareProviderAuthError(event.text)) {
+            // The provider surfaced a bare authentication error as result text
+            // (e.g. an expired/invalid credential). Without this the text would
+            // be treated as unwrapped scratchpad and the user would get
+            // silence. Tell them instead, then stop the turn.
+            if (!providerFailureNotified) {
+              providerFailureNotified = true;
+              writeAuthErrorNotification(routing);
             }
             query.end();
             break;
@@ -557,6 +579,34 @@ function isBareProviderUsageLimitError(text: string): boolean {
   return (
     /^api error:/i.test(trimmed) &&
     /(429|rate limit|usage limit|exceed\w* your account.*limit|request rejected)/i.test(trimmed)
+  );
+}
+
+function writeAuthErrorNotification(routing: RoutingContext): void {
+  writeMessageOut({
+    id: generateId(),
+    kind: 'chat',
+    platform_id: routing.platformId,
+    channel_type: routing.channelType,
+    thread_id: routing.threadId,
+    content: JSON.stringify({
+      text:
+        "⚠️ I couldn't reach Claude — authentication failed (my login may have expired). " +
+        'Your message was not processed. Please re-login on the host (run `claude` / `/login`) and try again.',
+    }),
+  });
+}
+
+// A bare authentication error surfaced as provider result text (mirrors
+// isBareProviderUsageLimitError). Anthropic returns 401 with an
+// `authentication_error` body when the credential is missing/expired/invalid.
+function isBareProviderAuthError(text: string): boolean {
+  const trimmed = stripInternalTags(text).trim();
+  return (
+    /^api error:/i.test(trimmed) &&
+    /(401|unauthorized|authentication[_ ]error|invalid x-api-key|invalid bearer token|oauth token (has )?expired|could not resolve authentication)/i.test(
+      trimmed,
+    )
   );
 }
 

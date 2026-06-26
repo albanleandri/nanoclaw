@@ -122,6 +122,9 @@ describe('updateOnecliSecret', () => {
 describe('refreshOnecliToken', () => {
   it('reads credentials and updates the OneCLI secret', async () => {
     const getToken = vi.fn().mockResolvedValue('sk-ant-oat01-fresh');
+    const readCreds = vi
+      .fn()
+      .mockResolvedValue({ accessToken: 'sk-ant-oat01-fresh', expiresAt: Date.now() + 3_600_000 });
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -133,6 +136,7 @@ describe('refreshOnecliToken', () => {
       onecliUrl: 'http://172.17.0.1:10254',
       secretId: 'sec-abc',
       getToken,
+      readCreds,
       fetch: fetchMock,
     });
 
@@ -169,6 +173,10 @@ describe('refreshOnecliToken', () => {
     // getValidClaudeOAuthToken) performs the OAuth refresh cycle and returns
     // the fresh token. The vault must receive that fresh token.
     const getToken = vi.fn().mockResolvedValue('sk-ant-oat01-refreshed-via-oauth');
+    const readCreds = vi.fn().mockResolvedValue({
+      accessToken: 'sk-ant-oat01-refreshed-via-oauth',
+      expiresAt: Date.now() + 3_600_000,
+    });
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -180,6 +188,7 @@ describe('refreshOnecliToken', () => {
       onecliUrl: 'http://172.17.0.1:10254',
       secretId: 'sec-abc',
       getToken,
+      readCreds,
       fetch: fetchMock,
     });
 
@@ -189,6 +198,7 @@ describe('refreshOnecliToken', () => {
 
   it('propagates OneCLI update errors', async () => {
     const getToken = vi.fn().mockResolvedValue('tok');
+    const readCreds = vi.fn().mockResolvedValue({ accessToken: 'tok', expiresAt: Date.now() + 3_600_000 });
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -201,8 +211,35 @@ describe('refreshOnecliToken', () => {
         onecliUrl: 'http://172.17.0.1:10254',
         secretId: 'sec-abc',
         getToken,
+        readCreds,
         fetch: fetchMock,
       }),
     ).rejects.toThrow('OneCLI secret update failed: 500');
+  });
+
+  it('refuses to push an expired token to OneCLI, keeping the last-known-good secret', async () => {
+    // getValidClaudeOAuthToken falls back to the stale access token when its
+    // OAuth refresh fails. Pushing that into the vault is what 401'd every
+    // container for days. The refresher must detect the expiry and leave the
+    // existing (last-known-good) vault secret untouched rather than poison it.
+    const getToken = vi.fn().mockResolvedValue('sk-ant-oat01-stale-fallback');
+    const readCreds = vi.fn().mockResolvedValue({
+      accessToken: 'sk-ant-oat01-stale-fallback',
+      expiresAt: Date.now() - 60_000, // already expired
+    });
+    const fetchMock = vi.fn();
+
+    await expect(
+      refreshOnecliToken({
+        credentialsPath: '/fake/.credentials.json',
+        onecliUrl: 'http://172.17.0.1:10254',
+        secretId: 'sec-abc',
+        getToken,
+        readCreds,
+        fetch: fetchMock,
+      }),
+    ).rejects.toThrow(/expired/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

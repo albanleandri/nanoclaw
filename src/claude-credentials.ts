@@ -131,11 +131,80 @@ function writeClaudeCredentials(creds: ClaudeOAuthCredentials, filePath: string)
   }
 }
 
+// Cross-process serialization for the refresh critical section. The shared
+// ~/.claude/.credentials.json is refreshed by multiple uncoordinated parties
+// (this host's hourly OneCLI-refresh timer, the host's native credential
+// proxy, and the interactive Claude Code CLI). Claude's OAuth server *rotates*
+// the refresh token on every refresh, so two refreshers racing on the same
+// file each invalidate the other's refresh token → invalid_grant → a forced
+// re-login and a dead token served to containers. A file lock plus a re-read
+// inside the lock means whoever refreshes first wins and everyone else reuses
+// that result instead of refreshing again.
+const LOCK_TIMEOUT_MS = 15_000; // never block longer than this — degrade to best-effort
+const LOCK_STALE_MS = 30_000; // a lock older than this is from a crashed process
+const LOCK_POLL_MS = 50;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Acquire a best-effort cross-process lock for the credentials file. Returns a
+ * release function. Never throws and never deadlocks: a stale lock (from a
+ * crashed process) is broken, and if the lock can't be taken within the
+ * timeout we proceed without it rather than hang the caller forever.
+ */
+async function acquireCredentialsLock(filePath: string): Promise<() => void> {
+  const lockPath = `${filePath}.lock`;
+  const start = Date.now();
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx'); // atomic create-if-absent
+      fs.writeSync(fd, `${process.pid} ${new Date().toISOString()}`);
+      fs.closeSync(fd);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // Already gone (e.g. broken as stale by another process) — fine.
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // Unexpected fs error (permissions, read-only mount, …) — don't block
+        // refresh on lock bookkeeping; degrade to best-effort with no lock.
+        return () => {};
+      }
+      try {
+        const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+        if (age > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          continue; // retry immediately now that the stale lock is gone
+        }
+      } catch {
+        continue; // lock vanished between open and stat — retry
+      }
+      if (Date.now() - start > LOCK_TIMEOUT_MS) {
+        log.warn('Credential refresh lock wait timed out — proceeding without lock');
+        return () => {};
+      }
+      await sleep(LOCK_POLL_MS);
+    }
+  }
+}
+
 /**
  * Return a valid access token, refreshing automatically if needed.
  * Returns null only when no credentials file exists at all.
- * Falls back to the expired token if refresh fails (server will reject it,
- * but at least we tried).
+ *
+ * The refresh is serialized via a cross-process lock and re-reads the file
+ * inside the lock, so a token another process just refreshed is reused rather
+ * than rotated away. If our own refresh fails (commonly invalid_grant after
+ * our refresh token was rotated by another process), we re-read once more
+ * before falling back to the stale token.
  */
 export async function getValidClaudeOAuthToken(
   filePath = CREDENTIALS_PATH,
@@ -144,6 +213,8 @@ export async function getValidClaudeOAuthToken(
   const creds = readClaudeCredentials(filePath);
   if (!creds) return null;
 
+  // Fast path: a valid token needs no lock — keeps per-request proxy reads
+  // cheap and avoids any lock churn when nothing needs refreshing.
   if (!isTokenExpired(creds.expiresAt)) {
     return creds.accessToken;
   }
@@ -153,15 +224,37 @@ export async function getValidClaudeOAuthToken(
     return creds.accessToken;
   }
 
-  log.info('Claude OAuth token expired or expiring soon, refreshing...');
-  const refresh = fetcher ?? defaultFetcher;
-  const newCreds = await refresh(creds.refreshToken, creds.scopes);
+  const release = await acquireCredentialsLock(filePath);
+  try {
+    // Re-read inside the lock — another refresher may have updated the file
+    // while we waited. Reuse their fresh token instead of refreshing again.
+    const latest = readClaudeCredentials(filePath) ?? creds;
+    if (!isTokenExpired(latest.expiresAt)) {
+      return latest.accessToken;
+    }
+    if (!latest.refreshToken) {
+      log.warn('Claude OAuth credentials have no refreshToken — cannot refresh');
+      return latest.accessToken;
+    }
 
-  if (!newCreds) {
-    log.warn('Token refresh failed — using potentially expired token as fallback');
-    return creds.accessToken;
+    log.info('Claude OAuth token expired or expiring soon, refreshing...');
+    const refresh = fetcher ?? defaultFetcher;
+    const newCreds = await refresh(latest.refreshToken, latest.scopes);
+
+    if (!newCreds) {
+      // Refresh failed. A concurrent external refresher (the Claude Code CLI)
+      // may have just written a valid token — prefer that over a dead one.
+      const afterFail = readClaudeCredentials(filePath);
+      if (afterFail && !isTokenExpired(afterFail.expiresAt)) {
+        return afterFail.accessToken;
+      }
+      log.warn('Token refresh failed — using potentially expired token as fallback');
+      return latest.accessToken;
+    }
+
+    writeClaudeCredentials(newCreds, filePath);
+    return newCreds.accessToken;
+  } finally {
+    release();
   }
-
-  writeClaudeCredentials(newCreds, filePath);
-  return newCreds.accessToken;
 }

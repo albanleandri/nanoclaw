@@ -76,11 +76,29 @@ export async function refreshOnecliToken(opts: {
   onecliUrl: string;
   secretId: string;
   getToken?: (credentialsPath: string) => Promise<string | null>;
+  readCreds?: (credentialsPath: string) => Promise<ClaudeCredentials>;
+  now?: () => number;
   fetch?: typeof globalThis.fetch;
 }): Promise<void> {
   const getTokenFn = opts.getToken ?? ((p: string) => getValidClaudeOAuthToken(p));
   const token = await getTokenFn(opts.credentialsPath);
   if (!token) throw new Error('No Claude credentials available');
+
+  // getValidClaudeOAuthToken falls back to the stale access token when its
+  // OAuth refresh fails (e.g. invalid_grant). Pushing an already-expired token
+  // into the vault 401's every container until the next successful refresh —
+  // the failure that caused a multi-day silent outage. Refuse to overwrite the
+  // vault with a token we know is expired and keep the last-known-good secret.
+  const readCredsFn = opts.readCreds ?? ((p: string) => readClaudeCredentials(p));
+  const now = opts.now ?? (() => Date.now());
+  const { expiresAt } = await readCredsFn(opts.credentialsPath);
+  if (expiresAt && expiresAt <= now()) {
+    throw new Error(
+      `Refusing to push expired Claude token to OneCLI (expired ${new Date(expiresAt).toISOString()}); ` +
+        `keeping last-known-good secret. A re-login on the host is required.`,
+    );
+  }
+
   await updateOnecliSecret({
     onecliUrl: opts.onecliUrl,
     secretId: opts.secretId,

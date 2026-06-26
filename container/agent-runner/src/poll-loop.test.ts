@@ -649,6 +649,83 @@ describe('quota error notification', () => {
   });
 });
 
+describe('auth error notification', () => {
+  function insertWithRouting(id: string): void {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, thread_id, content)
+         VALUES (?, 'chat', datetime('now'), 'pending', 'chat-42', 'telegram', 'thread-7', '{"text":"hi"}')`,
+      )
+      .run(id);
+  }
+
+  it('surfaces an auth-error notification when the provider returns a bare 401 API error result', async () => {
+    // The credential-outage symptom: the container reaches Claude with a dead
+    // OAuth token, the SDK returns a bare authentication error as result text,
+    // and (before this fix) the poll loop treated it as unwrapped scratchpad
+    // and silently sent nothing. The user must instead get a Telegram message.
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider(
+      {},
+      () => 'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired"}}',
+    );
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const content = JSON.parse(outMessages[0].content) as { text: string };
+    expect(content.text.toLowerCase()).toContain('authentication');
+    expect(outMessages[0].platform_id).toBe('chat-42');
+    expect(outMessages[0].channel_type).toBe('telegram');
+    expect(outMessages[0].thread_id).toBe('thread-7');
+  });
+
+  it('does not surface an auth notification on a normal wrapped result', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider({}, () => '<message to="default">all good</message>');
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+    setTimeout(() => query.end(), 50);
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const authMsgs = getUndeliveredMessages().filter((m) => {
+      const c = JSON.parse(m.content) as { text?: string };
+      return c.text?.toLowerCase().includes('authentication');
+    });
+    expect(authMsgs).toHaveLength(0);
+  });
+
+  it('surfaces an auth notification when the provider emits an error event classified as auth', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const query: AgentQuery = {
+      push() {},
+      end() {},
+      abort() {},
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'init', continuation: 'sess-auth' };
+          yield { type: 'error', message: '401 Unauthorized', retryable: true, classification: 'auth' };
+        },
+      },
+    };
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const content = JSON.parse(outMessages[0].content) as { text: string };
+    expect(content.text.toLowerCase()).toContain('authentication');
+  });
+});
+
 describe('end-to-end with mock provider', () => {
   it('should read messages_in, process with mock provider, write messages_out', async () => {
     // Insert a chat message into inbound DB

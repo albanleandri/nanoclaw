@@ -191,6 +191,71 @@ describe('getValidClaudeOAuthToken', () => {
 
     expect(token).toBe('sk-ant-oat01-valid');
   });
+
+  // ── Refresh-token rotation safety (cross-process lock + re-read) ──
+  // Claude rotates the refresh token on every refresh. Two uncoordinated
+  // refreshers (the nanoclaw host + the interactive Claude Code CLI) racing on
+  // the same file each rotate the other's token to death → invalid_grant →
+  // forced re-login + dead token served to containers. These tests pin the
+  // behaviour that prevents that.
+
+  it('serializes concurrent refreshes so a fresh token is reused, not re-refreshed', async () => {
+    const creds = makeCreds({ expiresAt: PAST });
+    const filePath = writeCredentialsFile(tmpDir, creds);
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls++;
+      // Hold the critical section so the second caller is forced to wait on
+      // the lock rather than racing into its own refresh with a stale token.
+      await new Promise((r) => setTimeout(r, 25));
+      return makeCreds({
+        accessToken: 'sk-ant-oat01-refreshed',
+        refreshToken: 'sk-ant-ort01-rotated',
+        expiresAt: FUTURE,
+      });
+    });
+
+    const [a, b] = await Promise.all([
+      getValidClaudeOAuthToken(filePath, fetcher),
+      getValidClaudeOAuthToken(filePath, fetcher),
+    ]);
+
+    expect(calls).toBe(1);
+    expect(a).toBe('sk-ant-oat01-refreshed');
+    expect(b).toBe('sk-ant-oat01-refreshed');
+  });
+
+  it('uses a token rotated in by another process when its own refresh fails', async () => {
+    const creds = makeCreds({ expiresAt: PAST });
+    const filePath = writeCredentialsFile(tmpDir, creds);
+    const fetcher = vi.fn(async () => {
+      // Simulate the interactive Claude Code CLI refreshing the shared file
+      // while our own (now-stale) refresh token is rejected with invalid_grant.
+      writeCredentialsFile(tmpDir, makeCreds({ accessToken: 'sk-ant-oat01-external', expiresAt: FUTURE }));
+      return null;
+    });
+
+    const token = await getValidClaudeOAuthToken(filePath, fetcher);
+
+    expect(token).toBe('sk-ant-oat01-external');
+  });
+
+  it('breaks a stale lock instead of deadlocking', async () => {
+    const creds = makeCreds({ expiresAt: PAST });
+    const filePath = writeCredentialsFile(tmpDir, creds);
+    // A crashed process left an old lock behind.
+    const lockPath = `${filePath}.lock`;
+    fs.writeFileSync(lockPath, 'dead-pid');
+    const stale = Date.now() / 1000 - 3600; // 1 hour old
+    fs.utimesSync(lockPath, stale, stale);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(makeCreds({ accessToken: 'sk-ant-oat01-after-stale', expiresAt: FUTURE }));
+
+    const token = await getValidClaudeOAuthToken(filePath, fetcher);
+
+    expect(token).toBe('sk-ant-oat01-after-stale');
+  });
 });
 
 describe('defaultFetcher', () => {
