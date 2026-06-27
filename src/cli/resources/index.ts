@@ -13,3 +13,5 @@ import './user-dms.js';
 import './dropped-messages.js';
 import './approvals.js';
 import './sessions.js';
+import './providers.js';
+import './schedule-admin-grants.js';

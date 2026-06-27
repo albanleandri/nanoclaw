@@ -5,6 +5,8 @@ description: Use OpenCode as an agent provider (AGENT_PROVIDER=opencode). OpenRo
 
 # OpenCode agent provider
 
+Provider installations must include a descriptor module/import under `src/providers/descriptors/` in addition to the host and container registrations below. The descriptor must state actual auth, model, continuation, follow-up, media, MCP, and tool capabilities; setup must not offer OpenCode without it.
+
 NanoClaw runs agents in a long-lived **poll loop** inside the container. The backend is selected with **`AGENT_PROVIDER`** (`claude` | `opencode` | `mock`).
 
 Trunk ships with only the `claude` provider baked in. This skill copies the OpenCode provider files in from the `providers` branch, wires them into the host and container barrels, installs dependencies, and rebuilds the image.
@@ -124,6 +126,7 @@ All four must be clean before proceeding. Each guards a distinct integration poi
 The pre-existing `opencode.factory.test.ts` imports `opencode.ts` directly and self-registers, so it stays green even if a barrel import is removed — it is a unit test of `createProvider('opencode')`, not the registration guard. Keep it; it adds factory coverage but does not stand in for the registration tests above.
 
 > **Build cache gotcha:** The container buildkit caches COPY steps aggressively. If provider files were already present in the build context before, the new files may not be picked up. If you see "Unknown provider: opencode" after the build, prune the builder and rebuild:
+>
 > ```bash
 > docker builder prune -f && ./container/build.sh
 > ```
@@ -179,6 +182,7 @@ ANTHROPIC_BASE_URL=https://api.deepseek.com/v1
 ```
 
 Register the key:
+
 ```bash
 onecli secrets create --name "DeepSeek" --type generic \
   --value YOUR_KEY --host-pattern "api.deepseek.com" \
@@ -195,6 +199,7 @@ ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 Register the key:
+
 ```bash
 onecli secrets create --name "OpenRouter" --type generic \
   --value YOUR_KEY --host-pattern "openrouter.ai" \
@@ -246,7 +251,7 @@ Extra MCP servers still come from **`NANOCLAW_MCP_SERVERS`** / `container_config
 
 - OpenCode keeps a local **`opencode serve`** process and SSE subscription; the provider tears down with **`stream.return`** and **SIGKILL** on the server process on **`abort()`** / shared runtime reset to avoid MCP/zombie hangs.
 - Session continuation uses UUID format (SDK 1.4.x / CLI 1.4.x). Stale sessions are cleared by `isSessionInvalid` on OpenCode-specific error patterns. If you see UUID-related errors after an accidental CLI upgrade, clear `session_state` in `outbound.db` and wipe the `opencode-xdg` directory under the session folder.
-- **`NO_PROXY`** for localhost matters when the OpenCode client talks to `127.0.0.1` inside the container while HTTP(S)_PROXY is set (e.g. OneCLI).
+- **`NO_PROXY`** for localhost matters when the OpenCode client talks to `127.0.0.1` inside the container while HTTP(S)\_PROXY is set (e.g. OneCLI).
 
 ## Next Steps
 

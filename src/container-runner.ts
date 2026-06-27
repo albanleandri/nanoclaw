@@ -21,7 +21,7 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
-import { materializeContainerJson } from './container-config.js';
+import { materializeContainerJson, materializeSessionRuntimeJson } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
@@ -43,6 +43,7 @@ import {
   type ProviderContainerContribution,
   type VolumeMount,
 } from './providers/provider-container-registry.js';
+import { resolveEffectiveProviderConfig, type EffectiveProviderConfig } from './providers/effective-provider.js';
 import {
   heartbeatPath,
   markContainerRunning,
@@ -129,14 +130,27 @@ async function spawnContainer(session: Session): Promise<void> {
   // Materialize container.json from DB — writes fresh file and returns
   // the config object, threaded through provider resolution, buildMounts,
   // and buildContainerArgs so we don't re-read.
-  const containerConfig = materializeContainerJson(agentGroup.id);
+  const groupConfig = materializeContainerJson(agentGroup.id);
+  const effectiveProvider = resolveEffectiveProviderConfig(session, groupConfig);
+  const runtime = materializeSessionRuntimeJson(
+    sessionDir(agentGroup.id, session.id),
+    agentGroup,
+    groupConfig,
+    effectiveProvider,
+  );
+  const containerConfig = runtime.config;
 
   // Resolve the effective provider + any host-side contribution it declares
   // (extra mounts, env passthrough). Computed once and threaded through both
   // buildMounts and buildContainerArgs so side effects (mkdir, etc.) fire once.
-  const { provider, contribution } = resolveProviderContribution(session, agentGroup, containerConfig);
+  const { provider, contribution } = resolveProviderContribution(
+    session,
+    agentGroup,
+    containerConfig,
+    effectiveProvider,
+  );
 
-  const mounts = buildMounts(agentGroup, session, containerConfig, contribution);
+  const mounts = buildMounts(agentGroup, session, containerConfig, contribution, runtime.path);
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
@@ -240,8 +254,9 @@ function resolveProviderContribution(
   session: Session,
   agentGroup: AgentGroup,
   containerConfig: import('./container-config.js').ContainerConfig,
+  effectiveProvider: EffectiveProviderConfig,
 ): { provider: string; contribution: ProviderContainerContribution } {
-  const provider = resolveProviderName(session.agent_provider, containerConfig.provider);
+  const provider = effectiveProvider.provider;
   const fn = getProviderContainerConfig(provider);
   const contribution = fn
     ? fn({
@@ -250,6 +265,7 @@ function resolveProviderContribution(
         groupDir: path.resolve(GROUPS_DIR, agentGroup.folder),
         selectedSkills: containerConfig.skills,
         hostEnv: process.env,
+        effectiveProvider,
       })
     : {};
   return { provider, contribution };
@@ -289,6 +305,7 @@ function buildMounts(
   session: Session,
   containerConfig: import('./container-config.js').ContainerConfig,
   providerContribution: ProviderContainerContribution,
+  runtimeConfigPath: string,
 ): VolumeMount[] {
   const projectRoot = process.cwd();
 
@@ -367,6 +384,14 @@ function buildMounts(
   if (providerContribution.mounts) {
     mounts.push(...providerContribution.mounts);
   }
+
+  // Final nested overlays: each session must see its own effective provider
+  // selection even though the group workspace (and its operator snapshot
+  // container.json) is shared by every session.
+  mounts.push(
+    { hostPath: runtimeConfigPath, containerPath: '/workspace/agent/container.json', readonly: true },
+    { hostPath: runtimeConfigPath, containerPath: '/workspace/group/container.json', readonly: true },
+  );
 
   return mounts;
 }

@@ -19,6 +19,10 @@ import {
 } from '../src/db/messaging-groups.js';
 import { isValidGroupFolder } from '../src/group-folder.js';
 import { initGroupFilesystem } from '../src/group-init.js';
+import { updateContainerConfigScalars } from '../src/db/container-configs.js';
+import { getProviderProfile } from '../src/db/provider-profiles.js';
+import '../src/providers/descriptors/index.js';
+import { requireProviderDescriptor } from '../src/providers/provider-descriptor-registry.js';
 import { log } from '../src/log.js';
 import { namespacedPlatformId } from '../src/platform-id.js';
 import { resolveSession, writeSessionMessage } from '../src/session-manager.js';
@@ -41,6 +45,8 @@ interface RegisterArgs {
   assistantName: string;
   /** Session mode: 'shared' (one session per channel) or 'per-thread' */
   sessionMode: string;
+  provider?: string;
+  providerProfile?: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -53,6 +59,8 @@ function parseArgs(args: string[]): RegisterArgs {
     requiresTrigger: false,
     assistantName: 'Andy',
     sessionMode: 'shared',
+    provider: process.env.NANOCLAW_AGENT_PROVIDER,
+    providerProfile: process.env.NANOCLAW_PROVIDER_PROFILE,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -81,6 +89,12 @@ function parseArgs(args: string[]): RegisterArgs {
       case '--session-mode':
         result.sessionMode = args[++i] || 'shared';
         break;
+      case '--provider':
+        result.provider = args[++i] || undefined;
+        break;
+      case '--provider-profile':
+        result.providerProfile = args[++i] || undefined;
+        break;
     }
   }
 
@@ -95,6 +109,9 @@ export async function run(args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const parsed = parseArgs(args);
 
+  if (parsed.provider && parsed.providerProfile) {
+    throw new Error('--provider and --provider-profile cannot be used together');
+  }
   if (!parsed.platformId || !parsed.name || !parsed.folder) {
     emitStatus('REGISTER_CHANNEL', {
       STATUS: 'failed',
@@ -125,6 +142,27 @@ export async function run(args: string[]): Promise<void> {
   const dbPath = path.join(DATA_DIR, 'v2.db');
   const db = initDb(dbPath);
   runMigrations(db);
+  let providerSelection: { provider_profile_id: string | null; provider: string } | undefined;
+  if (parsed.providerProfile) {
+    const profile = getProviderProfile(parsed.providerProfile);
+    if (!profile || profile.enabled !== 1) {
+      throw new Error(`Usable provider profile not found: ${parsed.providerProfile}`);
+    }
+    const descriptor = requireProviderDescriptor(profile.provider_name);
+    providerSelection = {
+      provider_profile_id: profile.id,
+      provider: descriptor.runtime.containerProviderName,
+    };
+  } else if (parsed.provider) {
+    const descriptor = requireProviderDescriptor(parsed.provider);
+    if (descriptor.protocol !== 'native') {
+      throw new Error(`Provider ${descriptor.name} requires --provider-profile`);
+    }
+    providerSelection = {
+      provider_profile_id: null,
+      provider: descriptor.runtime.containerProviderName,
+    };
+  }
 
   // 1. Create or find agent group
   let agentGroup = getAgentGroupByFolder(parsed.folder);
@@ -141,6 +179,7 @@ export async function run(args: string[]): Promise<void> {
     log.info('Created agent group', { id: agId, folder: parsed.folder });
   }
   initGroupFilesystem(agentGroup);
+  if (providerSelection) updateContainerConfigScalars(agentGroup.id, providerSelection);
 
   // 2. Create or find messaging group
   let messagingGroup = getMessagingGroupByPlatform(parsed.channel, parsed.platformId);

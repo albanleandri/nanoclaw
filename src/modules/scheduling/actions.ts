@@ -11,14 +11,12 @@ import type Database from 'better-sqlite3';
 import fs from 'fs';
 
 import { wakeContainer } from '../../container-runner.js';
+import { getScheduleAdminGrants, isScheduleAdminAuthorized } from '../../db/schedule-admin-grants.js';
 import { findSessionByAgentGroup, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { inboundDbPath, openInboundDb, writeSessionMessage } from '../../session-manager.js';
 import type { Session } from '../../types.js';
 import { cancelTask, insertTask, listLiveTasks, pauseTask, resumeTask, updateTask, type TaskUpdate } from './db.js';
-
-const PINOVA_AGENT_GROUP_ID = 'ag-1778748709932-a8wsn1';
-const PINOVA_CODEX_AGENT_GROUP_ID = 'b3b36ece-a953-42f9-af6c-da0f901c27d6';
 
 function sessionHasLiveTasks(session: Session): boolean {
   const dbPath = inboundDbPath(session.agent_group_id, session.id);
@@ -34,22 +32,42 @@ function sessionHasLiveTasks(session: Session): boolean {
   }
 }
 
-function resolveScheduleOwner(session: Session): Session {
-  if (session.agent_group_id !== PINOVA_CODEX_AGENT_GROUP_ID) return session;
+function resolveScheduleOwner(session: Session, requestedOwnerId?: string, useGrantDefault = true): Session {
+  let ownerAgentGroupId = session.agent_group_id;
+  if (requestedOwnerId) {
+    if (
+      requestedOwnerId !== session.agent_group_id &&
+      !isScheduleAdminAuthorized(session.agent_group_id, requestedOwnerId)
+    ) {
+      throw new Error(`schedule owner not authorized: ${requestedOwnerId}`);
+    }
+    ownerAgentGroupId = requestedOwnerId;
+  } else if (useGrantDefault) {
+    const grants = getScheduleAdminGrants(session.agent_group_id);
+    if (grants.length === 1) ownerAgentGroupId = grants[0].owner_agent_group_id;
+    if (grants.length > 1) throw new Error('multiple schedule owners available; ownerAgentGroupId is required');
+  }
+  if (ownerAgentGroupId === session.agent_group_id) return session;
 
-  const ownerWithTasks = getSessionsByAgentGroup(PINOVA_AGENT_GROUP_ID)
+  const ownerWithTasks = getSessionsByAgentGroup(ownerAgentGroupId)
     .filter((candidate) => candidate.status === 'active')
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .find(sessionHasLiveTasks);
   if (ownerWithTasks) return ownerWithTasks;
 
-  const owner = findSessionByAgentGroup(PINOVA_AGENT_GROUP_ID);
-  if (!owner) throw new Error('shared schedule owner session not found for Pinova');
+  const owner = findSessionByAgentGroup(ownerAgentGroupId);
+  if (!owner) throw new Error(`schedule owner session not found: ${ownerAgentGroupId}`);
   return owner;
 }
 
-function withScheduleDb<T>(session: Session, currentDb: Database.Database, fn: (db: Database.Database) => T): T {
-  const owner = resolveScheduleOwner(session);
+function withScheduleDb<T>(
+  session: Session,
+  currentDb: Database.Database,
+  ownerAgentGroupId: string | undefined,
+  fn: (db: Database.Database) => T,
+  useGrantDefault = true,
+): T {
+  const owner = resolveScheduleOwner(session, ownerAgentGroupId, useGrantDefault);
   if (owner.id === session.id) return fn(currentDb);
   const db = openInboundDb(owner.agent_group_id, owner.id);
   try {
@@ -79,7 +97,8 @@ export async function handleListTasks(
 ): Promise<void> {
   const requestId = content.requestId as string;
   const status = typeof content.status === 'string' ? content.status : undefined;
-  const rows = withScheduleDb(session, inDb, (db) => listLiveTasks(db, status));
+  const ownerId = typeof content.ownerAgentGroupId === 'string' ? content.ownerAgentGroupId : undefined;
+  const rows = withScheduleDb(session, inDb, ownerId, (db) => listLiveTasks(db, status));
   writeScheduleAdminResponse(session, requestId, { ok: true, tasks: rows });
 }
 
@@ -94,16 +113,22 @@ export async function handleScheduleTask(
   const processAfter = content.processAfter as string;
   const recurrence = (content.recurrence as string) || null;
 
-  withScheduleDb(_session, inDb, (db) =>
-    insertTask(db, {
-      id: taskId,
-      processAfter,
-      recurrence,
-      platformId: (content.platformId as string) ?? null,
-      channelType: (content.channelType as string) ?? null,
-      threadId: (content.threadId as string) ?? null,
-      content: JSON.stringify({ prompt, script }),
-    }),
+  const ownerId = typeof content.ownerAgentGroupId === 'string' ? content.ownerAgentGroupId : undefined;
+  withScheduleDb(
+    _session,
+    inDb,
+    ownerId,
+    (db) =>
+      insertTask(db, {
+        id: taskId,
+        processAfter,
+        recurrence,
+        platformId: (content.platformId as string) ?? null,
+        channelType: (content.channelType as string) ?? null,
+        threadId: (content.threadId as string) ?? null,
+        content: JSON.stringify({ prompt, script }),
+      }),
+    false,
   );
   log.info('Scheduled task created', { taskId, processAfter, recurrence });
 }
@@ -114,7 +139,7 @@ export async function handleCancelTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  withScheduleDb(_session, inDb, (db) => cancelTask(db, taskId));
+  withScheduleDb(_session, inDb, content.ownerAgentGroupId as string | undefined, (db) => cancelTask(db, taskId));
   log.info('Task cancelled', { taskId });
 }
 
@@ -124,7 +149,7 @@ export async function handlePauseTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  withScheduleDb(_session, inDb, (db) => pauseTask(db, taskId));
+  withScheduleDb(_session, inDb, content.ownerAgentGroupId as string | undefined, (db) => pauseTask(db, taskId));
   log.info('Task paused', { taskId });
 }
 
@@ -134,7 +159,7 @@ export async function handleResumeTask(
   inDb: Database.Database,
 ): Promise<void> {
   const taskId = content.taskId as string;
-  withScheduleDb(_session, inDb, (db) => resumeTask(db, taskId));
+  withScheduleDb(_session, inDb, content.ownerAgentGroupId as string | undefined, (db) => resumeTask(db, taskId));
   log.info('Task resumed', { taskId });
 }
 
@@ -153,7 +178,9 @@ export async function handleUpdateTask(
   if (content.script === null || typeof content.script === 'string') {
     update.script = content.script as string | null;
   }
-  const touched = withScheduleDb(session, inDb, (db) => updateTask(db, taskId, update));
+  const touched = withScheduleDb(session, inDb, content.ownerAgentGroupId as string | undefined, (db) =>
+    updateTask(db, taskId, update),
+  );
   log.info('Task updated', { taskId, touched, fields: Object.keys(update) });
   if (touched === 0) {
     // Notify the agent that update_task matched nothing. Replicates the

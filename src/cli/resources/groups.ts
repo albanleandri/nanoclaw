@@ -10,12 +10,16 @@ import {
   updateContainerConfigJson,
 } from '../../db/container-configs.js';
 import type { ContainerConfigRow } from '../../types.js';
+import { getProviderProfile } from '../../db/provider-profiles.js';
+import '../../providers/descriptors/index.js';
+import { requireProviderDescriptor } from '../../providers/provider-descriptor-registry.js';
 import { registerResource } from '../crud.js';
 
 /** Deserialize JSON columns for display. */
 function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
   return {
     agent_group_id: row.agent_group_id,
+    provider_profile_id: row.provider_profile_id ?? null,
     provider: row.provider,
     model: row.model,
     effort: row.effort,
@@ -214,7 +218,7 @@ registerResource({
       access: 'approval',
       description:
         'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
-        'Use --id <group-id> and any of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
+        'Use --id <group-id> and any of: --provider, --provider-profile, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -224,10 +228,33 @@ registerResource({
         const updates: Partial<
           Pick<
             ContainerConfigRow,
-            'provider' | 'model' | 'effort' | 'image_tag' | 'assistant_name' | 'max_messages_per_prompt' | 'cli_scope'
+            | 'provider_profile_id'
+            | 'provider'
+            | 'model'
+            | 'effort'
+            | 'image_tag'
+            | 'assistant_name'
+            | 'max_messages_per_prompt'
+            | 'cli_scope'
           >
         > = {};
-        if (args.provider !== undefined) updates.provider = args.provider as string;
+        const profileArg = (args['provider-profile'] ?? args.provider_profile) as string | undefined;
+        if (args.provider !== undefined && profileArg !== undefined) {
+          throw new Error('--provider and --provider-profile cannot be used together');
+        }
+        if (args.provider !== undefined) {
+          const descriptor = requireProviderDescriptor(args.provider as string);
+          updates.provider = descriptor.runtime.containerProviderName;
+          updates.provider_profile_id = null;
+        }
+        if (profileArg !== undefined) {
+          const profile = getProviderProfile(profileArg);
+          if (!profile) throw new Error(`Provider profile not found: ${profileArg}`);
+          if (profile.enabled !== 1) throw new Error(`Provider profile is disabled: ${profile.name}`);
+          const descriptor = requireProviderDescriptor(profile.provider_name);
+          updates.provider_profile_id = profile.id;
+          updates.provider = descriptor.runtime.containerProviderName;
+        }
         if (args.model !== undefined) updates.model = args.model as string;
         if (args.effort !== undefined) updates.effort = args.effort as string;
         if (args.image_tag !== undefined) updates.image_tag = args.image_tag as string;
@@ -244,7 +271,7 @@ registerResource({
 
         if (Object.keys(updates).length === 0) {
           throw new Error(
-            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
+            'Nothing to update — provide at least one of: --provider, --provider-profile, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
           );
         }
 
@@ -324,8 +351,8 @@ registerResource({
           let parsed: unknown;
           try {
             parsed = JSON.parse(raw);
-          } catch {
-            throw new Error('--shared-resources must be "none" or a JSON array of strings');
+          } catch (error) {
+            throw new Error('--shared-resources must be "none" or a JSON array of strings', { cause: error });
           }
           if (!Array.isArray(parsed) || !parsed.every((r) => typeof r === 'string')) {
             throw new Error('--shared-resources must be "none" or a JSON array of strings');

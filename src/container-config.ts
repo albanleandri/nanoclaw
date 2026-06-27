@@ -15,7 +15,10 @@ import { buildAgentProfile, type AgentProfile } from './agent-profile.js';
 import { GROUPS_DIR } from './config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { collectInstructionSections, type InstructionSection } from './instruction-sections.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
+import type { EffectiveProviderConfig, EffectiveProviderProfile } from './providers/effective-provider.js';
+import type { ProviderCapabilities } from './providers/provider-descriptor.js';
 
 export interface McpServerConfig {
   command: string;
@@ -40,6 +43,11 @@ export interface ContainerConfig {
   sharedResources?: string[];
   cliScope?: 'disabled' | 'group' | 'global';
   provider?: string;
+  providerProfileId?: string;
+  providerProfile?: EffectiveProviderProfile;
+  runtimeStateKey?: string;
+  providerCapabilities?: ProviderCapabilities;
+  requestSystemInstructions?: string;
   groupName?: string;
   assistantName?: string;
   agentGroupId?: string;
@@ -63,6 +71,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     sharedResources: JSON.parse(row.shared_resources) as string[],
     cliScope: row.cli_scope === 'disabled' || row.cli_scope === 'global' ? row.cli_scope : 'group',
     provider: row.provider ?? undefined,
+    providerProfileId: row.provider_profile_id ?? undefined,
     groupName: group.name,
     assistantName: row.assistant_name ?? group.name,
     agentGroupId: group.id,
@@ -77,6 +86,76 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
   // container-config-materialize.test.ts; keep it that way if this changes.
   config.agentProfile = buildAgentProfile(group, config);
   return config;
+}
+
+const REQUEST_SYSTEM_CONTEXT_MAX_BYTES = 64 * 1024;
+
+function instructionContent(projectRoot: string, section: InstructionSection): string {
+  if (section.content) return section.content;
+  if (!section.containerPath) return '';
+  const mappings: Array<[string, string]> = [
+    ['/app/CLAUDE.md', path.join(projectRoot, 'container', 'CLAUDE.md')],
+    ['/app/skills/', path.join(projectRoot, 'container', 'skills') + path.sep],
+    ['/app/src/mcp-tools/', path.join(projectRoot, 'container', 'agent-runner', 'src', 'mcp-tools') + path.sep],
+  ];
+  for (const [containerPrefix, hostPrefix] of mappings) {
+    if (section.containerPath === containerPrefix) {
+      return fs.existsSync(hostPrefix) ? fs.readFileSync(hostPrefix, 'utf8') : '';
+    }
+    if (section.containerPath.startsWith(containerPrefix) && containerPrefix.endsWith('/')) {
+      const hostPath = path.join(hostPrefix, section.containerPath.slice(containerPrefix.length));
+      return fs.existsSync(hostPath) ? fs.readFileSync(hostPath, 'utf8') : '';
+    }
+  }
+  return '';
+}
+
+function buildRequestSystemInstructions(group: AgentGroup, config: ContainerConfig): string {
+  const profile = buildAgentProfile(group, config);
+  const sections = collectInstructionSections({ projectRoot: process.cwd(), profile }).sort(
+    (a, b) => Number(Boolean(b.required)) - Number(Boolean(a.required)),
+  );
+  const chunks = [
+    `# Agent identity\n\nYou are ${profile.assistantName}, agent group ${profile.groupName}.`,
+    ...sections.map((section) => {
+      const content = instructionContent(process.cwd(), section).trim();
+      return content ? `# ${section.title}\n\n${content}` : '';
+    }),
+  ].filter(Boolean);
+  let output = '';
+  for (const chunk of chunks) {
+    const next = output ? `${output}\n\n${chunk}` : chunk;
+    if (Buffer.byteLength(next, 'utf8') > REQUEST_SYSTEM_CONTEXT_MAX_BYTES) break;
+    output = next;
+  }
+  return output;
+}
+
+export function materializeSessionRuntimeJson(
+  sessionDir: string,
+  group: AgentGroup,
+  groupConfig: ContainerConfig,
+  effective: EffectiveProviderConfig,
+): { config: ContainerConfig; path: string } {
+  const config: ContainerConfig = {
+    ...groupConfig,
+    provider: effective.provider,
+    model: effective.model,
+    effort: effective.effort,
+    providerProfile: effective.profile,
+    runtimeStateKey: effective.runtimeStateKey,
+    providerCapabilities: effective.capabilities,
+  };
+  if (effective.profile && effective.profile.protocol !== 'native') {
+    config.requestSystemInstructions = buildRequestSystemInstructions(group, config);
+  }
+  const runtimePath = path.join(sessionDir, 'container.runtime.json');
+  const tempPath = `${runtimePath}.${process.pid}.tmp`;
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(tempPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tempPath, runtimePath);
+  fs.chmodSync(runtimePath, 0o600);
+  return { config, path: runtimePath };
 }
 
 /**

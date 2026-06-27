@@ -18,9 +18,9 @@ function continuationKey(providerName: string): string {
 }
 
 function getValue(key: string): string | undefined {
-  const row = getOutboundDb()
-    .prepare('SELECT value FROM session_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
+  const row = getOutboundDb().prepare('SELECT value FROM session_state WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
   return row?.value;
 }
 
@@ -32,6 +32,25 @@ function setValue(key: string, value: string): void {
 
 function deleteValue(key: string): void {
   getOutboundDb().prepare('DELETE FROM session_state WHERE key = ?').run(key);
+}
+
+export function createProviderStateStore(runtimeStateKey: string): {
+  get(key: string): string | undefined;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+} {
+  const scoped = (key: string) => `provider-state:${runtimeStateKey}:${key}`;
+  return {
+    get: (key) => getValue(scoped(key)),
+    set: (key, value) => setValue(scoped(key), value),
+    delete: (key) => deleteValue(scoped(key)),
+  };
+}
+
+export function clearProviderState(runtimeStateKey: string): void {
+  getOutboundDb()
+    .prepare("DELETE FROM session_state WHERE key LIKE ? ESCAPE '\\'")
+    .run(`provider-state:${runtimeStateKey.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}:%`);
 }
 
 /**
@@ -49,12 +68,13 @@ function deleteValue(key: string): void {
  * current provider's existing value, the adopted legacy value, or
  * undefined).
  */
-export function migrateLegacyContinuation(providerName: string): string | undefined {
+export function migrateLegacyContinuation(providerName: string, adoptLegacy = true): string | undefined {
   const legacy = getValue(LEGACY_KEY);
   const currentKey = continuationKey(providerName);
   const current = getValue(currentKey);
 
   if (legacy === undefined) return current;
+  if (!adoptLegacy) return current;
 
   // Always drop the legacy row so no future provider reads it.
   deleteValue(LEGACY_KEY);

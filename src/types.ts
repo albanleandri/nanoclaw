@@ -13,6 +13,7 @@ export interface AgentGroup {
  *  materialized to `groups/<folder>/container.json` at spawn time. */
 export interface ContainerConfigRow {
   agent_group_id: string;
+  provider_profile_id?: string | null;
   provider: string | null;
   model: string | null;
   effort: string | null;
@@ -126,10 +127,30 @@ export interface Session {
   messaging_group_id: string | null;
   thread_id: string | null;
   agent_provider: string | null;
+  provider_profile_id?: string | null;
   status: 'active' | 'closed';
   container_status: 'running' | 'idle' | 'stopped';
   last_active: string | null;
   created_at: string;
+}
+
+export interface ProviderProfileRow {
+  id: string;
+  name: string;
+  provider_name: string;
+  protocol: string;
+  base_url: string | null;
+  api_family: string | null;
+  tool_strategy: string;
+  default_model: string | null;
+  default_effort: string | null;
+  auth_mode: string;
+  auth_ref: string | null;
+  capability_overrides: string;
+  allow_insecure_http: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── Session DB entities ──

@@ -50,6 +50,25 @@ export interface ProviderOptions {
    * through to the underlying SDK. If omitted, the SDK default is used.
    */
   effort?: string;
+  runtimeStateKey?: string;
+  providerProfile?: {
+    id: string;
+    name: string;
+    protocol: string;
+    baseUrl?: string;
+    apiFamily?: 'responses' | 'chat-completions';
+    toolStrategy: 'none';
+    authMode: string;
+    authRef?: string;
+  };
+  stateStore?: ProviderStateStore;
+  httpFetch?: typeof fetch;
+}
+
+export interface ProviderStateStore {
+  get(key: string): string | undefined;
+  set(key: string, value: string): void;
+  delete(key: string): void;
 }
 
 export interface QueryInput {

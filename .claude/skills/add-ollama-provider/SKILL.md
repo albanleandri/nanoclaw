@@ -5,6 +5,8 @@ description: Route a NanoClaw agent group to a local Ollama model instead of the
 
 # Add Ollama Provider
 
+Prefer a DB-backed `openai-compatible` provider profile when the installed Ollama version exposes that protocol. Profile creation is data-only and keeps endpoint, model, auth, and capability facts explicit; it must not copy a brand-specific TypeScript provider. Use the Claude-compatible override path below only when compatibility with the existing Claude runtime has been verified for the required tools and continuation behavior.
+
 Routes an agent group to a local Ollama instance instead of the Anthropic API.
 See `docs/ollama.md` for how this works and the tradeoffs involved.
 

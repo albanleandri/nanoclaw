@@ -4,7 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { GROUPS_DIR } from './config.js';
-import { materializeContainerJson } from './container-config.js';
+import { materializeContainerJson, materializeSessionRuntimeJson } from './container-config.js';
 import { closeDb, createAgentGroup, createContainerConfig, initTestDb, runMigrations } from './db/index.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 
@@ -99,5 +99,26 @@ describe('materializeContainerJson agent profile', () => {
     expect(profile?.tools.mcpServers).toEqual(config.mcpServers);
     expect(profile?.tools.cliScope).toBe(config.cliScope);
     expect(profile?.resources.sharedResources).toEqual(config.sharedResources);
+  });
+
+  it('writes a restrictive session-specific runtime config without changing the group snapshot', () => {
+    createContainerConfig(configRow());
+    const groupConfig = materializeContainerJson(group.id);
+    const sessionDir = path.join(GROUPS_DIR, group.folder, '.test-session');
+    const runtime = materializeSessionRuntimeJson(sessionDir, group, groupConfig, {
+      provider: 'claude',
+      model: 'session-effective-model',
+      effort: 'high',
+      runtimeStateKey: 'profile:p1:abc',
+    });
+    const written = JSON.parse(fs.readFileSync(runtime.path, 'utf8')) as typeof runtime.config;
+    const groupSnapshot = JSON.parse(
+      fs.readFileSync(path.join(GROUPS_DIR, group.folder, 'container.json'), 'utf8'),
+    ) as typeof runtime.config;
+
+    expect(written.model).toBe('session-effective-model');
+    expect(written.runtimeStateKey).toBe('profile:p1:abc');
+    expect(groupSnapshot.model).toBe('gpt-5-codex');
+    expect(fs.statSync(runtime.path).mode & 0o777).toBe(0o600);
   });
 });

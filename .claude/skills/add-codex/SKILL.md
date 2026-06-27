@@ -5,9 +5,9 @@ description: Use Codex (OpenAI's codex app-server) as a full agent provider — 
 
 # Codex agent provider
 
-> Local note: this checkout already has the Codex provider payload wired. `pnpm exec tsx setup/index.ts --step provider-auth codex` is the local auth helper; it enables ChatGPT host-file auth or creates/checks the OneCLI Codex API-key secret. The install steps below remain the provider-branch recipe for a checkout where Codex is not already wired.
+> Local note: this checkout already has the Codex provider payload and descriptor wired. `pnpm exec tsx setup/index.ts --step provider-auth codex` is the local auth helper; it enables ChatGPT host-file auth or creates/checks the OneCLI Codex API-key secret. The install steps below remain the provider-branch recipe for a checkout where Codex is not already wired.
 
-NanoClaw selects each group's agent backend from `container_configs.provider` (default `claude`). This skill installs the Codex provider: copy the payload from the `providers` branch, append one import to each of the three provider barrels, add the pinned Codex CLI to the container manifest (`container/cli-tools.json`), rebuild, then run the vault auth walk-through.
+NanoClaw resolves a provider profile first, then the legacy session/group provider fields, then `claude`. This skill installs the Codex provider: copy the payload from the `providers` branch, register its descriptor plus host/container modules, add the pinned Codex CLI to `container/cli-tools.json`, rebuild, then run the vault auth walk-through.
 
 The provider runs `codex app-server` as a child process speaking JSON-RPC over stdio: native streaming, MCP tools, server-side conversation history (the continuation is a thread id, no on-disk transcript). Credentials are explicit per auth mode: API-key auth stays in OneCLI; ChatGPT subscription auth is enabled with `CODEX_CHATGPT_AUTH=host-file`, which copies the host `~/.codex/auth.json` into the Codex group private state. No `OPENAI_API_KEY` is passed through `.env` or the Codex process environment.
 
@@ -62,6 +62,7 @@ Shared base (skip if present):
 Append `import './codex.js';` to each of:
 
 - `src/providers/index.ts`
+- `src/providers/descriptors/index.ts`
 - `container/agent-runner/src/providers/index.ts`
 
 ### CLI manifest

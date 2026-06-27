@@ -33,7 +33,8 @@
     "container:build": "bash scripts/build-agent-image.sh",
     "service:restart": "bash scripts/service-restart.sh",
     "service:status": "bash scripts/service-status.sh",
-    "backup": "bash scripts/backup.sh"
+    "backup": "bash scripts/backup.sh",
+    "audit:model-neutral": "tsx scripts/model-neutral-audit.ts"
   },
   "dependencies": {
     "@chat-adapter/telegram": "4.27.0",

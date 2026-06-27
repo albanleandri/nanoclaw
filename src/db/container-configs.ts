@@ -2,6 +2,7 @@ import type { ContainerConfigRow } from '../types.js';
 import { getDb } from './connection.js';
 
 const SCALAR_COLUMNS = new Set([
+  'provider_profile_id',
   'provider',
   'model',
   'effort',
@@ -34,16 +35,16 @@ export function createContainerConfig(config: ContainerConfigRow): void {
   getDb()
     .prepare(
       `INSERT INTO container_configs (
-        agent_group_id, provider, model, effort, image_tag, assistant_name,
+        agent_group_id, provider_profile_id, provider, model, effort, image_tag, assistant_name,
         max_messages_per_prompt, skills, mcp_servers, packages_apt, packages_npm,
         additional_mounts, cli_scope, shared_resources, updated_at
       ) VALUES (
-        @agent_group_id, @provider, @model, @effort, @image_tag, @assistant_name,
+        @agent_group_id, @provider_profile_id, @provider, @model, @effort, @image_tag, @assistant_name,
         @max_messages_per_prompt, @skills, @mcp_servers, @packages_apt, @packages_npm,
         @additional_mounts, @cli_scope, @shared_resources, @updated_at
       )`,
     )
-    .run(config);
+    .run({ provider_profile_id: null, ...config });
 }
 
 /** Create an empty config row with sensible defaults. Idempotent — no-ops if row exists. */
@@ -62,7 +63,14 @@ export function updateContainerConfigScalars(
   updates: Partial<
     Pick<
       ContainerConfigRow,
-      'provider' | 'model' | 'effort' | 'image_tag' | 'assistant_name' | 'max_messages_per_prompt' | 'cli_scope'
+      | 'provider_profile_id'
+      | 'provider'
+      | 'model'
+      | 'effort'
+      | 'image_tag'
+      | 'assistant_name'
+      | 'max_messages_per_prompt'
+      | 'cli_scope'
     >
   >,
 ): void {

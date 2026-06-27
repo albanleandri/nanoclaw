@@ -193,7 +193,9 @@ We don't want configuration sprawl. NanoClaw has DB-backed runtime config for pr
 
 **Can I use third-party or open-source models?**
 
-Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and optional providers such as OpenCode (`/add-opencode`) or Ollama (`/add-ollama-provider`) can be installed through provider skills.
+Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and OpenAI-compatible text endpoints can be configured as DB-backed provider profiles without copying brand-specific runtime code. Use `ncl providers list` to inspect installed descriptors and see [docs/providers.md](docs/providers.md) for profile creation, capability limits, and native-provider installation.
+
+Optional native providers such as OpenCode (`/add-opencode`) are installed through provider skills. Local runtimes such as Ollama should use an OpenAI-compatible profile when they expose that protocol; otherwise they need a small native adapter.
 
 For one-off Claude-compatible endpoint experiments, `.env` can override the Anthropic endpoint:
 

@@ -27,6 +27,10 @@ At spawn time the host derives a provider-neutral `agentProfile` from the agent 
 
 Provider selection is separate from identity. The session can override the provider, otherwise `container_configs.provider` is used, otherwise NanoClaw defaults to Claude. Model and effort are provider settings, not agent identity.
 
+Provider descriptors are installed code metadata. Provider profiles are local DB-backed instances that add endpoint, model, auth-reference, and capability settings. Profile resolution precedes the legacy provider fields: session profile, group profile, session provider, group provider, then Claude.
+
+The group workspace keeps an operator snapshot at `groups/<folder>/container.json`. At spawn, the host resolves the effective provider and writes a restrictive per-session `container.runtime.json`, mounted read-only at `/workspace/agent/container.json`. This prevents two sessions sharing one group workspace from racing when they select different providers or profiles.
+
 Provider-native instruction files are generated compatibility artifacts:
 
 - `CLAUDE.md` for Claude-compatible runners

@@ -5,4 +5,5 @@
 //
 // Skills add a new provider by appending one import line below.
 
+import './descriptors/index.js';
 import './codex.js';

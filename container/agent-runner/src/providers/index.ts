@@ -5,3 +5,4 @@
 import './claude.js';
 import './mock.js';
 import './codex.js';
+import './openai-compatible.js';

@@ -3,8 +3,8 @@ import fs from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { TEST_DIR } = vi.hoisted(() => ({ TEST_DIR: '/tmp/nanoclaw-scheduling-actions-test' }));
-const PINOVA_AGENT_GROUP_ID = 'ag-1778748709932-a8wsn1';
-const PINOVA_CODEX_AGENT_GROUP_ID = 'b3b36ece-a953-42f9-af6c-da0f901c27d6';
+const OWNER_AGENT_GROUP_ID = 'ag-owner-test';
+const ADMIN_AGENT_GROUP_ID = 'ag-admin-test';
 
 vi.mock('../../config.js', async () => {
   const actual = await vi.importActual('../../config.js');
@@ -15,7 +15,14 @@ vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { createAgentGroup, createSession, closeDb, initTestDb, runMigrations } from '../../db/index.js';
+import {
+  createAgentGroup,
+  createSession,
+  closeDb,
+  grantScheduleAdmin,
+  initTestDb,
+  runMigrations,
+} from '../../db/index.js';
 import { initSessionFolder, openInboundDb } from '../../session-manager.js';
 import type { Session } from '../../types.js';
 import { insertTask, listLiveTasks } from './db.js';
@@ -51,7 +58,7 @@ function seedSession(session: Session): void {
 
 describe('scheduling delivery actions shared owner routing', () => {
   let ownerSession: Session;
-  let codexSession: Session;
+  let adminSession: Session;
 
   beforeEach(() => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
@@ -60,13 +67,14 @@ describe('scheduling delivery actions shared owner routing', () => {
     const db = initTestDb();
     runMigrations(db);
 
-    seedGroup(PINOVA_AGENT_GROUP_ID, 'telegram_main');
-    seedGroup(PINOVA_CODEX_AGENT_GROUP_ID, 'main-codex');
+    seedGroup(OWNER_AGENT_GROUP_ID, 'owner-group');
+    seedGroup(ADMIN_AGENT_GROUP_ID, 'admin-group');
+    grantScheduleAdmin(ADMIN_AGENT_GROUP_ID, OWNER_AGENT_GROUP_ID, 'test');
 
-    ownerSession = makeSession(PINOVA_AGENT_GROUP_ID, 'owner-session', '2026-06-19T08:00:00.000Z');
-    codexSession = makeSession(PINOVA_CODEX_AGENT_GROUP_ID, 'codex-session', '2026-06-19T09:00:00.000Z');
+    ownerSession = makeSession(OWNER_AGENT_GROUP_ID, 'owner-session', '2026-06-19T08:00:00.000Z');
+    adminSession = makeSession(ADMIN_AGENT_GROUP_ID, 'admin-session', '2026-06-19T09:00:00.000Z');
     seedSession(ownerSession);
-    seedSession(codexSession);
+    seedSession(adminSession);
 
     const ownerDb = openInboundDb(ownerSession.agent_group_id, ownerSession.id);
     try {
@@ -74,7 +82,7 @@ describe('scheduling delivery actions shared owner routing', () => {
         id: 'task-shared-1',
         processAfter: '2026-06-20T07:30:00.000Z',
         recurrence: '0 7 * * *',
-        platformId: 'telegram:pinova',
+        platformId: 'telegram:owner-test',
         channelType: 'telegram',
         threadId: null,
         content: JSON.stringify({ prompt: 'Shared schedule task', script: null }),
@@ -89,10 +97,10 @@ describe('scheduling delivery actions shared owner routing', () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it('lists Claude-owned live tasks when called from the Codex group', async () => {
-    const codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+  it('lists owner-group live tasks when called from the admin group', async () => {
+    const codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
-      await handleListTasks({ requestId: 'req-list-1' }, codexSession, codexDb);
+      await handleListTasks({ requestId: 'req-list-1' }, adminSession, codexDb);
 
       const responses = codexDb
         .prepare("SELECT kind, trigger, content FROM messages_in WHERE kind = 'system' ORDER BY seq ASC")
@@ -117,10 +125,10 @@ describe('scheduling delivery actions shared owner routing', () => {
     }
   });
 
-  it('mutates the Claude-owned task rather than the Codex session DB', async () => {
-    const codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+  it('mutates the owner-group task rather than the admin session DB', async () => {
+    const codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
-      await handlePauseTask({ taskId: 'task-shared-1' }, codexSession, codexDb);
+      await handlePauseTask({ taskId: 'task-shared-1' }, adminSession, codexDb);
       expect(listLiveTasks(codexDb, 'paused')).toEqual([]);
     } finally {
       codexDb.close();
@@ -136,8 +144,8 @@ describe('scheduling delivery actions shared owner routing', () => {
     }
   });
 
-  it('updates the Claude-owned task content and timing from the Codex group', async () => {
-    const codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+  it('updates the owner-group task content and timing from the admin group', async () => {
+    const codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
       await handleUpdateTask(
         {
@@ -147,7 +155,7 @@ describe('scheduling delivery actions shared owner routing', () => {
           processAfter: '2026-06-21T06:15:00.000Z',
           recurrence: null,
         },
-        codexSession,
+        adminSession,
         codexDb,
       );
       expect(listLiveTasks(codexDb)).toEqual([]);
@@ -170,17 +178,17 @@ describe('scheduling delivery actions shared owner routing', () => {
     }
   });
 
-  it('resumes and cancels Claude-owned tasks from the Codex group', async () => {
-    let codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+  it('resumes and cancels owner-group tasks from the admin group', async () => {
+    let codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
-      await handlePauseTask({ taskId: 'task-shared-1' }, codexSession, codexDb);
-      await handleResumeTask({ taskId: 'task-shared-1' }, codexSession, codexDb);
-      await handleCancelTask({ taskId: 'task-shared-1' }, codexSession, codexDb);
+      await handlePauseTask({ taskId: 'task-shared-1' }, adminSession, codexDb);
+      await handleResumeTask({ taskId: 'task-shared-1' }, adminSession, codexDb);
+      await handleCancelTask({ taskId: 'task-shared-1' }, adminSession, codexDb);
     } finally {
       codexDb.close();
     }
 
-    codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+    codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
       expect(listLiveTasks(codexDb)).toEqual([]);
     } finally {
@@ -199,10 +207,10 @@ describe('scheduling delivery actions shared owner routing', () => {
     }
   });
 
-  it('notifies and wakes the Codex session when update_task matches no live task', async () => {
-    const codexDb = openInboundDb(codexSession.agent_group_id, codexSession.id);
+  it('notifies and wakes the admin session when update_task matches no live task', async () => {
+    const codexDb = openInboundDb(adminSession.agent_group_id, adminSession.id);
     try {
-      await handleUpdateTask({ taskId: 'missing-task', prompt: 'No match' }, codexSession, codexDb);
+      await handleUpdateTask({ taskId: 'missing-task', prompt: 'No match' }, adminSession, codexDb);
 
       const notice = codexDb
         .prepare("SELECT kind, content FROM messages_in WHERE kind = 'chat' ORDER BY seq ASC")
@@ -216,6 +224,6 @@ describe('scheduling delivery actions shared owner routing', () => {
       codexDb.close();
     }
 
-    expect(wakeContainer).toHaveBeenCalledWith(expect.objectContaining({ id: codexSession.id }));
+    expect(wakeContainer).toHaveBeenCalledWith(expect.objectContaining({ id: adminSession.id }));
   });
 });

@@ -13,6 +13,8 @@
  *   'flag'     — CLI flag + env var only (debug/internal knobs)
  *   'flag+ui'  — also shown in the advanced-settings screen
  */
+import '../../src/providers/descriptors/index.js';
+import { listProviderDescriptors } from '../../src/providers/provider-descriptor-registry.js';
 
 export type EntrySurface = 'flag' | 'flag+ui';
 
@@ -59,10 +61,34 @@ interface IntEntry extends BaseEntry {
 
 export type Entry = StringEntry | EnumEntry | BoolEntry | IntEntry;
 
-const httpUrl = (v: string): string | undefined =>
-  /^https?:\/\/\S+/.test(v) ? undefined : 'Must be http(s)://…';
+const httpUrl = (v: string): string | undefined => (/^https?:\/\/\S+/.test(v) ? undefined : 'Must be http(s)://…');
 
 export const CONFIG: Entry[] = [
+  {
+    key: 'agentProvider',
+    label: 'Initial runtime provider',
+    help: 'Provider descriptor name for the first agent group. Claude remains the default.',
+    surface: 'flag+ui',
+    group: 'Agent runtime',
+    type: 'enum',
+    default: 'claude',
+    options: listProviderDescriptors()
+      .filter((descriptor) => descriptor.setup?.selectable === true)
+      .map((descriptor) => ({
+        value: descriptor.name,
+        label: descriptor.displayName,
+        ...(descriptor.name === 'claude' ? { hint: 'default' } : {}),
+      })),
+  },
+  {
+    key: 'providerProfile',
+    label: 'Provider profile',
+    help: 'Existing provider profile ID or name to assign to the first agent group.',
+    surface: 'flag+ui',
+    group: 'Agent runtime',
+    type: 'string',
+    placeholder: 'e.g. Local models',
+  },
   {
     key: 'onecliApiHost',
     label: 'OneCLI vault URL',

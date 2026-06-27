@@ -6,10 +6,10 @@ import { getDb, hasTable } from './connection.js';
 export function createSession(session: Session): void {
   getDb()
     .prepare(
-      `INSERT INTO sessions (id, agent_group_id, messaging_group_id, thread_id, agent_provider, status, container_status, last_active, created_at)
-       VALUES (@id, @agent_group_id, @messaging_group_id, @thread_id, @agent_provider, @status, @container_status, @last_active, @created_at)`,
+      `INSERT INTO sessions (id, agent_group_id, messaging_group_id, thread_id, agent_provider, provider_profile_id, status, container_status, last_active, created_at)
+       VALUES (@id, @agent_group_id, @messaging_group_id, @thread_id, @agent_provider, @provider_profile_id, @status, @container_status, @last_active, @created_at)`,
     )
-    .run(session);
+    .run({ provider_profile_id: null, ...session });
 }
 
 export function getSession(id: string): Session | undefined {
@@ -73,7 +73,9 @@ export function getRunningSessions(): Session[] {
 
 export function updateSession(
   id: string,
-  updates: Partial<Pick<Session, 'status' | 'container_status' | 'last_active' | 'agent_provider'>>,
+  updates: Partial<
+    Pick<Session, 'status' | 'container_status' | 'last_active' | 'agent_provider' | 'provider_profile_id'>
+  >,
 ): void {
   const fields: string[] = [];
   const values: Record<string, unknown> = { id };

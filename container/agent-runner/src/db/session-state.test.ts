@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { getOutboundDb, initTestSessionDb } from './connection.js';
 import {
+  clearProviderState,
+  createProviderStateStore,
   clearContinuation,
   getContinuation,
   migrateLegacyContinuation,
@@ -46,6 +48,18 @@ describe('session-state — per-provider continuations', () => {
 
   test('unknown provider returns undefined', () => {
     expect(getContinuation('never-used')).toBeUndefined();
+  });
+});
+
+describe('session-state — profile provider data', () => {
+  test('scopes state and clears only the selected runtime identity', () => {
+    const first = createProviderStateStore('profile:first');
+    const second = createProviderStateStore('profile:second');
+    first.set('transcript', 'one');
+    second.set('transcript', 'two');
+    clearProviderState('profile:first');
+    expect(first.get('transcript')).toBeUndefined();
+    expect(second.get('transcript')).toBe('two');
   });
 });
 

@@ -2,7 +2,12 @@ import { findByName, getAllDestinations, type DestinationEntry } from './destina
 import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
-import { clearContinuation, migrateLegacyContinuation, setContinuation } from './db/session-state.js';
+import {
+  clearContinuation,
+  clearProviderState,
+  migrateLegacyContinuation,
+  setContinuation,
+} from './db/session-state.js';
 import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import {
   formatMessages,
@@ -59,6 +64,8 @@ export interface PollLoopConfig {
    * resurrect a stale id from a different backend.
    */
   providerName: string;
+  /** Profile-scoped continuation key. Defaults to providerName for legacy config. */
+  providerStateKey?: string;
   cwd: string;
   systemContext?: {
     instructions?: string;
@@ -82,7 +89,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
   // provider decides how to use it (Claude resumes a .jsonl transcript,
   // other providers may reload a thread ID, etc.). Keyed per-provider so
   // a Codex thread id never gets handed to Claude or vice versa.
-  let continuation: string | undefined = migrateLegacyContinuation(config.providerName);
+  const providerStateKey = config.providerStateKey ?? config.providerName;
+  let continuation: string | undefined = migrateLegacyContinuation(
+    providerStateKey,
+    providerStateKey === config.providerName,
+  );
 
   // Before resuming, drop a session whose on-disk transcript has grown too
   // large/old to cold-resume within the host's idle ceiling. Without this a
@@ -92,7 +103,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     const rotateReason = config.provider.maybeRotateContinuation?.(continuation, config.cwd);
     if (rotateReason) {
       log(`Rotating session — ${rotateReason}; starting fresh`);
-      clearContinuation(config.providerName);
+      clearContinuation(providerStateKey);
       continuation = undefined;
     }
   }
@@ -151,7 +162,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       if ((msg.kind === 'chat' || msg.kind === 'chat-sdk') && isClearCommand(msg)) {
         log('Clearing session (resetting continuation)');
         continuation = undefined;
-        clearContinuation(config.providerName);
+        clearContinuation(providerStateKey);
+        clearProviderState(providerStateKey);
         writeMessageOut({
           id: generateId(),
           kind: 'chat',
@@ -220,12 +232,12 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
     try {
-      const result = await processQuery(query, routing, processingIds, config.providerName, {
+      const result = await processQuery(query, routing, processingIds, providerStateKey, {
         stopSignal: config.stopSignal,
       });
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
-        setContinuation(config.providerName, continuation);
+        setContinuation(providerStateKey, continuation);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -237,7 +249,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       if (continuation && config.provider.isSessionInvalid(err)) {
         log(`Stale session detected (${continuation}) — clearing for next retry`);
         continuation = undefined;
-        clearContinuation(config.providerName);
+        clearContinuation(providerStateKey);
       }
 
       // Write error response so the user knows something went wrong
@@ -484,6 +496,19 @@ export async function processQuery(
         // user instead of finishing silently.
         completeMessages(initialBatchIds);
         writeAuthErrorNotification(routing);
+        break;
+      } else if (event.type === 'error' && !event.retryable) {
+        completeMessages(initialBatchIds);
+        writeMessageOut({
+          id: generateId(),
+          kind: 'chat',
+          platform_id: routing.platformId,
+          channel_type: routing.channelType,
+          thread_id: routing.threadId,
+          content: JSON.stringify({
+            text: `⚠️ Provider error${event.classification ? ` (${event.classification})` : ''}: ${event.message}`,
+          }),
+        });
         break;
       } else if (event.type === 'result') {
         // A result — with or without text — means the turn is done. Mark

@@ -33,6 +33,23 @@ export interface ProviderContainerContext {
   selectedSkills: string[] | 'all';
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
+  /** Effective non-secret provider profile/runtime settings for this session. */
+  effectiveProvider?: {
+    provider: string;
+    model?: string;
+    effort?: string;
+    runtimeStateKey: string;
+    profile?: {
+      id: string;
+      name: string;
+      protocol: string;
+      baseUrl?: string;
+      apiFamily?: string;
+      toolStrategy: string;
+      authMode: string;
+      authRef?: string;
+    };
+  };
 }
 
 export interface ProviderContainerContribution {

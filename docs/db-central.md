@@ -100,6 +100,7 @@ CREATE INDEX idx_user_roles_scope ON user_roles(agent_group_id, role);
 ```
 
 Invariants:
+
 - `role = 'owner'` → must be global (`agent_group_id IS NULL`). Enforced in `grantRole()`.
 - `role = 'admin'` → global (NULL) or scoped to one agent group.
 - Admin @ A implies membership in A — no `agent_group_members` row required.
@@ -147,6 +148,7 @@ CREATE TABLE sessions (
   messaging_group_id TEXT REFERENCES messaging_groups(id),
   thread_id          TEXT,
   agent_provider     TEXT,
+  provider_profile_id TEXT REFERENCES provider_profiles(id) ON DELETE SET NULL,
   status             TEXT DEFAULT 'active',
   container_status   TEXT DEFAULT 'stopped',
   last_active        TEXT,
@@ -179,7 +181,7 @@ CREATE TABLE pending_questions (
 
 ### 1.10 `agent_destinations`
 
-Permission ACL *and* name-resolution map for outbound sending. An agent asking to `send_message(to="dev-channel")` must have a row here with `local_name = 'dev-channel'`, or the send is rejected as `unknown destination`.
+Permission ACL _and_ name-resolution map for outbound sending. An agent asking to `send_message(to="dev-channel")` must have a row here with `local_name = 'dev-channel'`, or the send is rejected as `unknown destination`.
 
 ```sql
 CREATE TABLE agent_destinations (
@@ -301,6 +303,7 @@ Per-agent-group container runtime config. Source of truth for provider, model, p
 ```sql
 CREATE TABLE container_configs (
   agent_group_id         TEXT PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+  provider_profile_id    TEXT REFERENCES provider_profiles(id) ON DELETE SET NULL,
   provider               TEXT,
   model                  TEXT,
   effort                 TEXT,
@@ -318,8 +321,36 @@ CREATE TABLE container_configs (
 );
 ```
 
-- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`, `src/providers/codex-agents-md.ts`
-- **Writers:** `src/db/container-configs.ts`, `src/modules/self-mod/apply.ts`, `src/backfill-container-configs.ts`
+`provider_profile_id` is nullable and references `provider_profiles`. It takes precedence over the legacy `provider` string when the host resolves a session runtime.
+
+- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts`, provider-native composers
+- **Writers:** `src/db/container-configs.ts`, setup/CLI, self-mod, backfill
+
+### 1.16 `provider_profiles`
+
+Local instances of installed provider descriptors. They contain endpoint/model selectors and a OneCLI secret reference, never a raw credential. See [providers.md](providers.md).
+
+Key columns are `provider_name`, `protocol`, `base_url`, `api_family`, `tool_strategy`, `default_model`, `auth_mode`, `auth_ref`, `capability_overrides`, and `enabled`.
+
+- **Readers/writers:** `src/db/provider-profiles.ts`, provider CLI/setup, `src/providers/effective-provider.ts`
+
+### 1.17 `schedule_admin_grants`
+
+Authorizes one agent group to administer task rows that remain owned by another group's session DB:
+
+```sql
+CREATE TABLE schedule_admin_grants (
+  admin_agent_group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+  owner_agent_group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  PRIMARY KEY (admin_agent_group_id, owner_agent_group_id)
+);
+```
+
+Recurring task rows are never duplicated into the administrator's session.
+
+- **Readers/writers:** `src/db/schedule-admin-grants.ts`, scheduling actions, CLI
 
 ---
 
@@ -331,17 +362,19 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 2. Reads `MAX(version)` — call it `current`.
 3. For each migration with `version > current`, executes `up(db)` inside a transaction and appends a `schema_version` row.
 
-| # | File | Introduces |
-|---|------|------------|
-| 001 | `001-initial.ts` | Core tables: `agent_groups`, `messaging_groups`, `messaging_group_agents`, `users`, `user_roles`, `agent_group_members`, `user_dms`, `sessions`, `pending_questions` |
-| 002 | `002-chat-sdk-state.ts` | `chat_sdk_kv`, `chat_sdk_subscriptions`, `chat_sdk_locks`, `chat_sdk_lists` |
-| 003 | `003-pending-approvals.ts` | `pending_approvals` (session-bound + OneCLI fields) |
-| 004 | `004-agent-destinations.ts` | `agent_destinations` + backfill from existing `messaging_group_agents` wirings |
-| 007 | `007-pending-approvals-title-options.ts` | `ALTER TABLE pending_approvals` add `title`, `options_json` (retrofits DBs created between 003 and 007) |
-| 008 | `008-dropped-messages.ts` | `unregistered_senders` |
-| 009 | `009-drop-pending-credentials.ts` | Drop the defunct `pending_credentials` table |
-| 014 | `014-container-configs.ts` | `container_configs` — per-agent-group container runtime config |
-| 015 | `015-cli-scope.ts` | `ALTER TABLE container_configs ADD COLUMN cli_scope` |
+| #   | File                                     | Introduces                                                                                                                                                           |
+| --- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 001 | `001-initial.ts`                         | Core tables: `agent_groups`, `messaging_groups`, `messaging_group_agents`, `users`, `user_roles`, `agent_group_members`, `user_dms`, `sessions`, `pending_questions` |
+| 002 | `002-chat-sdk-state.ts`                  | `chat_sdk_kv`, `chat_sdk_subscriptions`, `chat_sdk_locks`, `chat_sdk_lists`                                                                                          |
+| 003 | `003-pending-approvals.ts`               | `pending_approvals` (session-bound + OneCLI fields)                                                                                                                  |
+| 004 | `004-agent-destinations.ts`              | `agent_destinations` + backfill from existing `messaging_group_agents` wirings                                                                                       |
+| 007 | `007-pending-approvals-title-options.ts` | `ALTER TABLE pending_approvals` add `title`, `options_json` (retrofits DBs created between 003 and 007)                                                              |
+| 008 | `008-dropped-messages.ts`                | `unregistered_senders`                                                                                                                                               |
+| 009 | `009-drop-pending-credentials.ts`        | Drop the defunct `pending_credentials` table                                                                                                                         |
+| 014 | `014-container-configs.ts`               | `container_configs` — per-agent-group container runtime config                                                                                                       |
+| 015 | `015-cli-scope.ts`                       | `ALTER TABLE container_configs ADD COLUMN cli_scope`                                                                                                                 |
+| 019 | `019-provider-profiles.ts`               | Provider profiles plus nullable group/session profile references                                                                                                     |
+| 020 | `020-schedule-admin-grants.ts`           | Generic schedule owner/admin grants                                                                                                                                  |
 
 Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
 

@@ -48,6 +48,9 @@ import { addMember } from '../src/modules/permissions/db/agent-group-members.js'
 import { getUserRoles, grantRole } from '../src/modules/permissions/db/user-roles.js';
 import { upsertUser } from '../src/modules/permissions/db/users.js';
 import { updateContainerConfigScalars } from '../src/db/container-configs.js';
+import { getProviderProfile } from '../src/db/provider-profiles.js';
+import '../src/providers/descriptors/index.js';
+import { requireProviderDescriptor } from '../src/providers/provider-descriptor-registry.js';
 import { initGroupFilesystem } from '../src/group-init.js';
 import { namespacedPlatformId } from '../src/platform-id.js';
 import type { AgentGroup, MessagingGroup } from '../src/types.js';
@@ -62,15 +65,19 @@ interface Args {
   agentName: string;
   welcome: string;
   role: Role;
+  provider?: string;
+  providerProfile?: string;
 }
 
-const DEFAULT_WELCOME =
-  'System instruction: run /welcome to introduce yourself to the user on this new channel.';
+const DEFAULT_WELCOME = 'System instruction: run /welcome to introduce yourself to the user on this new channel.';
 
 const DEFAULT_ROLE: Role = 'owner';
 
 function parseArgs(argv: string[]): Args {
-  const out: Partial<Args> = {};
+  const out: Partial<Args> = {
+    provider: process.env.NANOCLAW_AGENT_PROVIDER,
+    providerProfile: process.env.NANOCLAW_PROVIDER_PROFILE,
+  };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     const val = argv[i + 1];
@@ -102,15 +109,21 @@ function parseArgs(argv: string[]): Args {
       case '--role': {
         const raw = (val ?? '').toLowerCase();
         if (raw !== 'owner' && raw !== 'admin' && raw !== 'member') {
-          console.error(
-            `Invalid --role: ${raw} (expected 'owner', 'admin', or 'member')`,
-          );
+          console.error(`Invalid --role: ${raw} (expected 'owner', 'admin', or 'member')`);
           process.exit(2);
         }
         out.role = raw;
         i++;
         break;
       }
+      case '--provider':
+        out.provider = val;
+        i++;
+        break;
+      case '--provider-profile':
+        out.providerProfile = val;
+        i++;
+        break;
     }
   }
 
@@ -172,6 +185,29 @@ async function main(): Promise<void> {
 
   const db = initDb(path.join(DATA_DIR, 'v2.db'));
   runMigrations(db); // idempotent
+  if (args.provider && args.providerProfile) {
+    throw new Error('--provider and --provider-profile cannot be used together');
+  }
+  let providerSelection: { provider_profile_id: string | null; provider: string } | undefined;
+  if (args.providerProfile) {
+    const profile = getProviderProfile(args.providerProfile);
+    if (!profile || profile.enabled !== 1)
+      throw new Error(`Usable provider profile not found: ${args.providerProfile}`);
+    const descriptor = requireProviderDescriptor(profile.provider_name);
+    providerSelection = {
+      provider_profile_id: profile.id,
+      provider: descriptor.runtime.containerProviderName,
+    };
+  } else if (args.provider) {
+    const descriptor = requireProviderDescriptor(args.provider);
+    if (descriptor.protocol !== 'native') {
+      throw new Error(`Provider ${descriptor.name} requires --provider-profile`);
+    }
+    providerSelection = {
+      provider_profile_id: null,
+      provider: descriptor.runtime.containerProviderName,
+    };
+  }
 
   const now = new Date().toISOString();
 
@@ -210,6 +246,7 @@ async function main(): Promise<void> {
       `You are ${args.agentName}, a personal NanoClaw agent for ${args.displayName}. ` +
       'When the user first reaches out (or you receive a system welcome prompt), introduce yourself briefly and invite them to chat. Keep replies concise.',
   });
+  if (providerSelection) updateContainerConfigScalars(ag.id, providerSelection);
 
   // 2b. Assign the user a role for this agent group. The caller picks via
   // --role; the channel drivers default to 'owner' for the self-host case.
@@ -220,9 +257,7 @@ async function main(): Promise<void> {
   // getUserRoles prevents duplicates on re-runs.
   const existingRoles = getUserRoles(userId);
   if (args.role === 'owner') {
-    const alreadyOwner = existingRoles.some(
-      (r) => r.role === 'owner' && r.agent_group_id === null,
-    );
+    const alreadyOwner = existingRoles.some((r) => r.role === 'owner' && r.agent_group_id === null);
     if (!alreadyOwner) {
       grantRole({
         user_id: userId,
@@ -235,9 +270,7 @@ async function main(): Promise<void> {
     // Owner's agent group gets global CLI access
     updateContainerConfigScalars(ag.id, { cli_scope: 'global' });
   } else if (args.role === 'admin') {
-    const alreadyAdmin = existingRoles.some(
-      (r) => r.role === 'admin' && r.agent_group_id === ag.id,
-    );
+    const alreadyAdmin = existingRoles.some((r) => r.role === 'admin' && r.agent_group_id === ag.id);
     if (!alreadyAdmin) {
       grantRole({
         user_id: userId,
@@ -293,11 +326,7 @@ async function main(): Promise<void> {
   });
 
   const roleLabel =
-    args.role === 'owner'
-      ? 'owner (global)'
-      : args.role === 'admin'
-        ? `admin (scoped to ${ag.id})`
-        : 'member';
+    args.role === 'owner' ? 'owner (global)' : args.role === 'admin' ? `admin (scoped to ${ag.id})` : 'member';
 
   console.log('');
   console.log('Init complete.');
@@ -342,11 +371,7 @@ async function sendWelcomeViaCliSocket(
     };
 
     socket.once('error', (err) =>
-      settle(
-        new Error(
-          `CLI socket at ${sockPath} not reachable: ${err.message}. Is the NanoClaw service running?`,
-        ),
-      ),
+      settle(new Error(`CLI socket at ${sockPath} not reachable: ${err.message}. Is the NanoClaw service running?`)),
     );
     socket.once('connect', () => {
       const payload =

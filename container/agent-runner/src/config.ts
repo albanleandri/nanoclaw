@@ -40,6 +40,18 @@ export interface RunnerConfig {
   mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
   model?: string;
   effort?: string;
+  runtimeStateKey?: string;
+  requestSystemInstructions?: string;
+  providerProfile?: {
+    id: string;
+    name: string;
+    protocol: 'native' | 'openai-compatible' | 'claude-compatible' | 'local-http';
+    baseUrl?: string;
+    apiFamily?: 'responses' | 'chat-completions';
+    toolStrategy: 'none';
+    authMode: string;
+    authRef?: string;
+  };
   agentProfile?: RunnerAgentProfile;
 }
 
@@ -70,6 +82,9 @@ export function loadConfig(): RunnerConfig {
     mcpServers: (raw.mcpServers as RunnerConfig['mcpServers']) || {},
     model: (raw.model as string) || undefined,
     effort: (raw.effort as string) || undefined,
+    runtimeStateKey: (raw.runtimeStateKey as string) || undefined,
+    requestSystemInstructions: (raw.requestSystemInstructions as string) || undefined,
+    providerProfile: (raw.providerProfile as RunnerConfig['providerProfile']) || undefined,
     agentProfile: (raw.agentProfile as RunnerAgentProfile) || undefined,
   };
 

@@ -32,6 +32,7 @@ import { buildSystemPromptAddendum } from './destinations.js';
 import './providers/index.js';
 import { createProvider, type ProviderName } from './providers/factory.js';
 import { runPollLoop } from './poll-loop.js';
+import { createProviderStateStore } from './db/session-state.js';
 
 function log(msg: string): void {
   console.error(`[agent-runner] ${msg}`);
@@ -49,7 +50,10 @@ async function main(): Promise<void> {
   // the live destinations map. Provider-native project docs in the persistent
   // /workspace/agent workspace carry capabilities, module instructions, and
   // memory conventions for the selected provider.
-  const instructions = buildSystemPromptAddendum(config.assistantName || undefined);
+  const runtimeAddendum = buildSystemPromptAddendum(config.assistantName || undefined);
+  const instructions = config.requestSystemInstructions
+    ? `${config.requestSystemInstructions}\n\n${runtimeAddendum}`
+    : runtimeAddendum;
 
   // Discover additional directories mounted at /workspace/extra/*
   const additionalDirectories: string[] = [];
@@ -91,11 +95,15 @@ async function main(): Promise<void> {
     additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
     model: config.model,
     effort: config.effort,
+    runtimeStateKey: config.runtimeStateKey,
+    providerProfile: config.providerProfile,
+    stateStore: createProviderStateStore(config.runtimeStateKey ?? providerName),
   });
 
   await runPollLoop({
     provider,
     providerName,
+    providerStateKey: config.runtimeStateKey,
     cwd: CWD,
     systemContext: { instructions },
   });

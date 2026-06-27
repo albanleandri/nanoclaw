@@ -21,6 +21,7 @@ const STEPS: Record<string, () => Promise<{ run: (args: string[]) => Promise<voi
   onecli: () => import('./onecli.js'),
   auth: () => import('./auth.js'),
   'provider-auth': () => import('./provider-auth.js'),
+  'provider-profile': () => import('./provider-profile.js'),
   'cli-agent': () => import('./cli-agent.js'),
 };
 
