@@ -24,7 +24,6 @@ export interface GuidedQuestion {
 export type WizardAnswers = Partial<Record<WizardStep, string[]>>;
 
 const MARKET_CAPS = ['Mega Cap', 'Large Cap', 'Mid Cap', 'Small Cap', 'Micro Cap', 'Nano Cap'];
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'HKD', 'CNY'];
 
 export const GUIDED_QUESTIONS: Record<WizardStep, GuidedQuestion> = {
   market_cap: {

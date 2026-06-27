@@ -46,7 +46,6 @@ function isTerminal(event: JobEventRecord): boolean {
 }
 
 function shouldDeliverEvent(
-  job: JobRecord,
   event: JobEventRecord,
   delivered: ReturnType<typeof getJobDeliveries>,
   events: JobEventRecord[],
@@ -74,7 +73,7 @@ export async function deliverJobEventsOnce(): Promise<void> {
     const delivered = getJobDeliveries(job.id);
     const events = getJobEvents(job.id, { limit: 500 });
     for (const event of events) {
-      if (!shouldDeliverEvent(job, event, delivered, events)) continue;
+      if (!shouldDeliverEvent(event, delivered, events)) continue;
       try {
         const platformMessageId = await adapter.deliver(
           job.channel_type!,

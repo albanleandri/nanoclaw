@@ -1,14 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
 
-import {
-  appendJobEvent,
-  createJob,
-  getJob,
-  updateJobStatus,
-  type JobEventLevel,
-  type JobRecord,
-  type JobStatus,
-} from '../db/jobs.js';
+import { appendJobEvent, createJob, getJob, updateJobStatus, type JobEventLevel, type JobRecord } from '../db/jobs.js';
 import { getJobType } from './registry.js';
 import type { ManagedJobEvent, StartJobInput } from './types.js';
 

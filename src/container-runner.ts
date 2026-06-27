@@ -281,8 +281,9 @@ export function buildGroupWorkspaceMounts(groupDir: string): VolumeMount[] {
 
   // Nested read-only mounts must be applied on both aliases. Otherwise the
   // compatibility /workspace/group path would make managed files writable.
+  // container.json is intentionally excluded: each session mounts its own
+  // effective runtime config after provider resolution.
   const managedPaths = [
-    { hostPath: path.join(groupDir, 'container.json'), relativePath: 'container.json' },
     { hostPath: path.join(groupDir, 'CLAUDE.md'), relativePath: 'CLAUDE.md' },
     { hostPath: path.join(groupDir, '.claude-fragments'), relativePath: '.claude-fragments' },
   ];
@@ -298,6 +299,25 @@ export function buildGroupWorkspaceMounts(groupDir: string): VolumeMount[] {
   }
 
   return mounts;
+}
+
+export function buildSessionRuntimeConfigMounts(runtimeConfigPath: string): VolumeMount[] {
+  return [
+    { hostPath: runtimeConfigPath, containerPath: '/workspace/agent/container.json', readonly: true },
+    { hostPath: runtimeConfigPath, containerPath: '/workspace/group/container.json', readonly: true },
+  ];
+}
+
+export function assertUniqueMountDestinations(mounts: VolumeMount[]): void {
+  const seen = new Set<string>();
+  for (const mount of mounts) {
+    const normalized = path.posix.normalize(mount.containerPath);
+    const destination = normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
+    if (seen.has(destination)) {
+      throw new Error(`Duplicate container mount destination: ${destination}`);
+    }
+    seen.add(destination);
+  }
 }
 
 function buildMounts(
@@ -388,10 +408,12 @@ function buildMounts(
   // Final nested overlays: each session must see its own effective provider
   // selection even though the group workspace (and its operator snapshot
   // container.json) is shared by every session.
-  mounts.push(
-    { hostPath: runtimeConfigPath, containerPath: '/workspace/agent/container.json', readonly: true },
-    { hostPath: runtimeConfigPath, containerPath: '/workspace/group/container.json', readonly: true },
-  );
+  mounts.push(...buildSessionRuntimeConfigMounts(runtimeConfigPath));
+
+  // Docker rejects duplicate bind destinations with exit code 125. Catch
+  // collisions here so provider or additional mounts cannot silently recreate
+  // this outage class.
+  assertUniqueMountDestinations(mounts);
 
   return mounts;
 }

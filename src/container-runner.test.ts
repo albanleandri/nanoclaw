@@ -5,7 +5,9 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertUniqueMountDestinations,
   buildGroupWorkspaceMounts,
+  buildSessionRuntimeConfigMounts,
   resolveProviderName,
   syncSharedResourceSymlinks,
   syncSkillSymlinks,
@@ -153,7 +155,7 @@ describe('syncSharedResourceSymlinks', () => {
 });
 
 describe('buildGroupWorkspaceMounts', () => {
-  it('mounts the group workspace at both current and legacy paths with managed overlays read-only', () => {
+  it('mounts both workspace aliases with shared managed overlays but no group runtime config overlay', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-group-mounts-'));
     try {
       fs.writeFileSync(path.join(tmp, 'container.json'), '{}');
@@ -166,16 +168,6 @@ describe('buildGroupWorkspaceMounts', () => {
         expect.arrayContaining([
           { hostPath: tmp, containerPath: '/workspace/agent', readonly: false },
           { hostPath: tmp, containerPath: '/workspace/group', readonly: false },
-          {
-            hostPath: path.join(tmp, 'container.json'),
-            containerPath: '/workspace/agent/container.json',
-            readonly: true,
-          },
-          {
-            hostPath: path.join(tmp, 'container.json'),
-            containerPath: '/workspace/group/container.json',
-            readonly: true,
-          },
           { hostPath: path.join(tmp, 'CLAUDE.md'), containerPath: '/workspace/agent/CLAUDE.md', readonly: true },
           { hostPath: path.join(tmp, 'CLAUDE.md'), containerPath: '/workspace/group/CLAUDE.md', readonly: true },
           {
@@ -190,9 +182,49 @@ describe('buildGroupWorkspaceMounts', () => {
           },
         ]),
       );
+      expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/agent/container.json' }));
+      expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/group/container.json' }));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('session runtime config mounts', () => {
+  it('composes with group workspace mounts without duplicate destinations', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-runtime-mounts-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'container.json'), '{}');
+      const runtimeConfigPath = path.join(tmp, 'container.runtime.json');
+      fs.writeFileSync(runtimeConfigPath, '{}');
+
+      const mounts = [...buildGroupWorkspaceMounts(tmp), ...buildSessionRuntimeConfigMounts(runtimeConfigPath)];
+
+      expect(buildSessionRuntimeConfigMounts(runtimeConfigPath)).toEqual([
+        {
+          hostPath: runtimeConfigPath,
+          containerPath: '/workspace/agent/container.json',
+          readonly: true,
+        },
+        {
+          hostPath: runtimeConfigPath,
+          containerPath: '/workspace/group/container.json',
+          readonly: true,
+        },
+      ]);
+      expect(() => assertUniqueMountDestinations(mounts)).not.toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate destinations before Docker is invoked', () => {
+    expect(() =>
+      assertUniqueMountDestinations([
+        { hostPath: '/host/group.json', containerPath: '/workspace/agent/container.json', readonly: true },
+        { hostPath: '/host/runtime.json', containerPath: '/workspace/agent/container.json/', readonly: true },
+      ]),
+    ).toThrow('Duplicate container mount destination: /workspace/agent/container.json');
   });
 });
 
