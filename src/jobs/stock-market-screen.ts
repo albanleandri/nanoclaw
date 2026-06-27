@@ -2,6 +2,7 @@ import path from 'path';
 
 import { GROUPS_DIR } from '../config.js';
 import { getAgentGroup } from '../db/agent-groups.js';
+import { resolveHostPath } from '../shared-resources.js';
 import { registerJobType } from './registry.js';
 import type { JobEventRecord, JobRecord } from '../db/jobs.js';
 import type { JobContext, JobCommand } from './types.js';
@@ -137,7 +138,7 @@ export function buildStockMarketScreenCommand(ctx: JobContext, params: StockMark
   if (!group) throw new Error(`Agent group not found: ${ctx.agentGroupId}`);
 
   const script = path.resolve('container/skills/custom/stock-market-investing/market_screen_job.py');
-  const db = path.join(GROUPS_DIR, group.folder, 'investments.db');
+  const db = resolveHostPath(path.join(GROUPS_DIR, group.folder, 'investments.db'));
   const args = [script, '--db', db, '--job-id', ctx.jobId];
 
   addRepeated(args, '--market-cap', params.marketCaps);

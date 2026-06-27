@@ -60,8 +60,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # ---- Python financial data packages ------------------------------------------
 # yfinance: Yahoo Finance data. curl_cffi: anti-bot HTTP for Yahoo Finance.
 # financedatabase: security metadata. pandas: data manipulation.
+COPY requirements-stock.txt /tmp/requirements-stock.txt
 RUN pip3 install --break-system-packages \
-    requests anthropic yfinance pandas financedatabase curl_cffi
+    -r /tmp/requirements-stock.txt
 
 # Chromium path for agent-browser / Playwright consumers
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium

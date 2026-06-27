@@ -1,0 +1,7 @@
+# Versions verified in the NanoClaw agent image on 2026-06-27.
+requests==2.34.2
+anthropic==0.109.2
+yfinance==1.4.1
+pandas==3.0.3
+financedatabase==2.4.0
+curl_cffi==0.15.0

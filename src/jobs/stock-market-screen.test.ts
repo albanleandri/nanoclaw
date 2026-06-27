@@ -36,7 +36,7 @@ describe('stock_market_screen job type', () => {
 
     expect(command.command).toBe('python3');
     expect(command.args[0]).toContain('container/skills/custom/stock-market-investing/market_screen_job.py');
-    expect(command.args.some((arg) => arg.includes('groups/telegram_main/investments.db'))).toBe(true);
+    expect(command.args.some((arg) => arg.includes('groups/shared/trading-data/investments.db'))).toBe(true);
     expect(command.args).toContain('--market-cap');
     expect(command.args).toContain('Mega Cap');
     expect(command.args).toContain('--exchanges');
