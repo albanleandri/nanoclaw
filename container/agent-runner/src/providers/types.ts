@@ -57,12 +57,15 @@ export interface ProviderOptions {
     protocol: string;
     baseUrl?: string;
     apiFamily?: 'responses' | 'chat-completions';
-    toolStrategy: 'none';
+    toolStrategy: 'none' | 'native';
     authMode: string;
     authRef?: string;
   };
   stateStore?: ProviderStateStore;
   httpFetch?: typeof fetch;
+  /** Optional request timeout override used by protocol adapters and deterministic tests. */
+  requestTimeoutMs?: number;
+  protocolToolBroker?: import('../tool-loop/types.js').ProtocolToolBroker;
 }
 
 export interface ProviderStateStore {
@@ -121,6 +124,13 @@ export interface AgentQuery {
   abort(): void;
 }
 
+/**
+ * Provider turn events. CONTRACT: a query's events stream must end the
+ * initial batch with exactly one terminal event: a result or an error. A
+ * stream that ends without either is treated as a silent close; the poll loop
+ * surfaces a provider error and completes the batch. Providers must emit a
+ * terminal event rather than relying on that fallback.
+ */
 export type ProviderEvent =
   | { type: 'init'; continuation: string }
   /**

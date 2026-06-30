@@ -1,0 +1,42 @@
+[
+  {
+    "capabilityId": "nanoclaw.block-agent-task",
+    "toolName": "block_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.cancel-agent-task",
+    "toolName": "cancel_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.complete-agent-task",
+    "toolName": "complete_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.fail-agent-task",
+    "toolName": "fail_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.get-agent-task",
+    "toolName": "get_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.publish-agent-task-artifact",
+    "toolName": "publish_agent_task_artifact"
+  },
+  {
+    "capabilityId": "nanoclaw.report-agent-task-progress",
+    "toolName": "report_agent_task_progress"
+  },
+  {
+    "capabilityId": "nanoclaw.request-agent-task",
+    "toolName": "request_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "schedule_task"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "send_message"
+  }
+]

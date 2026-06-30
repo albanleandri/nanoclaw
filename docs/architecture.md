@@ -29,7 +29,20 @@ Provider selection is separate from identity. The session can override the provi
 
 Provider descriptors are installed code metadata. Provider profiles are local DB-backed instances that add endpoint, model, auth-reference, and capability settings. Profile resolution precedes the legacy provider fields: session profile, group profile, session provider, group provider, then Claude.
 
-The group workspace keeps an operator snapshot at `groups/<folder>/container.json`. At spawn, the host resolves the effective provider and writes a restrictive per-session `container.runtime.json`, mounted read-only at `/workspace/agent/container.json`. This prevents two sessions sharing one group workspace from racing when they select different providers or profiles.
+Runtime descriptors separate the orchestration harness from endpoint/model settings. The three core mappings are `claude → claude-sdk`, `codex → codex-app-server`, and `openai-compatible → openai-protocol-loop`. Their capability and continuation facts are derived from provider descriptors during the compatibility migration. At spawn, the host resolves this runtime selection in shadow and asserts parity with the effective provider config.
+
+The host then compiles code-owned capability manifests against the runtime, local availability, and session policy. Required unsupported capabilities fail before spawn. Tool-less runtimes receive no MCP server configuration; tool-capable runtimes retain the original configuration unchanged. The initial capability profile is deliberately small, with DB-backed and skill-declared capability selection deferred.
+
+Verified OpenAI-compatible profiles embed their protocol-tool bindings in the
+session runtime JSON. The runner converts only those bindings into Responses or
+Chat Completions function schemas, validates calls against the registered
+NanoClaw tool definitions, executes them sequentially through the existing
+session-DB handlers, and returns correlated results to the model. Unverified
+profiles remain on the text-only path. A checked-in protocol-tool contract is
+asserted from both host capability manifests and the runner catalog so renamed
+entrypoints fail conformance tests before deployment.
+
+The group workspace keeps an operator snapshot at `groups/<folder>/container.json`. After runtime/capability checks, the host writes a restrictive per-session `container.runtime.json`, mounted read-only at `/workspace/agent/container.json`. This prevents two sessions sharing one group workspace from racing when they select different providers or profiles.
 
 Provider-native instruction files are generated compatibility artifacts:
 
@@ -49,6 +62,7 @@ Platform event
   → Host maps platformChannelId + platformThreadId → agent group + session
   → Host writes message to session's DB
   → Host calls wakeUpAgent(session)
+  → Host resolves runtime + compiles/gates capabilities
   → Container spins up (or is already running)
   → Agent-runner polls its session DB, finds new messages
   → Agent-runner processes with the selected provider
@@ -416,6 +430,14 @@ From the sending agent's perspective, it's the same mechanism as sending to Slac
 ```
 
 The receiving agent gets a normal chat message. It doesn't need to know the source is another agent unless that's relevant context.
+
+### Durable Agent Tasks
+
+Ordinary agent messages remain conversational and uncorrelated. Durable delegation uses the central `jobs`/`job_events` backbone plus migration 022's `agent_tasks` ownership relation. The requester calls `request_agent_task`; the host derives requester identity from the source session, checks its agent destination, compiles required capabilities against the assignee's own runtime policy, and writes a stable `agent-task:<taskId>` row into a dedicated assignee session.
+
+Progress, blocked, artifact, completion, failure, and cancellation operations return as host-validated `system` actions. The host checks requester/assignee ownership, applies monotonic idempotent state transitions, appends one correlated event, and writes `agent-task-event:<taskId>:<seq>` into the original requester session. Cancellation also writes `agent-task-cancel:<taskId>` to the assignee.
+
+The assignee uses its own provider profile, credentials, CLI scope, mounts, workspace policy, and compiled capabilities. Requester policy is never copied. Artifact bytes move only through the existing assignee outbox → requester inbox safety path; central rows contain filename, size, hash, and requester-local path, not bytes or host paths. `scope: plan-role` is reserved but not dispatched until the central workflow executor exists.
 
 ### Routing
 
@@ -867,6 +889,12 @@ active provider query, but they are not marked `completed` merely because the
 push was accepted. The provider must acknowledge after the specific follow-up
 turn produces a result; that acknowledgement is what lets the poll loop write
 `processing_ack(status='completed')`.
+
+Every initial provider turn must end with a `result` or `error` event. The
+runner classifies terminal outcomes explicitly. If a provider stream closes
+without a terminal event, the runner sends a user-visible provider error and
+completes the batch rather than silently losing it. Host-stop and runner-command
+interruptions remain recovery events and do not emit that error.
 
 ### Message Formatting by Kind
 

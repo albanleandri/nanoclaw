@@ -7,6 +7,8 @@ import type {
   ProviderStateStore,
   QueryInput,
 } from './types.js';
+import { readProtocolIteration, toolResultItems, toolSchemasForFamily } from '../tool-loop/openai-wire.js';
+import { ProtocolToolError } from '../tool-loop/types.js';
 
 interface TranscriptMessage {
   role: 'user' | 'assistant';
@@ -18,6 +20,8 @@ const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const MAX_TRANSCRIPT_TURNS = 20;
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_ATTEMPTS = 3;
+const MAX_TOOL_ITERATIONS = 8;
+const MAX_TOOL_CALLS_PER_ITERATION = 8;
 
 function loadTranscript(store: ProviderStateStore): TranscriptMessage[] {
   try {
@@ -117,6 +121,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
     }
     if (!options.model) throw new Error('openai-compatible requires a model');
     if (!options.stateStore) throw new Error('openai-compatible requires a provider state store');
+    if (options.providerProfile.toolStrategy === 'native' && !options.protocolToolBroker?.list().length) {
+      throw new Error('tool-enabled openai-compatible profile requires compiled protocol tools');
+    }
   }
 
   isSessionInvalid(): boolean {
@@ -145,48 +152,72 @@ export class OpenAICompatibleProvider implements AgentProvider {
           const transcript = loadTranscript(options.stateStore!);
           let terminalError: ProviderEvent | undefined;
           let resultText = '';
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            const controller = new AbortController();
-            activeController = controller;
-            const timeout = setTimeout(
-              () => controller.abort(new Error('Provider request timed out')),
-              REQUEST_TIMEOUT_MS,
-            );
-            try {
-              const family = options.providerProfile!.apiFamily!;
-              const messages = [
-                ...(input.systemContext?.instructions
-                  ? [{ role: 'system', content: input.systemContext.instructions }]
-                  : []),
-                ...transcript,
-                { role: 'user', content: turn.prompt },
-              ];
-              const body =
-                family === 'responses'
-                  ? { model: options.model, input: messages, stream: true }
-                  : { model: options.model, messages, stream: true };
-              const headers: Record<string, string> = { 'content-type': 'application/json' };
-              if (options.providerProfile!.authMode !== 'none') headers.authorization = 'Bearer placeholder';
-              const response = await (options.httpFetch ?? fetch)(endpoint(options.providerProfile!.baseUrl!, family), {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(body),
-                signal: controller.signal,
-                redirect: 'error',
-              });
-              yield { type: 'activity' };
-              if (!response.ok) {
-                const errorBody = (await response.text()).slice(0, 4096);
-                const classified = classifyError(response.status, errorBody);
-                if (classified.retryable && attempt < MAX_ATTEMPTS) continue;
+          const family = options.providerProfile!.apiFamily!;
+          const broker = options.providerProfile!.toolStrategy === 'native' ? options.protocolToolBroker : undefined;
+          broker?.resetTurn?.();
+          const continuationItems: unknown[] = [];
+          for (let iteration = 0; iteration < (broker ? MAX_TOOL_ITERATIONS : 1); iteration++) {
+            let response: Response | undefined;
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+              const controller = new AbortController();
+              activeController = controller;
+              const timeout = setTimeout(
+                () => controller.abort(new Error('Provider request timed out')),
+                options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
+              );
+              try {
+                const messages = [
+                  ...(input.systemContext?.instructions
+                    ? [{ role: 'system', content: input.systemContext.instructions }]
+                    : []),
+                  ...transcript,
+                  { role: 'user', content: turn.prompt },
+                  ...continuationItems,
+                ];
+                const tools = broker ? toolSchemasForFamily(family, broker.list()) : undefined;
+                const body =
+                  family === 'responses'
+                    ? { model: options.model, input: messages, stream: true, ...(tools ? { tools } : {}) }
+                    : { model: options.model, messages, stream: true, ...(tools ? { tools } : {}) };
+                const headers: Record<string, string> = { 'content-type': 'application/json' };
+                if (options.providerProfile!.authMode !== 'none') headers.authorization = 'Bearer placeholder';
+                response = await (options.httpFetch ?? fetch)(endpoint(options.providerProfile!.baseUrl!, family), {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify(body),
+                  signal: controller.signal,
+                  redirect: 'error',
+                });
+                yield { type: 'activity' };
+                if (!response.ok) {
+                  const errorBody = (await response.text()).slice(0, 4096);
+                  const classified = classifyError(response.status, errorBody);
+                  if (classified.retryable && attempt < MAX_ATTEMPTS) continue;
+                  terminalError = {
+                    type: 'error',
+                    message: `Provider request failed (${response.status})`,
+                    retryable: false,
+                    classification: classified.classification,
+                  };
+                  response = undefined;
+                }
+                break;
+              } catch (error) {
+                if (aborted) return;
+                if (attempt < MAX_ATTEMPTS) continue;
                 terminalError = {
                   type: 'error',
-                  message: `Provider request failed (${response.status})`,
+                  message: error instanceof Error ? error.message : 'Provider transport failed',
                   retryable: false,
-                  classification: classified.classification,
+                  classification: 'transient',
                 };
-                break;
+              } finally {
+                clearTimeout(timeout);
+                if (activeController === controller) activeController = undefined;
               }
+            }
+            if (terminalError || !response) break;
+            if (!broker) {
               const contentType = response.headers.get('content-type') ?? '';
               if (contentType.includes('text/event-stream')) {
                 for await (const event of readStreamingEvents(response, family)) {
@@ -197,18 +228,41 @@ export class OpenAICompatibleProvider implements AgentProvider {
                 resultText = extractJsonText(family, await response.json());
               }
               break;
+            }
+            try {
+              const protocol = await readProtocolIteration(response, family);
+              if (protocol.kind === 'text') {
+                resultText = protocol.text;
+                break;
+              }
+              if (protocol.calls.length > MAX_TOOL_CALLS_PER_ITERATION) {
+                throw new ProtocolToolError('Provider exceeded tool call limit', 'tool_loop_limit');
+              }
+              const results = [];
+              for (const call of protocol.calls) {
+                if (aborted) return;
+                yield { type: 'activity' };
+                if (aborted) return;
+                results.push(await broker.execute(call));
+                if (aborted) return;
+              }
+              continuationItems.push(...protocol.continuationItems, ...toolResultItems(family, results));
             } catch (error) {
-              if (aborted) return;
-              if (attempt < MAX_ATTEMPTS) continue;
               terminalError = {
                 type: 'error',
-                message: error instanceof Error ? error.message : 'Provider transport failed',
+                message: error instanceof Error ? error.message : 'Protocol tool loop failed',
                 retryable: false,
-                classification: 'transient',
+                classification: error instanceof ProtocolToolError ? error.classification : 'tool_execution',
               };
-            } finally {
-              clearTimeout(timeout);
-              if (activeController === controller) activeController = undefined;
+              break;
+            }
+            if (iteration === MAX_TOOL_ITERATIONS - 1) {
+              terminalError = {
+                type: 'error',
+                message: 'Provider exceeded tool iteration limit',
+                retryable: false,
+                classification: 'tool_loop_limit',
+              };
             }
           }
           if (terminalError) {

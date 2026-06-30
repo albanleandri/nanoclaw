@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import type { ProviderCapabilities, ProviderProtocol } from '../providers/provider-descriptor.js';
 import '../providers/descriptors/index.js';
@@ -47,6 +47,29 @@ export type ProviderCapabilityOverrides = Omit<Partial<ProviderCapabilities>, 'm
   media?: Partial<ProviderCapabilities['media']>;
   reviewMode?: Partial<ProviderCapabilities['reviewMode']>;
 };
+
+export interface VerifiedToolProbe {
+  profileId: string;
+  fingerprint: string;
+  verifiedAt: string;
+  ok: boolean;
+}
+
+export function providerToolFingerprint(
+  profile: Pick<ProviderProfileRow, 'provider_name' | 'protocol' | 'base_url' | 'api_family' | 'default_model'>,
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        provider: profile.provider_name,
+        protocol: profile.protocol,
+        baseUrl: profile.base_url,
+        apiFamily: profile.api_family,
+        model: profile.default_model,
+      }),
+    )
+    .digest('hex');
+}
 
 function normalizeBaseUrl(value: string | null | undefined, allowInsecureHttp: boolean): string | null {
   if (!value) return null;
@@ -206,6 +229,28 @@ export function setProviderProfileEnabled(idOrName: string, enabled: boolean): P
   getDb()
     .prepare('UPDATE provider_profiles SET enabled = ?, updated_at = ? WHERE id = ?')
     .run(enabled ? 1 : 0, new Date().toISOString(), profile.id);
+  return getProviderProfile(profile.id)!;
+}
+
+export function activateVerifiedToolStrategy(
+  idOrName: string,
+  strategy: 'native',
+  probe: VerifiedToolProbe,
+): ProviderProfileRow {
+  const profile = getProviderProfile(idOrName);
+  if (!profile) throw new Error(`Provider profile not found: ${idOrName}`);
+  if (!probe.ok) throw new Error('Tool strategy requires a successful verification probe');
+  if (probe.profileId !== profile.id) throw new Error('Tool verification profile mismatch');
+  if (probe.fingerprint !== providerToolFingerprint(profile)) {
+    throw new Error('Tool verification fingerprint mismatch');
+  }
+  getDb()
+    .prepare(
+      `UPDATE provider_profiles
+       SET tool_strategy = ?, tool_verified_at = ?, tool_verification_fingerprint = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(strategy, probe.verifiedAt, probe.fingerprint, new Date().toISOString(), profile.id);
   return getProviderProfile(profile.id)!;
 }
 

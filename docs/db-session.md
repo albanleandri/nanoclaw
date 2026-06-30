@@ -31,6 +31,14 @@ Host-owned, container-read-only. Schema constant: `INBOUND_SCHEMA` in `src/db/sc
 
 Every message landing in the session: user chat, scheduled task, recurring task, question response, internal system message.
 
+Phase E adds three host-written kinds:
+
+- `agent-task` — a validated assignment in the assignee's dedicated task session;
+- `agent-task-event` — a correlated status/result/artifact event in the original requester session;
+- `agent-task-cancel` — a durable cancellation notice to the assignee.
+
+Their stable IDs are respectively `agent-task:<taskId>`, `agent-task-event:<taskId>:<eventSeq>`, and `agent-task-cancel:<taskId>`. Retry uses insert-if-absent semantics and rejects an ID reused with different content.
+
 ```sql
 CREATE TABLE messages_in (
   id             TEXT PRIMARY KEY,
@@ -109,10 +117,10 @@ Written by `writeSessionRouting()` on every container wake, derived from `sessio
 
 ## 3. Sequence numbering invariant
 
-Every message (in or out) gets a monotonic integer `seq`, unique *within the session* across both tables.
+Every message (in or out) gets a monotonic integer `seq`, unique _within the session_ across both tables.
 
 - **Host writes even seq** (2, 4, 6, …) to `messages_in` — `nextEvenSeq()` at `src/db/session-db.ts:75`.
-- **Container writes odd seq** (1, 3, 5, …) to `messages_out` — logic at `container/agent-runner/src/db/messages-out.ts:54` (`max % 2 === 0 ? max + 1 : max + 2`), reading `MAX(seq)` across *both* tables to preserve global ordering.
+- **Container writes odd seq** (1, 3, 5, …) to `messages_out` — logic at `container/agent-runner/src/db/messages-out.ts:54` (`max % 2 === 0 ? max + 1 : max + 2`), reading `MAX(seq)` across _both_ tables to preserve global ordering.
 
 Why disjoint? `seq` is the agent-facing message ID. When the agent calls `edit_message(seq=5)` or `add_reaction(seq=6)`, `getMessageIdBySeq()` uses the parity to route the lookup: odd → `messages_out`, even → `messages_in`. The parity alone disambiguates without a join. Collisions would break editing.
 

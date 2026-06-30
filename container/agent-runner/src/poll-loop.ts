@@ -265,8 +265,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       clearCurrentInReplyTo();
     }
 
-    // Ensure completed even if processQuery ended without a result event
-    // (e.g. stream closed unexpectedly).
+    // Safety net: processQuery completes the batch in every terminal branch
+    // (result, terminal-error, silent-close). This idempotent call also covers
+    // the throw path above, where processQuery exited via exception.
     markCompleted(processingIds);
     log(`Completed ${ids.length} message(s)`);
   }
@@ -307,8 +308,18 @@ export function formatMessagesWithCommands(messages: MessageInRow[], nativeSlash
   return parts.join('\n\n');
 }
 
+/**
+ * How the initial batch's turn ended.
+ * - 'result' — the provider produced a result for the initial batch.
+ * - 'terminal-error' — a quota/auth/non-retryable error was surfaced and the batch completed.
+ * - 'silent-close' — the stream ended with no terminal event; processQuery surfaced an error.
+ * - 'interrupted' — a runner command or host stop ended the stream; recovery belongs to the caller.
+ */
+type InitialBatchOutcome = 'result' | 'terminal-error' | 'silent-close' | 'interrupted';
+
 interface QueryResult {
   continuation?: string;
+  outcome: InitialBatchOutcome;
 }
 
 interface ProcessQueryOptions {
@@ -329,6 +340,8 @@ export async function processQuery(
   opts: ProcessQueryOptions = {},
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
+  let initialBatchResolved = false;
+  let outcome: InitialBatchOutcome | undefined;
   let done = false;
   let unwrappedNudged = false;
   let providerFailureNotified = false;
@@ -487,6 +500,8 @@ export async function processQuery(
         // host sweep does not reset them to pending and immediately re-wake.
         completeMessages(initialBatchIds);
         writeUsageLimitNotification(routing);
+        initialBatchResolved = true;
+        outcome = 'terminal-error';
         break;
       } else if (event.type === 'error' && event.classification === 'auth') {
         // Credential/auth failure (e.g. an expired shared OAuth token reaching
@@ -496,9 +511,13 @@ export async function processQuery(
         // user instead of finishing silently.
         completeMessages(initialBatchIds);
         writeAuthErrorNotification(routing);
+        initialBatchResolved = true;
+        outcome = 'terminal-error';
         break;
       } else if (event.type === 'error' && !event.retryable) {
         completeMessages(initialBatchIds);
+        initialBatchResolved = true;
+        outcome = 'terminal-error';
         writeMessageOut({
           id: generateId(),
           kind: 'chat',
@@ -518,6 +537,10 @@ export async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         completeMessages(initialBatchIds);
+        if (!initialBatchResolved) {
+          initialBatchResolved = true;
+          outcome = 'result';
+        }
         initialTurnCompleted = true;
         lastPostResultHeartbeat = Date.now();
         if (event.text) {
@@ -570,7 +593,27 @@ export async function processQuery(
     clearInterval(pollHandle);
   }
 
-  return { continuation: queryContinuation };
+  const interrupted = endedForCommand || (opts.stopSignal?.aborted ?? false);
+  if (!initialBatchResolved && !interrupted) {
+    // A provider stream that ends without a result or terminal error violates
+    // the provider contract. Surface that failure and complete the batch so
+    // the message is neither lost silently nor stuck processing in a live
+    // container.
+    completeMessages(initialBatchIds);
+    writeMessageOut({
+      id: generateId(),
+      kind: 'chat',
+      platform_id: routing.platformId,
+      channel_type: routing.channelType,
+      thread_id: routing.threadId,
+      content: JSON.stringify({
+        text: '⚠️ The model provider ended the turn without producing a response. Please try again.',
+      }),
+    });
+    outcome = 'silent-close';
+  }
+
+  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted' };
 }
 
 function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {

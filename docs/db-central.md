@@ -330,7 +330,11 @@ CREATE TABLE container_configs (
 
 Local instances of installed provider descriptors. They contain endpoint/model selectors and a OneCLI secret reference, never a raw credential. See [providers.md](providers.md).
 
-Key columns are `provider_name`, `protocol`, `base_url`, `api_family`, `tool_strategy`, `default_model`, `auth_mode`, `auth_ref`, `capability_overrides`, and `enabled`.
+Key columns are `provider_name`, `protocol`, `base_url`, `api_family`, `tool_strategy`, `tool_verified_at`, `tool_verification_fingerprint`, `default_model`, `auth_mode`, `auth_ref`, `capability_overrides`, and `enabled`.
+
+Migration 021 adds the nullable tool-verification fields. `tool_strategy=native`
+is valid only when the stored non-secret endpoint/model fingerprint still
+matches the profile.
 
 - **Readers/writers:** `src/db/provider-profiles.ts`, provider CLI/setup, `src/providers/effective-provider.ts`
 
@@ -349,6 +353,16 @@ CREATE TABLE schedule_admin_grants (
 ```
 
 Recurring task rows are never duplicated into the administrator's session.
+
+### 1.18 `jobs`, `job_events`, and `agent_tasks`
+
+`jobs` and `job_events` remain the shared durable lifecycle/event backbone. Migration 022 adds `agent_tasks`, a narrow ownership and correlation relation for `jobs.type='agent_task'`.
+
+Key `agent_tasks` columns are `job_id`, requester/assignee agent group and session IDs, optional `parent_task_id`, discriminated `scope`, reserved plan-role correlation fields, and stable dispatch/cancel message IDs. Requester and assignee indexes support actor-scoped lookup. The complete validated `AgentTaskEnvelope` remains in `jobs.params_json`.
+
+Task state is monotonic (`queued → running → succeeded|failed|cancelled`), events have per-job sequence numbers, and stable action/message IDs make host delivery retries idempotent. `scope='agent-delegation'` is executable; `scope='plan-role'` is schema-reserved.
+
+- **Readers/writers:** `src/db/agent-tasks.ts`, `src/jobs/agent-task-service.ts`, `src/jobs/agent-task-actions.ts`
 
 - **Readers/writers:** `src/db/schedule-admin-grants.ts`, scheduling actions, CLI
 

@@ -6,6 +6,7 @@ import {
   createJob,
   getJob,
   getJobDeliveries,
+  getJobEvent,
   getJobEvents,
   getUndeliveredJobEvents,
   listRecentJobs,
@@ -120,6 +121,8 @@ describe('jobs DB helpers', () => {
     expect(second.seq).toBe(2);
     expect(getJobEvents('job-1')).toEqual([first, second]);
     expect(getJobEvents('job-1', { afterSeq: 1 })).toEqual([second]);
+    expect(getJobEvent(second.id)).toEqual(second);
+    expect(getJobEvent('missing')).toBeUndefined();
   });
 
   it('marks event delivery idempotently and lists undelivered events', () => {

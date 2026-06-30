@@ -249,6 +249,30 @@ export function writeSessionMessage(
   updateSession(sessionId, { last_active: new Date().toISOString() });
 }
 
+/** Idempotent variant for host-owned durable workflows with stable message IDs. */
+export function writeSessionMessageIfAbsent(
+  agentGroupId: string,
+  sessionId: string,
+  message: Parameters<typeof writeSessionMessage>[2],
+): boolean {
+  const db = openInboundDb(agentGroupId, sessionId);
+  try {
+    const existing = db.prepare('SELECT kind, content FROM messages_in WHERE id = ?').get(message.id) as
+      | { kind: string; content: string }
+      | undefined;
+    if (existing) {
+      if (existing.kind !== message.kind || existing.content !== message.content) {
+        throw new Error(`Session message conflict for stable id ${message.id}`);
+      }
+      return false;
+    }
+  } finally {
+    db.close();
+  }
+  writeSessionMessage(agentGroupId, sessionId, message);
+  return true;
+}
+
 /**
  * If message content has attachments with base64 `data`, save them to
  * the session's inbox directory and replace with `localPath`.

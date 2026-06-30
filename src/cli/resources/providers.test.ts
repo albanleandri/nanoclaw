@@ -40,4 +40,8 @@ describe('provider CLI resources', () => {
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain('Secret Name');
   });
+
+  it('registers an approval-gated tool verification command', () => {
+    expect(lookup('providers-verify-tools')).toMatchObject({ access: 'approval' });
+  });
 });

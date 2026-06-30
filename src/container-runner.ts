@@ -9,6 +9,8 @@ import path from 'path';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
+import { compileEffectiveSessionPlan } from './capabilities/compile-session-plan.js';
+import type { SessionRuntimePlan } from './capabilities/session-runtime-plan.js';
 import {
   CONTAINER_CPU_LIMIT,
   CONTAINER_IMAGE,
@@ -44,6 +46,9 @@ import {
   type VolumeMount,
 } from './providers/provider-container-registry.js';
 import { resolveEffectiveProviderConfig, type EffectiveProviderConfig } from './providers/effective-provider.js';
+import { assertRuntimeSelectionParity, resolveEffectiveRuntimeSelection } from './providers/effective-runtime.js';
+import type { EffectiveRuntimeSelection } from './providers/runtime-descriptor.js';
+import { getRuntimeDescriptorByContainerFactory } from './providers/runtime-descriptor-registry.js';
 import {
   heartbeatPath,
   markContainerRunning,
@@ -74,6 +79,34 @@ export function getActiveContainerCount(): number {
 
 export function isContainerRunning(sessionId: string): boolean {
   return activeContainers.has(sessionId);
+}
+
+interface RuntimeShadowLogger {
+  debug: (message: string, metadata?: Record<string, unknown>) => void;
+  warn: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
+/**
+ * Compute the additive runtime selection and verify it agrees with the
+ * compatibility provider config. Shadow failures are non-fatal in Phase A.
+ */
+export function computeRuntimeShadow(
+  effectiveProvider: EffectiveProviderConfig,
+  logger: RuntimeShadowLogger = log,
+): EffectiveRuntimeSelection | undefined {
+  try {
+    const selection = resolveEffectiveRuntimeSelection(effectiveProvider);
+    assertRuntimeSelectionParity(effectiveProvider, selection);
+    logger.debug('runtime shadow selection', { ...selection });
+    return selection;
+    // eslint-disable-next-line no-catch-all/no-catch-all -- Phase A shadow resolution must remain non-fatal for compatibility
+  } catch (err) {
+    logger.warn('runtime shadow resolution failed (non-fatal)', {
+      provider: effectiveProvider.provider,
+      err,
+    });
+    return undefined;
+  }
 }
 
 /**
@@ -132,11 +165,32 @@ async function spawnContainer(session: Session): Promise<void> {
   // and buildContainerArgs so we don't re-read.
   const groupConfig = materializeContainerJson(agentGroup.id);
   const effectiveProvider = resolveEffectiveProviderConfig(session, groupConfig);
+  const runtimeSelection = computeRuntimeShadow(effectiveProvider);
+  const runtimeDescriptor = getRuntimeDescriptorByContainerFactory(effectiveProvider.provider);
+  if (effectiveProvider.profile?.toolStrategy === 'native' && (!runtimeSelection || !runtimeDescriptor)) {
+    throw new Error(`Verified tool profile could not resolve runtime: ${effectiveProvider.provider}`);
+  }
+
+  // Compile required capabilities before materializing or spawning. Runtimes
+  // that cannot call tools receive no MCP server configuration.
+  let planConfig = groupConfig;
+  let sessionRuntimePlan: SessionRuntimePlan | undefined;
+  if (runtimeSelection && runtimeDescriptor) {
+    const planned = compileEffectiveSessionPlan({
+      config: groupConfig,
+      effectiveProvider,
+      runtime: runtimeSelection,
+      runtimeDescriptor,
+    });
+    sessionRuntimePlan = planned.materializedPlan;
+    planConfig = planned.gatedConfig;
+  }
   const runtime = materializeSessionRuntimeJson(
     sessionDir(agentGroup.id, session.id),
     agentGroup,
-    groupConfig,
+    planConfig,
     effectiveProvider,
+    sessionRuntimePlan,
   );
   const containerConfig = runtime.config;
 

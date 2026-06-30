@@ -33,6 +33,7 @@ import './providers/index.js';
 import { createProvider, type ProviderName } from './providers/factory.js';
 import { runPollLoop } from './poll-loop.js';
 import { createProviderStateStore } from './db/session-state.js';
+import { buildProtocolToolBroker } from './runtime-bootstrap.js';
 
 function log(msg: string): void {
   console.error(`[agent-runner] ${msg}`);
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
     runtimeStateKey: config.runtimeStateKey,
     providerProfile: config.providerProfile,
     stateStore: createProviderStateStore(config.runtimeStateKey ?? providerName),
+    protocolToolBroker: buildProtocolToolBroker(config),
   });
 
   await runPollLoop({

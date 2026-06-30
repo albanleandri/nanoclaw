@@ -45,6 +45,7 @@ export {
   getPendingApprovalsByAction,
 } from './sessions.js';
 export * from './jobs.js';
+export * from './agent-tasks.js';
 export * from './provider-profiles.js';
 export * from './schedule-admin-grants.js';
 export {

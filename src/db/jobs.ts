@@ -299,6 +299,11 @@ export function getJobEvents(jobId: string, opts: { limit?: number; afterSeq?: n
   return rows.map(rowToEvent);
 }
 
+export function getJobEvent(eventId: string): JobEventRecord | undefined {
+  const row = getDb().prepare('SELECT * FROM job_events WHERE id = ?').get(eventId) as JobEventRow | undefined;
+  return row ? rowToEvent(row) : undefined;
+}
+
 export function markJobEventDelivered(
   jobId: string,
   eventSeq: number,

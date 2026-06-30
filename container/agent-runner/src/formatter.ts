@@ -135,6 +135,9 @@ export function formatMessages(messages: MessageInRow[]): string {
   const taskMessages = messages.filter((m) => m.kind === 'task');
   const webhookMessages = messages.filter((m) => m.kind === 'webhook');
   const systemMessages = messages.filter((m) => m.kind === 'system');
+  const agentTasks = messages.filter((m) => m.kind === 'agent-task');
+  const agentTaskEvents = messages.filter((m) => m.kind === 'agent-task-event');
+  const agentTaskCancels = messages.filter((m) => m.kind === 'agent-task-cancel');
 
   const parts: string[] = [];
 
@@ -150,6 +153,9 @@ export function formatMessages(messages: MessageInRow[]): string {
   if (systemMessages.length > 0) {
     parts.push(...systemMessages.map(formatSystemMessage));
   }
+  if (agentTasks.length > 0) parts.push(...agentTasks.map(formatAgentTask));
+  if (agentTaskEvents.length > 0) parts.push(...agentTaskEvents.map(formatAgentTaskEvent));
+  if (agentTaskCancels.length > 0) parts.push(...agentTaskCancels.map(formatAgentTaskCancel));
 
   return header + parts.join('\n\n');
 }
@@ -219,6 +225,46 @@ function formatSystemMessage(msg: MessageInRow): string {
   const content = parseContent(msg.content);
   const from = originAttr(msg);
   return `<system_response${from} action="${escapeXml(content.action || 'unknown')}" status="${escapeXml(content.status || 'unknown')}">${JSON.stringify(content.result || null)}</system_response>`;
+}
+
+function bounded(value: unknown, max = 65_536): string {
+  return typeof value === 'string' ? value.slice(0, max) : '';
+}
+
+function formatAgentTask(msg: MessageInRow): string {
+  const content = parseContent(msg.content);
+  const id = bounded(content.taskId, 128);
+  const requester = bounded(content.requesterAgentGroupId, 128);
+  const goal = escapeXml(bounded(content.goal, 16_384));
+  const context = escapeXml(bounded(content.context));
+  const capabilities = Array.isArray(content.requiredCapabilities)
+    ? content.requiredCapabilities
+        .filter((item: unknown): item is string => typeof item === 'string')
+        .slice(0, 64)
+        .join(', ')
+    : '';
+  return [
+    `<agent_task id="${escapeXml(id)}" requester="${escapeXml(requester)}" artifact_policy="${escapeXml(bounded(content.artifactPolicy, 32))}">`,
+    `<goal>${goal}</goal>`,
+    context ? `<context>${context}</context>` : '',
+    `<required_capabilities>${escapeXml(capabilities)}</required_capabilities>`,
+    'Use report_agent_task_progress/block_agent_task while working. Finish exactly once with complete_agent_task or fail_agent_task.',
+    '</agent_task>',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function formatAgentTaskEvent(msg: MessageInRow): string {
+  const content = parseContent(msg.content);
+  const event = content.event && typeof content.event === 'object' ? content.event : {};
+  const body = escapeXml(JSON.stringify(event).slice(0, 65_536));
+  return `<agent_task_event id="${escapeXml(bounded(content.taskId, 128))}" seq="${escapeXml(String(content.eventSeq ?? ''))}" type="${escapeXml(bounded(event.type, 32))}" assignee="${escapeXml(bounded(content.assigneeAgentGroupId, 128))}">${body}</agent_task_event>`;
+}
+
+function formatAgentTaskCancel(msg: MessageInRow): string {
+  const content = parseContent(msg.content);
+  return `<agent_task_cancel id="${escapeXml(bounded(content.taskId, 128))}">Stop work on this task and do not report a result.</agent_task_cancel>`;
 }
 
 /**

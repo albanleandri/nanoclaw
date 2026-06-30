@@ -121,4 +121,26 @@ describe('materializeContainerJson agent profile', () => {
     expect(groupSnapshot.model).toBe('gpt-5-codex');
     expect(fs.statSync(runtime.path).mode & 0o777).toBe(0o600);
   });
+
+  it('embeds an explicitly supplied compiled session runtime plan', () => {
+    createContainerConfig(configRow());
+    const groupConfig = materializeContainerJson(group.id);
+    const plan = {
+      runtime: { runtimeId: 'openai-protocol-loop', runtimeStateKey: 'profile:p1' },
+      capabilities: [
+        { id: 'nanoclaw.send-message', adapter: 'protocol-tool' as const, entrypoint: 'tool:send_message' },
+      ],
+      rejectedCapabilities: [],
+      policy: { cliScope: 'group' as const, approvalMode: 'default', writableWorkspace: true },
+      instructionSections: [],
+    };
+    const runtime = materializeSessionRuntimeJson(
+      path.join(GROUPS_DIR, group.folder, '.test-plan-session'),
+      group,
+      groupConfig,
+      { provider: 'openai-compatible', runtimeStateKey: 'profile:p1' },
+      plan,
+    );
+    expect(runtime.config.sessionRuntimePlan).toEqual(plan);
+  });
 });

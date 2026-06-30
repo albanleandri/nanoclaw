@@ -142,6 +142,8 @@ export interface ProviderProfileRow {
   base_url: string | null;
   api_family: string | null;
   tool_strategy: string;
+  tool_verified_at?: string | null;
+  tool_verification_fingerprint?: string | null;
   default_model: string | null;
   default_effort: string | null;
   auth_mode: string;

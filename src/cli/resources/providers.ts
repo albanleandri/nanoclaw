@@ -1,5 +1,6 @@
 import { getContainerConfig } from '../../db/container-configs.js';
 import {
+  activateVerifiedToolStrategy,
   createProviderProfile,
   getProviderProfile,
   listProviderProfiles,
@@ -7,7 +8,7 @@ import {
 } from '../../db/provider-profiles.js';
 import '../../providers/descriptors/index.js';
 import { listProviderDescriptors } from '../../providers/provider-descriptor-registry.js';
-import { verifyProviderProfile } from '../../providers/provider-verifier-registry.js';
+import { verifyProviderProfile, verifyProviderTools } from '../../providers/provider-verifier-registry.js';
 import type { CallerContext } from '../frame.js';
 import { registerResource } from '../crud.js';
 
@@ -26,6 +27,7 @@ function redactedProfile(profile: ReturnType<typeof listProviderProfiles>[number
     base_url: profile.base_url,
     api_family: profile.api_family,
     tool_strategy: profile.tool_strategy,
+    tool_verified_at: profile.tool_verified_at ?? null,
     default_model: profile.default_model,
     default_effort: profile.default_effort,
     auth_mode: profile.auth_mode,
@@ -134,6 +136,29 @@ registerResource({
         return verifyProviderProfile(profile, {
           agentGroupId: (args['agent-group-id'] ?? args.agent_group_id) as string | undefined,
         });
+      },
+    },
+    'verify-tools': {
+      access: 'approval',
+      description: 'Probe and activate native function calling for a provider profile.',
+      handler: async (args, ctx) => {
+        requireGlobal(ctx);
+        const profile = getProviderProfile(args.id as string);
+        if (!profile) throw new Error(`Provider profile not found: ${String(args.id)}`);
+        const result = await verifyProviderTools(profile, {
+          agentGroupId: (args['agent-group-id'] ?? args.agent_group_id) as string | undefined,
+        });
+        if (!result.ok || !result.toolCallingAccepted) {
+          throw new Error(result.hint || 'Provider tool verification failed');
+        }
+        return redactedProfile(
+          activateVerifiedToolStrategy(profile.id, 'native', {
+            profileId: profile.id,
+            fingerprint: result.fingerprint,
+            verifiedAt: result.verifiedAt,
+            ok: true,
+          }),
+        );
       },
     },
   },

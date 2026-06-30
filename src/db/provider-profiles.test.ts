@@ -5,10 +5,12 @@ import { closeDb, getDb, initTestDb } from './connection.js';
 import { createContainerConfig, updateContainerConfigScalars } from './container-configs.js';
 import { runMigrations } from './migrations/index.js';
 import {
+  activateVerifiedToolStrategy,
   createProviderProfile,
   deleteProviderProfile,
   getProviderProfile,
   listProviderProfiles,
+  providerToolFingerprint,
   setProviderProfileEnabled,
 } from './provider-profiles.js';
 
@@ -138,5 +140,67 @@ describe('provider profiles', () => {
   it('adds nullable profile references without backfilling existing selections', () => {
     const columns = getDb().prepare("PRAGMA table_info('container_configs')").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain('provider_profile_id');
+  });
+
+  it('starts generic profiles text-only and records probe-verified native tools', () => {
+    const profile = createProviderProfile({
+      id: 'profile-tools',
+      name: 'Tools',
+      providerName: 'openai-compatible',
+      baseUrl: 'https://models.example.test/v1',
+      apiFamily: 'responses',
+      defaultModel: 'example-model',
+      authMode: 'none',
+    });
+    expect(profile.tool_strategy).toBe('none');
+    expect(profile.tool_verified_at).toBeNull();
+
+    const fingerprint = providerToolFingerprint(profile);
+    const activated = activateVerifiedToolStrategy(profile.id, 'native', {
+      profileId: profile.id,
+      fingerprint,
+      verifiedAt: '2026-06-28T12:00:00.000Z',
+      ok: true,
+    });
+    expect(activated).toMatchObject({
+      tool_strategy: 'native',
+      tool_verified_at: '2026-06-28T12:00:00.000Z',
+      tool_verification_fingerprint: fingerprint,
+    });
+  });
+
+  it('rejects failed or mismatched tool verification', () => {
+    const profile = createProviderProfile({
+      id: 'profile-tools',
+      name: 'Tools',
+      providerName: 'openai-compatible',
+      baseUrl: 'https://models.example.test/v1',
+      apiFamily: 'chat-completions',
+      defaultModel: 'example-model',
+      authMode: 'none',
+    });
+    expect(() =>
+      activateVerifiedToolStrategy(profile.id, 'native', {
+        profileId: profile.id,
+        fingerprint: 'wrong',
+        verifiedAt: new Date().toISOString(),
+        ok: true,
+      }),
+    ).toThrow(/fingerprint/);
+    expect(() =>
+      activateVerifiedToolStrategy(profile.id, 'native', {
+        profileId: profile.id,
+        fingerprint: providerToolFingerprint(profile),
+        verifiedAt: new Date().toISOString(),
+        ok: false,
+      }),
+    ).toThrow(/successful/);
+  });
+
+  it('migration adds tool verification metadata columns', () => {
+    const columns = getDb().prepare("PRAGMA table_info('provider_profiles')").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['tool_verified_at', 'tool_verification_fingerprint']),
+    );
   });
 });

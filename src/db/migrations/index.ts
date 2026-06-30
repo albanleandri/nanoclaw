@@ -17,6 +17,8 @@ import { migration017 } from './017-screen-market-guided.js';
 import { migration018 } from './018-shared-resources.js';
 import { migration019 } from './019-provider-profiles.js';
 import { migration020 } from './020-schedule-admin-grants.js';
+import { migration021 } from './021-provider-tool-verification.js';
+import { migration022 } from './022-agent-tasks.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 
@@ -45,6 +47,8 @@ const migrations: Migration[] = [
   migration018,
   migration019,
   migration020,
+  migration021,
+  migration022,
 ];
 
 export function runMigrations(db: Database.Database): void {

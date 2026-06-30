@@ -102,6 +102,16 @@ provider invokes `ack` after the specific follow-up turn produces a result.
 Providers must not call `ack` merely because they accepted or queued the input;
 otherwise a dropped provider turn can silently lose a user message.
 
+### Terminal-outcome contract
+
+`processQuery` classifies each initial batch as `result`, `terminal-error`,
+`silent-close`, or `interrupted`. Providers must end the initial turn with a
+`result` or `error` event. If the stream closes without either, the runner
+surfaces a provider error to the user and completes the batch; it never
+completes that message silently. A host stop or runner-command interruption
+does not produce a user-visible provider error because recovery belongs to the
+outer loop and host sweep.
+
 ## Provider Implementations
 
 The `claude` and `codex` providers ship in trunk (registered in `container/agent-runner/src/providers/index.ts`). The OpenCode section below documents the provider interface for reference and for skills that install additional providers — OpenCode and other non-default providers are not baked into the core image.
@@ -293,6 +303,24 @@ class OpenCodeProvider implements AgentProvider {
 ## Agent-Runner Core
 
 Everything below is handled by the agent-runner, not the provider.
+
+### Generic protocol tool loop
+
+An OpenAI-compatible profile is text-only unless its endpoint/model fingerprint
+has passed host-side tool verification. For a verified profile, the host embeds
+compiled `tool:` bindings in `sessionRuntimePlan`. Runner startup resolves only
+those bindings against the in-process NanoClaw MCP catalog.
+
+The provider normalizes Responses and Chat Completions function calls, validates
+arguments, executes calls sequentially, suppresses duplicate call IDs, appends
+correlated tool results, and continues for at most eight iterations with at
+most eight calls per iteration. Duplicate suppression resets for each provider
+turn, and the complete normalized result is capped at 64 KiB. Unknown,
+ungranted, malformed, handler-failed, and limit-exceeded calls produce one
+terminal `tool_unauthorized`, `tool_invalid`, `tool_execution`, or
+`tool_loop_limit` error. Aborting during one call cannot start a later call.
+External MCP discovery, parallel execution, and provider-built-in tools are
+not part of this loop.
 
 ### Poll Loop
 
@@ -636,6 +664,12 @@ Create a long-lived companion sub-agent (admin only). The new agent's name becom
 ```
 
 Implementation: write a `messages_out` row with `kind: 'system'`, `action: 'create_agent'`. The host reads, validates admin permission, creates the entity rows in the central DB, wires the new agent as a destination, and writes a `system` messages_in response. Non-admin containers never see this tool.
+
+#### Durable agent task tools
+
+`request_agent_task`, `get_agent_task`, and `cancel_agent_task` are requester operations. Assigned task prompts direct the target to use `report_agent_task_progress`, `block_agent_task`, `complete_agent_task`, `fail_agent_task`, and `publish_agent_task_artifact`. Every tool writes a typed `system` action; it does not mutate the central DB directly.
+
+The runner formats assignments as `<agent_task>`, correlated updates as `<agent_task_event>`, and cancellations as `<agent_task_cancel>`. The host derives actor identity from the source session and enforces ownership, destination authorization, target capability compatibility, terminal-state monotonicity, and artifact policy. These tools are available through native MCP and through compiled protocol-tool bindings on verified generic profiles.
 
 ### Media Handling
 

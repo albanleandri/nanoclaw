@@ -68,7 +68,7 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 
 **Skills over features.** Trunk stays focused on the registry, orchestration, and the provider/runtime paths that are part of the base system. Optional channel adapters and provider integrations are installed by skills from long-lived branches such as `channels` and `providers`. You run `/add-telegram`, `/add-opencode`, etc. and the skill copies exactly the module(s) you need into your fork. No feature you didn't ask for.
 
-**Provider-aware, not provider-shaped.** The container runner stays on Bun and `@anthropic-ai/claude-agent-sdk`, with Claude as the default provider. NanoClaw also has provider adapter boundaries for Codex-like and future runners: provider, model, effort, skills, MCP servers, and shared resources are selected per agent group and materialized into a neutral agent profile plus provider-native project docs.
+**Provider-aware, not provider-shaped.** The container runner stays on Bun and `@anthropic-ai/claude-agent-sdk`, with Claude as the default provider. NanoClaw also has provider adapter boundaries for Codex-like and future runners: provider, model, effort, skills, MCP servers, and shared resources are selected per agent group and materialized into a neutral agent profile plus provider-native project docs. The host resolves a separate runtime descriptor in shadow and compiles required capability bindings before spawn.
 
 ## What It Supports
 
@@ -76,6 +76,7 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 - **Flexible isolation** — connect each channel to its own agent for full privacy, share one agent across many channels for unified memory with separate conversations, or fold multiple channels into a single shared session so one conversation spans many surfaces. Pick per channel via `/manage-channels`. See [docs/isolation-model.md](docs/isolation-model.md).
 - **Per-agent workspace** — each agent group has a durable workspace, generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex), a materialized `container.json` with a neutral `agentProfile`, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
 - **Scheduled tasks** — one-shot or recurring jobs that wake the selected agent/provider and can message you back
+- **Durable agent delegation** — authorized agents can delegate correlated work to another agent, receive progress and files, and cancel it without sharing credentials or privileges
 - **Web access** — search and fetch content from the web
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional per-container CPU/memory caps, optional OneCLI-only egress lockdown, optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation, or Apple Container as a macOS-native opt-in
 - **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
@@ -87,6 +88,7 @@ This fork stays close to upstream NanoClaw's host/container/session-DB architect
 - **Provider-neutral runtime profile** — agent identity, provider, model, skills, MCP servers, CLI scope, mounts, and shared resources are materialized into a neutral `agentProfile` at spawn time.
 - **First-class Codex runtime path** — Codex support is present in this tree, including provider adapters, generated `AGENTS.md`, Codex CLI install data, and container-side runner support.
 - **DB-backed per-group runtime config** — provider, model, effort, skills, MCP servers, CLI scope, and shared resources are selected per agent group instead of living only in instruction files.
+- **Fail-closed capability compilation** — code-owned capability manifests are resolved against the selected runtime and deterministic local availability before spawn; runtimes without tool support receive no MCP server configuration.
 - **Shared resources across providers** — shared mounts and resources are resolved once and exposed through provider-specific docs and runtime config.
 - **Built-in Telegram adapter and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, and optional pool routing via explicit `bot_index`.
 - **Private skills submodule** — fork-specific skills can live in `container/skills/custom` as a private submodule while the public tree stays generic.
@@ -153,7 +155,7 @@ Skills we'd like to see:
 messaging apps → host process (router) → inbound.db → container (Bun agent-runner, selected provider) → outbound.db → host process (delivery) → messaging apps
 ```
 
-A single Node host orchestrates per-session agent containers. When a message arrives, the host routes it via the entity model (user → messaging group → agent group → session), writes it to the session's `inbound.db`, and wakes the container. The Bun agent-runner inside the container polls `inbound.db`, invokes the selected provider, and writes responses to `outbound.db`. The host polls `outbound.db` and delivers back through the channel adapter.
+A single Node host orchestrates per-session agent containers. When a message arrives, the host routes it via the entity model (user → messaging group → agent group → session), writes it to the session's `inbound.db`, and wakes the container. Before spawn, the host maps the effective provider configuration to a runtime descriptor, verifies migration parity, resolves the requested capability set, and removes MCP configuration from tool-less runtimes. The Bun agent-runner inside the container polls `inbound.db`, invokes the selected provider, and writes responses to `outbound.db`. The host polls `outbound.db` and delivers back through the channel adapter.
 
 Two SQLite files per session, each with exactly one writer — no cross-mount contention, no IPC, no stdin piping. Channel adapters and provider adapters self-register at startup; the base system ships the registry and Chat SDK bridge, while optional adapters are skill-installed per fork.
 
@@ -170,6 +172,7 @@ Key files:
 - `src/db/` — central DB (users, roles, agent groups, messaging groups, wiring, migrations)
 - `src/channels/` — channel adapter infra (adapters installed via `/add-<channel>` skills)
 - `src/providers/` — host-side provider config and provider-contributed mounts/env
+- `src/capabilities/` — code-owned capability manifests, availability checks, runtime support resolution, and the pre-spawn compiler/gate
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
 - `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, materialized `container.json`)
 
@@ -193,7 +196,7 @@ We don't want configuration sprawl. NanoClaw has DB-backed runtime config for pr
 
 **Can I use third-party or open-source models?**
 
-Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and OpenAI-compatible text endpoints can be configured as DB-backed provider profiles without copying brand-specific runtime code. Use `ncl providers list` to inspect installed descriptors and see [docs/providers.md](docs/providers.md) for profile creation, capability limits, and native-provider installation.
+Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and OpenAI-compatible endpoints can be configured as DB-backed provider profiles without copying brand-specific runtime code. Generic profiles are text-only by default; endpoints that pass `ncl providers verify-tools` can use the bounded canonical NanoClaw tool loop. Use `ncl providers list` to inspect installed descriptors and see [docs/providers.md](docs/providers.md) for profile creation, verification, capability limits, and native-provider installation.
 
 Optional native providers such as OpenCode (`/add-opencode`) are installed through provider skills. Local runtimes such as Ollama should use an OpenAI-compatible profile when they expose that protocol; otherwise they need a small native adapter.
 

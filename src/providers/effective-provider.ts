@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 
 import type { ContainerConfig } from '../container-config.js';
 import { getProviderProfile } from '../db/provider-profiles.js';
+import { providerToolFingerprint } from '../db/provider-profiles.js';
 import type { ProviderProfileRow, Session } from '../types.js';
 import type { ProviderCapabilities, ProviderProtocol } from './provider-descriptor.js';
 import '../providers/descriptors/index.js';
@@ -13,7 +14,7 @@ export interface EffectiveProviderProfile {
   protocol: ProviderProtocol;
   baseUrl?: string;
   apiFamily?: 'responses' | 'chat-completions';
-  toolStrategy: 'none';
+  toolStrategy: 'none' | 'native';
   authMode: string;
   authRef?: string;
 }
@@ -78,19 +79,25 @@ export function resolveEffectiveProviderConfig(
   }
   const provider = descriptor.runtime.containerProviderName.toLowerCase();
   const model = containerConfig.model || profile.default_model || descriptor.models.defaultModel;
+  const toolsVerified =
+    profile.tool_strategy === 'native' &&
+    Boolean(profile.tool_verified_at) &&
+    profile.tool_verification_fingerprint === providerToolFingerprint(profile);
+  const capabilities = mergeCapabilities(descriptor.capabilities, profile.capability_overrides);
+  if (toolsVerified) capabilities.toolCalling = 'native';
   return {
     provider,
     model: model || undefined,
     effort: containerConfig.effort || profile.default_effort || undefined,
     runtimeStateKey: profileStateKey(profile, provider, model || undefined),
-    capabilities: mergeCapabilities(descriptor.capabilities, profile.capability_overrides),
+    capabilities,
     profile: {
       id: profile.id,
       name: profile.name,
       protocol: profile.protocol as ProviderProtocol,
       baseUrl: profile.base_url || undefined,
       apiFamily: (profile.api_family as 'responses' | 'chat-completions' | null) || undefined,
-      toolStrategy: 'none',
+      toolStrategy: toolsVerified ? 'native' : 'none',
       authMode: profile.auth_mode,
       authRef: profile.auth_ref || undefined,
     },

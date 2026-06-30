@@ -48,11 +48,15 @@ export interface RunnerConfig {
     protocol: 'native' | 'openai-compatible' | 'claude-compatible' | 'local-http';
     baseUrl?: string;
     apiFamily?: 'responses' | 'chat-completions';
-    toolStrategy: 'none';
+    toolStrategy: 'none' | 'native';
     authMode: string;
     authRef?: string;
   };
   agentProfile?: RunnerAgentProfile;
+  sessionRuntimePlan?: {
+    runtime: { runtimeId: string };
+    capabilities: Array<{ id: string; adapter: string; entrypoint: string }>;
+  };
 }
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -86,6 +90,7 @@ export function loadConfig(): RunnerConfig {
     requestSystemInstructions: (raw.requestSystemInstructions as string) || undefined,
     providerProfile: (raw.providerProfile as RunnerConfig['providerProfile']) || undefined,
     agentProfile: (raw.agentProfile as RunnerAgentProfile) || undefined,
+    sessionRuntimePlan: (raw.sessionRuntimePlan as RunnerConfig['sessionRuntimePlan']) || undefined,
   };
 
   return _config;

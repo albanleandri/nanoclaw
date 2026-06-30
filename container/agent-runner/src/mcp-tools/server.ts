@@ -32,6 +32,16 @@ export function registerTools(tools: McpToolDefinition[]): void {
   }
 }
 
+export function listRegisteredToolDefinitions(): McpToolDefinition[] {
+  return [...allTools];
+}
+
+export async function callRegisteredTool(name: string, args: Record<string, unknown>) {
+  const tool = toolMap.get(name);
+  if (!tool) return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+  return tool.handler(args);
+}
+
 export async function startMcpServer(): Promise<void> {
   const server = new Server({ name: 'nanoclaw', version: '2.0.0' }, { capabilities: { tools: {} } });
 
@@ -41,11 +51,7 @@ export async function startMcpServer(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const tool = toolMap.get(name);
-    if (!tool) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
-    }
-    return tool.handler(args ?? {});
+    return callRegisteredTool(name, args ?? {});
   });
 
   const transport = new StdioServerTransport();

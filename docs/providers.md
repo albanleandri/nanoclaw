@@ -3,11 +3,15 @@
 NanoClaw separates installed provider code from local endpoint configuration:
 
 - A **provider descriptor** states which runtime is installed, its auth/model metadata, and its actual capabilities.
+- A **runtime descriptor** identifies the orchestration harness (`claude-sdk`, `codex-app-server`, or `openai-protocol-loop`) and derives its capability and continuation facts from the provider descriptor.
+- A **model endpoint profile** is the runtime-neutral view of a DB-backed provider profile.
 - A **provider profile** selects a descriptor and adds local settings such as endpoint, API family, model, and a OneCLI secret reference.
 - A **container provider** executes turns inside the Bun agent-runner.
 - An optional **host contribution** supplies provider-specific mounts or environment.
 
 Claude remains the default. Codex remains a native app-server provider. `openai-compatible` is a generic, text-only endpoint adapter; it is not the Codex runtime.
+
+The runtime/model split is currently additive. Spawn still uses the compatibility provider fields, while the host resolves an `EffectiveRuntimeSelection` in shadow and verifies model, effort, profile, and state-key parity. Explicit runtime IDs are not yet persisted.
 
 ## Operator commands
 
@@ -45,17 +49,32 @@ The host writes a per-session `container.runtime.json` and mounts it at `/worksp
 
 Continuation and transcript state is scoped by profile plus a non-secret endpoint/model fingerprint. Two profiles using the same adapter cannot read each other's state. The generic adapter stores a bounded normalized transcript in the container-owned `outbound.db` so stateless endpoints retain context across container restarts.
 
+## Capability compilation
+
+Before spawn, the host compiles a session runtime plan from code-owned capability manifests, the selected runtime descriptor, policy, and deterministic local availability checks. The initial built-ins cover message delivery, task scheduling, browser MCP access, and workspace editing.
+
+Required capability loss throws before container materialization. Explicitly optional loss is recorded as rejected instead. Claude and Codex retain their existing MCP configuration byte-for-byte. The `openai-protocol-loop` runtime always receives an empty `mcpServers` map; verified tools are supplied only through compiled `protocol-tool` bindings.
+
+For a verified generic profile, the compiled `SessionRuntimePlan` is embedded in the existing per-session runtime JSON. The runner exposes only code-owned NanoClaw tools named by that plan. DB-backed capability selection and skill-declared requirements remain later work.
+
 ## Generic endpoint limitations
 
-The initial generic adapter supports Responses and Chat Completions streaming text. It:
+The generic adapter supports Responses and Chat Completions streaming text. It:
 
 - sends bounded provider-neutral instructions with every request;
 - queues follow-ups and acknowledges them only after their result;
 - classifies auth, quota, rate-limit, context, transient, and invalid-request failures;
-- does not expose MCP or function calling;
+- stays text-only until `ncl providers verify-tools --id <profile> [--agent-group-id <group>]` proves function calling through the real credential path;
+- on verified profiles, executes only compiled canonical tools with strict argument validation, sequential execution, per-turn duplicate-call suppression, at most eight calls per iteration, at most eight iterations, and 64 KiB bounded tool results;
 - reports media as unsupported.
 
-Switching a tool-dependent group to this adapter is a capability downgrade. Do not describe generic function calling as MCP support.
+Tool verification is fingerprinted to provider, protocol, endpoint, API family, and model. Any mismatch fails closed to text-only. Generic function calling is not MCP support: arbitrary external MCP discovery remains unavailable.
+
+To roll back immediately, set the profile tool strategy to `none` and restart assigned groups. Do not retain `native` while removing runner broker code.
+
+## Durable cross-agent tasks
+
+Durable task contracts are provider-neutral. Claude, Codex, and a probe-verified generic profile use the same canonical task tools and central event lifecycle. The assignee always executes with its own runtime/model/profile and security policy; provider preference in the envelope cannot override compatibility or grant capabilities. Unverified generic profiles remain unable to invoke protocol tools.
 
 ## Installing a native provider
 
@@ -63,10 +82,11 @@ An `/add-<provider>` skill must install and guard:
 
 1. the container `AgentProvider` and container barrel import;
 2. a provider descriptor and descriptor barrel import;
-3. an optional host contribution and host barrel import;
-4. pinned runtime dependencies;
-5. auth/setup verification where required;
-6. result, error, continuation, and follow-up tests;
-7. safe removal instructions that refuse to remove an in-use provider.
+3. a derived runtime descriptor and runtime descriptor barrel import;
+4. an optional host contribution and host barrel import;
+5. pinned runtime dependencies;
+6. auth/setup verification where required;
+7. result, error, continuation, follow-up, and capability-matrix tests;
+8. safe removal instructions that refuse to remove an in-use provider.
 
 An OpenAI-compatible brand normally needs only a profile, not copied TypeScript provider code. A private/custom API needs request/response and error fixtures, unattended authentication details, and explicit continuation/model semantics before a native adapter can be implemented.

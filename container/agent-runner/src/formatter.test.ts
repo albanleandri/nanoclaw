@@ -24,12 +24,7 @@ afterEach(() => {
   closeSessionDb();
 });
 
-function insertMessage(
-  id: string,
-  kind: string,
-  content: object,
-  opts?: { timestamp?: string },
-) {
+function insertMessage(id: string, kind: string, content: object, opts?: { timestamp?: string }) {
   const timestamp = opts?.timestamp ?? new Date().toISOString();
   getInboundDb()
     .prepare(
@@ -88,6 +83,39 @@ describe('multi-message chat batches', () => {
     expect(firstIdx).toBeGreaterThan(0);
     expect(secondIdx).toBeGreaterThan(firstIdx);
     expect(thirdIdx).toBeGreaterThan(secondIdx);
+  });
+});
+
+describe('durable agent task envelopes', () => {
+  it('formats a bounded task assignment with correlation and tool instructions', () => {
+    insertMessage('task-1', 'agent-task', {
+      taskId: 'task-1',
+      requesterAgentGroupId: 'requester',
+      assigneeAgentGroupId: 'assignee',
+      goal: 'Review <unsafe>',
+      context: 'Focus on correctness',
+      requiredCapabilities: ['repo.edit'],
+      artifactPolicy: 'files',
+      scope: 'agent-delegation',
+    });
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('<agent_task id="task-1" requester="requester"');
+    expect(result).toContain('Review &lt;unsafe&gt;');
+    expect(result).toContain('complete_agent_task');
+  });
+
+  it('formats correlated task events and cancellation', () => {
+    insertMessage('event-1', 'agent-task-event', {
+      taskId: 'task-1',
+      eventSeq: 3,
+      assigneeAgentGroupId: 'assignee',
+      event: { type: 'progress', message: 'halfway' },
+    });
+    insertMessage('cancel-1', 'agent-task-cancel', { taskId: 'task-2' });
+    const result = formatMessages(getPendingMessages());
+    expect(result).toContain('<agent_task_event id="task-1" seq="3" type="progress"');
+    expect(result).toContain('halfway');
+    expect(result).toContain('<agent_task_cancel id="task-2"');
   });
 });
 
@@ -171,9 +199,7 @@ describe('stripInternalTags', () => {
   });
 
   it('strips multi-line internal tags', () => {
-    expect(stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world')).toBe(
-      'hello  world',
-    );
+    expect(stripInternalTags('hello <internal>\nsecret\nstuff\n</internal> world')).toBe('hello  world');
   });
 
   it('strips multiple internal tag blocks', () => {
@@ -189,8 +215,6 @@ describe('stripInternalTags', () => {
   });
 
   it('preserves content that surrounds internal tags', () => {
-    expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe(
-      'The answer is 42',
-    );
+    expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe('The answer is 42');
   });
 });

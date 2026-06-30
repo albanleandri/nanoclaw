@@ -27,7 +27,7 @@ function publicJobName(job: JobRecord): string {
 
 function findConversationJob(content: Record<string, unknown>, session: Session): JobRecord | undefined {
   const explicit = typeof content.jobId === 'string' && content.jobId.trim() ? getJob(content.jobId.trim()) : undefined;
-  if (explicit) return explicit;
+  if (explicit) return explicit.agent_group_id === session.agent_group_id ? explicit : undefined;
 
   const channelType = (content.channelType as string | undefined) ?? null;
   const platformId = (content.platformId as string | undefined) ?? null;
@@ -99,6 +99,10 @@ registerDeliveryAction(
     const target = findConversationJob(content, session);
     if (!target) {
       await deliverToOrigin(session, content, 'No active job found for this conversation.');
+      return;
+    }
+    if (target.type === 'agent_task') {
+      await deliverToOrigin(session, content, 'Use cancel_agent_task for durable delegated tasks.');
       return;
     }
     const job = cancelJob(target.id);

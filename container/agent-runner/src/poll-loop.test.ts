@@ -416,23 +416,17 @@ describe('processQuery heartbeat', () => {
       },
     };
 
-    const running = processQuery(
-      query,
-      extractRouting([]),
-      ['m-initial'],
-      'mock',
-      {
-        postResultHeartbeatMs: 5,
-        activePollIntervalMs: 5,
-        getPendingMessages: () => {
-          if (pendingReturned) return [];
-          pendingReturned = true;
-          return [followUpRow('m-follow-up')];
-        },
-        markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
-        markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+    const running = processQuery(query, extractRouting([]), ['m-initial'], 'mock', {
+      postResultHeartbeatMs: 5,
+      activePollIntervalMs: 5,
+      getPendingMessages: () => {
+        if (pendingReturned) return [];
+        pendingReturned = true;
+        return [followUpRow('m-follow-up')];
       },
-    );
+      markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
+      markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+    });
 
     try {
       await waitFor(() => ackStatus.get('m-follow-up') === 'processing' && pushedAck !== null);
@@ -470,23 +464,17 @@ describe('processQuery heartbeat', () => {
       },
     };
 
-    const running = processQuery(
-      query,
-      extractRouting([]),
-      ['m-initial'],
-      'mock',
-      {
-        postResultHeartbeatMs: 5,
-        activePollIntervalMs: 5,
-        getPendingMessages: () => {
-          if (pendingReturned) return [];
-          pendingReturned = true;
-          return [followUpRow('m-follow-up')];
-        },
-        markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
-        markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+    const running = processQuery(query, extractRouting([]), ['m-initial'], 'mock', {
+      postResultHeartbeatMs: 5,
+      activePollIntervalMs: 5,
+      getPendingMessages: () => {
+        if (pendingReturned) return [];
+        pendingReturned = true;
+        return [followUpRow('m-follow-up')];
       },
-    );
+      markProcessing: (ids) => ids.forEach((id) => ackStatus.set(id, 'processing')),
+      markCompleted: (ids) => ids.forEach((id) => ackStatus.set(id, 'completed')),
+    });
 
     try {
       await waitFor(() => ackStatus.get('m-follow-up') === 'processing' && pushedAck !== null);
@@ -721,7 +709,8 @@ describe('auth error notification', () => {
     const routing = extractRouting(messages);
     const provider = new MockProvider(
       {},
-      () => 'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired"}}',
+      () =>
+        'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired"}}',
     );
     const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
 
@@ -849,3 +838,113 @@ describe('isCorruptionError', () => {
     expect(isCorruptionError('')).toBe(false);
   });
 });
+
+describe('processQuery terminal outcome', () => {
+  it('returns outcome "result" when the provider produces a result', async () => {
+    const provider = new MockProvider({}, () => '<message to="default">ok</message>');
+    const query = provider.query({ prompt: 'hi', cwd: '/tmp' });
+    setTimeout(() => query.end(), 20);
+
+    const result = await processQuery(query, extractRouting([]), ['m1'], 'mock');
+
+    expect(result.outcome).toBe('result');
+  });
+
+  it('returns outcome "terminal-error" when the provider emits a quota error', async () => {
+    const provider = new MockProvider({}, undefined, true);
+    const query = provider.query({ prompt: 'hi', cwd: '/tmp' });
+
+    const result = await processQuery(query, extractRouting([]), ['m1'], 'mock');
+
+    expect(result.outcome).toBe('terminal-error');
+  });
+
+  it('surfaces an error and completes the batch when the stream closes without a terminal event', async () => {
+    insertRoutedTerminalTestMessage();
+    const completed = new Set<string>();
+    const query = terminalTestQuery(async function* () {
+      yield { type: 'init', continuation: 'sess-1' };
+    });
+
+    const result = await processQuery(query, extractRouting(getPendingMessages()), ['m1'], 'mock', {
+      markCompleted: (ids) => ids.forEach((id) => completed.add(id)),
+    });
+
+    expect(result.outcome).toBe('silent-close');
+    expect(completed.has('m1')).toBe(true);
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect((JSON.parse(out[0].content) as { text: string }).text).toContain('without producing a response');
+    expect(out[0].platform_id).toBe('chat-9');
+    expect(out[0].channel_type).toBe('telegram');
+    expect(out[0].thread_id).toBe('thread-3');
+  });
+
+  it('treats a stream that yields no events at all as a silent close', async () => {
+    insertRoutedTerminalTestMessage();
+    const completed = new Set<string>();
+    const query = terminalTestQuery(async function* () {});
+
+    const result = await processQuery(query, extractRouting(getPendingMessages()), ['m1'], 'mock', {
+      markCompleted: (ids) => ids.forEach((id) => completed.add(id)),
+    });
+
+    expect(result.outcome).toBe('silent-close');
+    expect(completed.has('m1')).toBe(true);
+    expect(getUndeliveredMessages()).toHaveLength(1);
+  });
+
+  it('does not surface an error when the host stop signal aborts the turn', async () => {
+    insertRoutedTerminalTestMessage();
+    const completed = new Set<string>();
+    const controller = new AbortController();
+    let release: (() => void) | null = null;
+    const query: AgentQuery = {
+      push() {},
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'init', continuation: 'sess-1' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+
+    const running = processQuery(query, extractRouting(getPendingMessages()), ['m1'], 'mock', {
+      stopSignal: controller.signal,
+      markCompleted: (ids) => ids.forEach((id) => completed.add(id)),
+    });
+    await sleep(0);
+    controller.abort();
+    const result = await running;
+
+    expect(result.outcome).toBe('interrupted');
+    expect(completed.has('m1')).toBe(false);
+    expect(getUndeliveredMessages()).toHaveLength(0);
+  });
+});
+
+function insertRoutedTerminalTestMessage(): void {
+  getInboundDb()
+    .prepare(
+      `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, thread_id, content)
+       VALUES ('m1', 'chat', datetime('now'), 'pending', 'chat-9', 'telegram', 'thread-3', '{"text":"hi"}')`,
+    )
+    .run();
+}
+
+function terminalTestQuery(events: () => AsyncGenerator<ProviderEvent, void, unknown>): AgentQuery {
+  return {
+    push() {},
+    end() {},
+    abort() {},
+    events: { [Symbol.asyncIterator]: events },
+  };
+}

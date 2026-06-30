@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ContainerConfig } from '../container-config.js';
+import { providerToolFingerprint } from '../db/provider-profiles.js';
 import type { ProviderProfileRow, Session } from '../types.js';
 import { resolveEffectiveProviderConfig } from './effective-provider.js';
 
@@ -82,5 +83,45 @@ describe('effective provider resolution', () => {
         () => disabled,
       ),
     ).toThrow(/disabled/);
+  });
+
+  it('enables endpoint tools only for matching verification metadata', () => {
+    const profile: ProviderProfileRow = {
+      id: 'tools',
+      name: 'Tools',
+      provider_name: 'openai-compatible',
+      protocol: 'openai-compatible',
+      base_url: 'https://models.example.test/v1',
+      api_family: 'responses',
+      tool_strategy: 'native',
+      tool_verified_at: '2026-06-28T12:00:00.000Z',
+      tool_verification_fingerprint: null,
+      default_model: 'model',
+      default_effort: null,
+      auth_mode: 'none',
+      auth_ref: null,
+      capability_overrides: '{}',
+      allow_insecure_http: 0,
+      enabled: 1,
+      created_at: '',
+      updated_at: '',
+    };
+    profile.tool_verification_fingerprint = providerToolFingerprint(profile);
+    const result = resolveEffectiveProviderConfig(
+      { agent_provider: null, provider_profile_id: profile.id },
+      { ...config, model: undefined },
+      () => profile,
+    );
+    expect(result.profile?.toolStrategy).toBe('native');
+    expect(result.capabilities?.toolCalling).toBe('native');
+
+    profile.tool_verification_fingerprint = 'stale';
+    const stale = resolveEffectiveProviderConfig(
+      { agent_provider: null, provider_profile_id: profile.id },
+      { ...config, model: undefined },
+      () => profile,
+    );
+    expect(stale.profile?.toolStrategy).toBe('none');
+    expect(stale.capabilities?.toolCalling).toBe('none');
   });
 });

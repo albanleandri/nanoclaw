@@ -19,6 +19,7 @@ import { collectInstructionSections, type InstructionSection } from './instructi
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 import type { EffectiveProviderConfig, EffectiveProviderProfile } from './providers/effective-provider.js';
 import type { ProviderCapabilities } from './providers/provider-descriptor.js';
+import type { SessionRuntimePlan } from './capabilities/session-runtime-plan.js';
 
 export interface McpServerConfig {
   command: string;
@@ -55,6 +56,7 @@ export interface ContainerConfig {
   model?: string;
   effort?: string;
   agentProfile?: AgentProfile;
+  sessionRuntimePlan?: SessionRuntimePlan;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -136,6 +138,7 @@ export function materializeSessionRuntimeJson(
   group: AgentGroup,
   groupConfig: ContainerConfig,
   effective: EffectiveProviderConfig,
+  sessionRuntimePlan?: SessionRuntimePlan,
 ): { config: ContainerConfig; path: string } {
   const config: ContainerConfig = {
     ...groupConfig,
@@ -145,6 +148,7 @@ export function materializeSessionRuntimeJson(
     providerProfile: effective.profile,
     runtimeStateKey: effective.runtimeStateKey,
     providerCapabilities: effective.capabilities,
+    ...(sessionRuntimePlan ? { sessionRuntimePlan } : {}),
   };
   if (effective.profile && effective.profile.protocol !== 'native') {
     config.requestSystemInstructions = buildRequestSystemInstructions(group, config);

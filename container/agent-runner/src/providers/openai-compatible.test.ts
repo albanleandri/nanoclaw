@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { OpenAICompatibleProvider } from './openai-compatible.js';
 import type { ProviderEvent, ProviderStateStore } from './types.js';
+import { ProtocolToolError, type ProtocolToolBroker } from '../tool-loop/types.js';
 
 function memoryStore(): ProviderStateStore {
   const values = new Map<string, string>();
@@ -23,6 +24,8 @@ function provider(
   httpFetch: typeof fetch,
   store = memoryStore(),
   apiFamily: 'responses' | 'chat-completions' = 'chat-completions',
+  protocolToolBroker?: ProtocolToolBroker,
+  requestTimeoutMs?: number,
 ): OpenAICompatibleProvider {
   return new OpenAICompatibleProvider({
     model: 'test-model',
@@ -35,10 +38,12 @@ function provider(
       protocol: 'openai-compatible',
       baseUrl: 'https://example.test/v1',
       apiFamily,
-      toolStrategy: 'none',
+      toolStrategy: protocolToolBroker ? 'native' : 'none',
       authMode: 'onecli-secret',
       authRef: 'Test',
     },
+    protocolToolBroker,
+    requestTimeoutMs,
   });
 }
 
@@ -149,5 +154,372 @@ describe('OpenAICompatibleProvider', () => {
     expect(await nextOfType(query.events[Symbol.asyncIterator](), 'error')).toMatchObject({
       classification: 'invalid_request',
     });
+  });
+
+  it('executes a bounded tool call and returns its result to chat completions', async () => {
+    const requests: any[] = [];
+    let executions = 0;
+    const broker: ProtocolToolBroker = {
+      list: () => [
+        {
+          capabilityId: 'nanoclaw.send-message',
+          name: 'send_message',
+          description: 'Send',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+        },
+      ],
+      execute: async (call) => {
+        executions += 1;
+        return { callId: call.id, output: 'sent', isError: false };
+      },
+    };
+    const fetchMock = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      if (requests.length === 1) {
+        return sse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: 'call-1', function: { name: 'send_message', arguments: '{"text":"hi"}' } },
+                  ],
+                },
+              },
+            ],
+          },
+        ]);
+      }
+      return sse([{ choices: [{ delta: { content: '<message to="default">done</message>' } }] }]);
+    }) as typeof fetch;
+    const instance = provider(fetchMock, memoryStore(), 'chat-completions', broker);
+    const query = instance.query({ prompt: 'send it', cwd: '/' });
+    const result = await nextOfType(query.events[Symbol.asyncIterator](), 'result');
+    expect(result).toMatchObject({ text: '<message to="default">done</message>' });
+    expect(executions).toBe(1);
+    expect(requests[0].tools[0].function.name).toBe('send_message');
+    expect(requests[1].messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: 'tool', tool_call_id: 'call-1' })]),
+    );
+  });
+
+  it('returns correlated function outputs to the Responses API', async () => {
+    const requests: any[] = [];
+    const broker: ProtocolToolBroker = {
+      list: () => [
+        {
+          capabilityId: 'nanoclaw.send-message',
+          name: 'send_message',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+        },
+      ],
+      execute: async (call) => ({ callId: call.id, output: 'sent', isError: false }),
+    };
+    const fetchMock = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return requests.length === 1
+        ? new Response(
+            JSON.stringify({
+              output: [
+                {
+                  type: 'function_call',
+                  call_id: 'call-r',
+                  name: 'send_message',
+                  arguments: '{"text":"hi"}',
+                },
+              ],
+            }),
+            { headers: { 'content-type': 'application/json' } },
+          )
+        : new Response(JSON.stringify({ output_text: 'done' }), {
+            headers: { 'content-type': 'application/json' },
+          });
+    }) as typeof fetch;
+    const query = provider(fetchMock, memoryStore(), 'responses', broker).query({ prompt: 'send it', cwd: '/' });
+    expect(await nextOfType(query.events[Symbol.asyncIterator](), 'result')).toMatchObject({ text: 'done' });
+    expect(requests[1].input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'function_call_output', call_id: 'call-r', output: 'sent' }),
+      ]),
+    );
+  });
+
+  it('preserves each protocol tool failure classification as exactly one terminal error', async () => {
+    for (const classification of ['tool_invalid', 'tool_unauthorized', 'tool_execution'] as const) {
+      const broker: ProtocolToolBroker = {
+        list: () => [
+          {
+            capabilityId: 'nanoclaw.send-message',
+            name: 'send_message',
+            inputSchema: { type: 'object' },
+          },
+        ],
+        execute: async () => {
+          throw new ProtocolToolError(`failed: ${classification}`, classification);
+        },
+      };
+      const fetchMock = (async () =>
+        sse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [{ index: 0, id: 'call-x', function: { name: 'send_message', arguments: '{}' } }],
+                },
+              },
+            ],
+          },
+        ])) as typeof fetch;
+
+      const query = provider(fetchMock, memoryStore(), 'chat-completions', broker).query({
+        prompt: 'send it',
+        cwd: '/',
+      });
+      const iterator = query.events[Symbol.asyncIterator]();
+      expect(await nextOfType(iterator, 'error')).toMatchObject({ classification, retryable: false });
+      expect((await iterator.next()).done).toBe(true);
+    }
+  });
+
+  it('executes multiple calls sequentially, emits liveness, and persists only final text', async () => {
+    const requests: any[] = [];
+    const order: string[] = [];
+    const store = memoryStore();
+    const broker: ProtocolToolBroker = {
+      list: () => [
+        {
+          capabilityId: 'nanoclaw.send-message',
+          name: 'send_message',
+          inputSchema: { type: 'object' },
+        },
+      ],
+      execute: async (call) => {
+        order.push(call.id);
+        return { callId: call.id, output: `result:${call.id}`, isError: false };
+      },
+    };
+    const fetchMock = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return requests.length === 1
+        ? sse([
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      { index: 0, id: 'call-1', function: { name: 'send_message', arguments: '{}' } },
+                      { index: 1, id: 'call-2', function: { name: 'send_message', arguments: '{}' } },
+                    ],
+                  },
+                },
+              ],
+            },
+          ])
+        : sse([{ choices: [{ delta: { content: 'final' } }] }]);
+    }) as typeof fetch;
+    const query = provider(fetchMock, store, 'chat-completions', broker).query({ prompt: 'run both', cwd: '/' });
+    const events: ProviderEvent[] = [];
+    for await (const event of query.events) {
+      events.push(event);
+      if (event.type === 'result') {
+        query.end();
+      }
+    }
+
+    expect(order).toEqual(['call-1', 'call-2']);
+    expect(requests[1].messages.slice(-2)).toEqual([
+      { role: 'tool', tool_call_id: 'call-1', content: 'result:call-1' },
+      { role: 'tool', tool_call_id: 'call-2', content: 'result:call-2' },
+    ]);
+    expect(events.filter((event) => event.type === 'activity')).toHaveLength(4);
+    expect(events.filter((event) => event.type === 'result')).toEqual([{ type: 'result', text: 'final' }]);
+    expect(JSON.parse(store.get('transcript-v1') ?? '[]')).toEqual([
+      { role: 'user', content: 'run both' },
+      { role: 'assistant', content: 'final' },
+    ]);
+  });
+
+  it('acknowledges a queued follow-up only after its final post-tool result', async () => {
+    let request = 0;
+    const broker: ProtocolToolBroker = {
+      list: () => [{ capabilityId: 'test', name: 'run', inputSchema: { type: 'object' } }],
+      execute: async (call) => ({ callId: call.id, output: 'ok', isError: false }),
+    };
+    const fetchMock = (async () => {
+      request += 1;
+      return request % 2 === 1
+        ? sse([
+            {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [{ index: 0, id: `call-${request}`, function: { name: 'run', arguments: '{}' } }],
+                  },
+                },
+              ],
+            },
+          ])
+        : sse([{ choices: [{ delta: { content: `final-${request / 2}` } }] }]);
+    }) as typeof fetch;
+    const query = provider(fetchMock, memoryStore(), 'chat-completions', broker).query({ prompt: 'first', cwd: '/' });
+    const iterator = query.events[Symbol.asyncIterator]();
+    expect(await nextOfType(iterator, 'result')).toMatchObject({ text: 'final-1' });
+    let acknowledged = false;
+    query.push('second', () => {
+      acknowledged = true;
+    });
+    expect(acknowledged).toBe(false);
+    expect(await nextOfType(iterator, 'result')).toMatchObject({ text: 'final-2' });
+    expect(acknowledged).toBe(true);
+    query.end();
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  it('classifies malformed calls and call-count overflow as terminal tool-loop errors', async () => {
+    const broker: ProtocolToolBroker = {
+      list: () => [{ capabilityId: 'test', name: 'run', inputSchema: { type: 'object' } }],
+      execute: async (call) => ({ callId: call.id, output: 'ok', isError: false }),
+    };
+    const malformed = provider(
+      (async () =>
+        sse([
+          {
+            choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'run', arguments: '{}' } }] } }],
+          },
+        ])) as typeof fetch,
+      memoryStore(),
+      'chat-completions',
+      broker,
+    ).query({ prompt: 'bad', cwd: '/' });
+    const malformedIterator = malformed.events[Symbol.asyncIterator]();
+    expect(await nextOfType(malformedIterator, 'error')).toMatchObject({
+      classification: 'tool_invalid',
+      retryable: false,
+    });
+    expect((await malformedIterator.next()).done).toBe(true);
+
+    const calls = Array.from({ length: 9 }, (_, index) => ({
+      index,
+      id: `call-${index}`,
+      function: { name: 'run', arguments: '{}' },
+    }));
+    const overflow = provider(
+      (async () => sse([{ choices: [{ delta: { tool_calls: calls } }] }])) as typeof fetch,
+      memoryStore(),
+      'chat-completions',
+      broker,
+    ).query({ prompt: 'too many', cwd: '/' });
+    const overflowIterator = overflow.events[Symbol.asyncIterator]();
+    expect(await nextOfType(overflowIterator, 'error')).toMatchObject({
+      classification: 'tool_loop_limit',
+      retryable: false,
+    });
+    expect((await overflowIterator.next()).done).toBe(true);
+  });
+
+  it('stops after the iteration limit with exactly one terminal error', async () => {
+    let requests = 0;
+    const broker: ProtocolToolBroker = {
+      list: () => [{ capabilityId: 'test', name: 'run', inputSchema: { type: 'object' } }],
+      execute: async (call) => ({ callId: call.id, output: 'again', isError: false }),
+    };
+    const query = provider(
+      (async () => {
+        requests += 1;
+        return sse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [{ index: 0, id: `call-${requests}`, function: { name: 'run', arguments: '{}' } }],
+                },
+              },
+            ],
+          },
+        ]);
+      }) as typeof fetch,
+      memoryStore(),
+      'chat-completions',
+      broker,
+    ).query({ prompt: 'loop', cwd: '/' });
+    const iterator = query.events[Symbol.asyncIterator]();
+    expect(await nextOfType(iterator, 'error')).toMatchObject({ classification: 'tool_loop_limit' });
+    expect((await iterator.next()).done).toBe(true);
+    expect(requests).toBe(8);
+  });
+
+  it('times out a request once and does not acknowledge a failed turn', async () => {
+    let acknowledged = false;
+    const fetchMock = ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      })) as typeof fetch;
+    const query = provider(fetchMock, memoryStore(), 'chat-completions', undefined, 5).query({
+      prompt: 'timeout',
+      cwd: '/',
+    });
+    query.push('queued', () => {
+      acknowledged = true;
+    });
+    const iterator = query.events[Symbol.asyncIterator]();
+    const emergencyAbort = setTimeout(() => query.abort(), 100);
+    const event = await nextOfType(iterator, 'error');
+    clearTimeout(emergencyAbort);
+    expect(event).toMatchObject({ classification: 'transient', retryable: false });
+    expect(event.type === 'error' ? event.message : '').toMatch(/timed out/);
+    expect(acknowledged).toBe(false);
+    expect((await iterator.next()).done).toBe(true);
+  });
+
+  it('does not start a second call after the query is aborted', async () => {
+    let releaseFirst!: () => void;
+    let startedFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      startedFirst = resolve;
+    });
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const executed: string[] = [];
+    const broker: ProtocolToolBroker = {
+      list: () => [{ capabilityId: 'test', name: 'run', inputSchema: { type: 'object' } }],
+      execute: async (call) => {
+        executed.push(call.id);
+        if (call.id === 'call-1') {
+          startedFirst();
+          await firstBlocked;
+        }
+        return { callId: call.id, output: 'ok', isError: false };
+      },
+    };
+    const query = provider(
+      (async () =>
+        sse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: 'call-1', function: { name: 'run', arguments: '{}' } },
+                    { index: 1, id: 'call-2', function: { name: 'run', arguments: '{}' } },
+                  ],
+                },
+              },
+            ],
+          },
+        ])) as typeof fetch,
+      memoryStore(),
+      'chat-completions',
+      broker,
+    ).query({ prompt: 'abort', cwd: '/' });
+    const iterator = query.events[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.next();
+    const blocked = iterator.next();
+    await firstStarted;
+    query.abort();
+    releaseFirst();
+    expect((await blocked).done).toBe(true);
+    expect(executed).toEqual(['call-1']);
   });
 });
