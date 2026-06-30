@@ -6,6 +6,7 @@ import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { registerProvider } from './provider-registry.js';
+import { normalizeProviderUsage } from './usage.js';
 import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
@@ -453,9 +454,14 @@ export class ClaudeProvider implements AgentProvider {
         if (message.type === 'system' && message.subtype === 'init') {
           yield { type: 'init', continuation: message.session_id };
         } else if (message.type === 'result') {
-          const result = message as { result?: string; is_error?: boolean; errors?: string[] };
+          const result = message as { result?: string; is_error?: boolean; errors?: string[]; usage?: unknown };
           const text = result.result ?? (result.errors && result.errors.length > 0 ? result.errors.join('\n') : null);
-          yield { type: 'result', text, isError: result.is_error === true };
+          yield {
+            type: 'result',
+            text,
+            isError: result.is_error === true,
+            usage: normalizeProviderUsage(result.usage),
+          };
           followUpAcks.shift()?.();
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };

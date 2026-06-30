@@ -96,6 +96,14 @@ export interface QueryInput {
   };
 }
 
+export interface ProviderUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  estimatedCostUsd?: number;
+  source: 'provider' | 'estimated' | 'unknown';
+}
+
 export interface McpServerConfig {
   command: string;
   args: string[];
@@ -138,8 +146,8 @@ export type ProviderEvent =
    * the turn as a non-success result; the poll loop should surface its text
    * even if it is not wrapped in message tags.
    */
-  | { type: 'result'; text: string | null; isError?: boolean }
-  | { type: 'error'; message: string; retryable: boolean; classification?: string }
+  | { type: 'result'; text: string | null; isError?: boolean; usage?: ProviderUsage }
+  | { type: 'error'; message: string; retryable: boolean; classification?: string; usage?: ProviderUsage }
   | { type: 'progress'; message: string }
   /**
    * Liveness signal. Providers MUST yield this on every underlying SDK

@@ -6,5 +6,6 @@ import './self-mod.js';
 import './web-browse.js';
 import './jobs.js';
 import './agent-tasks.js';
+import './session-search.js';
 
 export { listRegisteredToolDefinitions } from './server.js';

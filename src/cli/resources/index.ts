@@ -15,3 +15,6 @@ import './approvals.js';
 import './sessions.js';
 import './providers.js';
 import './schedule-admin-grants.js';
+import './auxiliary-routes.js';
+import './skills.js';
+import './audit-events.js';

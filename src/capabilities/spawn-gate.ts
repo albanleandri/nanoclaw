@@ -27,6 +27,7 @@ export function deriveCapabilityProfile(config: ContainerConfig): AgentCapabilit
     'nanoclaw.complete-agent-task',
     'nanoclaw.fail-agent-task',
     'nanoclaw.publish-agent-task-artifact',
+    'memory.session-search',
   ];
   const allowDegraded: string[] = [];
   if (Object.keys(config.mcpServers ?? {}).includes('browser')) {

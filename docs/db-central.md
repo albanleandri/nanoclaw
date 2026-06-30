@@ -366,6 +366,43 @@ Task state is monotonic (`queued → running → succeeded|failed|cancelled`), e
 
 - **Readers/writers:** `src/db/schedule-admin-grants.ts`, scheduling actions, CLI
 
+### 1.19 Auxiliary routing and session search
+
+Migration 023 adds `auxiliary_routes` and `auxiliary_invocations`.
+`auxiliary_routes` is keyed by agent group and typed role and enforces the
+nullable columns for `main`, `endpoint-profile`, `agent`, and `disabled`
+targets. `auxiliary_invocations` relates a `jobs.type='auxiliary_invocation'`
+row to its resolved target/runtime, optional isolated session, and normalized
+usage.
+
+Migration 024 adds `session_search_documents` plus the external-content
+`session_search_fts` FTS5 table and synchronization triggers. Documents are
+uniquely keyed by `(session_id, source_kind, message_id)`, scoped by
+`agent_group_id`, source-attributed, and deleted with their source
+session/group.
+
+- **Readers/writers:** `src/auxiliary/`, `src/db/auxiliary-*.ts`,
+  `src/session-search/`
+
+### 1.20 Skill provenance and capability audit
+
+Migration 025 adds `skill_installations` and append-only
+`skill_provenance_events`. An installation records the effective skill source,
+manifest version, approved and observed content hashes, approval actor/time,
+and one of `active`, `drifted`, `quarantined`, or `disabled`. Content is
+re-hashed before activation and approval; startup never approves a new hash.
+
+Migration 026 adds append-only `capability_audit_events`, keyed by stable event
+ID with a unique `(invocation_id, seq)`. Rows contain source-derived
+agent/session identity, runtime and capability identity, adapter/entrypoint,
+redacted argument hash, decision/result classification, duration, normalized
+usage, and timestamp. Raw arguments/results are intentionally absent. Reads
+must remain agent-group scoped; no automatic destructive retention job is
+installed.
+
+- **Readers/writers:** `src/skills/`, `src/db/skill-provenance.ts`,
+  `src/audit/`, skill/audit CLI resources
+
 ---
 
 ## 2. Migration system
@@ -389,6 +426,11 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 015 | `015-cli-scope.ts`                       | `ALTER TABLE container_configs ADD COLUMN cli_scope`                                                                                                                 |
 | 019 | `019-provider-profiles.ts`               | Provider profiles plus nullable group/session profile references                                                                                                     |
 | 020 | `020-schedule-admin-grants.ts`           | Generic schedule owner/admin grants                                                                                                                                  |
+| 022 | `022-agent-tasks.ts`                     | Durable cross-agent task ownership and correlation                                                                                                                   |
+| 023 | `023-auxiliary-routing.ts`               | Typed auxiliary routes and durable invocation relation                                                                                                               |
+| 024 | `024-session-search.ts`                  | Scoped session text metadata and FTS5 projection                                                                                                                     |
+| 025 | `025-skill-provenance.ts`                | Effective skill approval, observed hashes, drift state, and provenance events                                                                                        |
+| 026 | `026-capability-audit.ts`                | Redacted append-only canonical capability lifecycle events                                                                                                           |
 
 Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
 

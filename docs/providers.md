@@ -55,7 +55,14 @@ Before spawn, the host compiles a session runtime plan from code-owned capabilit
 
 Required capability loss throws before container materialization. Explicitly optional loss is recorded as rejected instead. Claude and Codex retain their existing MCP configuration byte-for-byte. The `openai-protocol-loop` runtime always receives an empty `mcpServers` map; verified tools are supplied only through compiled `protocol-tool` bindings.
 
-For a verified generic profile, the compiled `SessionRuntimePlan` is embedded in the existing per-session runtime JSON. The runner exposes only code-owned NanoClaw tools named by that plan. DB-backed capability selection and skill-declared requirements remain later work.
+For a verified generic profile, the compiled `SessionRuntimePlan` is embedded in the existing per-session runtime JSON. The runner exposes only code-owned NanoClaw tools named by that plan. Selected manifested skills contribute required capabilities before compilation; unapproved, drifted, incompatible, or unsatisfied skills fail before spawn. Manifest-less skills remain instruction-only during rollout.
+
+Canonical NanoClaw tool definitions are also the audit boundary for native MCP
+and protocol-loop execution. The runner emits redacted lifecycle records
+through `outbound.db`; the host validates the declared capability/version and
+source session before writing the central append-only audit table. Audit
+records contain a hash of non-sensitive validated arguments, never raw model
+or tool payloads.
 
 ## Generic endpoint limitations
 
@@ -75,6 +82,25 @@ To roll back immediately, set the profile tool strategy to `none` and restart as
 ## Durable cross-agent tasks
 
 Durable task contracts are provider-neutral. Claude, Codex, and a probe-verified generic profile use the same canonical task tools and central event lifecycle. The assignee always executes with its own runtime/model/profile and security policy; provider preference in the envelope cannot override compatibility or grant capabilities. Unverified generic profiles remain unable to invoke protocol tools.
+
+## Auxiliary roles and usage
+
+Auxiliary roles are explicit per-agent routes to `main`, an enabled endpoint
+profile, an authorized agent destination, or `disabled` (the default).
+Resolution uses the normal runtime/profile registries and compiles an empty
+capability set with disabled CLI and a read-only workspace. The durable
+invocation service records normalized terminal results and optional token
+usage; execution adapters remain responsible for using the existing
+container/OneCLI path.
+
+Provider result events may report input, output, and cached token counts.
+Missing values remain absent, and NanoClaw does not invent exact counts or
+prices. Current cost fields are reserved for explicitly marked estimates.
+
+`memory.session-search` is a canonical, side-effect-free capability. Claude and
+Codex receive it through the NanoClaw MCP server; verified generic profiles
+receive its compiled protocol-tool binding. The host derives agent scope and
+returns only bounded, source-attributed, untrusted excerpts.
 
 ## Installing a native provider
 

@@ -27,6 +27,7 @@ import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typ
 import { hasPoolBots, deliverViaPool } from './channels/telegram-pool.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
+import { tryIndexSessionMessage } from './session-search/indexer.js';
 
 const ACTIVE_POLL_MS = 1000;
 const SWEEP_POLL_MS = 60_000;
@@ -193,6 +194,16 @@ async function drainSession(session: Session): Promise<void> {
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
+        tryIndexSessionMessage({
+          agentGroupId: session.agent_group_id,
+          sessionId: session.id,
+          sourceKind: 'outbound',
+          messageId: msg.id,
+          timestamp: msg.timestamp,
+          kind: msg.kind,
+          channelType: msg.channel_type,
+          content: msg.content,
+        });
         deliveryAttempts.delete(msg.id);
 
         // Pause the typing indicator after a real user-facing message
@@ -236,6 +247,7 @@ async function drainSession(session: Session): Promise<void> {
 async function deliverMessage(
   msg: {
     id: string;
+    timestamp: string;
     kind: string;
     platform_id: string | null;
     channel_type: string | null;

@@ -77,6 +77,9 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 - **Per-agent workspace** — each agent group has a durable workspace, generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex), a materialized `container.json` with a neutral `agentProfile`, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
 - **Scheduled tasks** — one-shot or recurring jobs that wake the selected agent/provider and can message you back
 - **Durable agent delegation** — authorized agents can delegate correlated work to another agent, receive progress and files, and cancel it without sharing credentials or privileges
+- **Scoped session search** — agents can search normalized text from their own prior sessions through SQLite FTS5; results carry source IDs and never cross agent-group boundaries
+- **Auxiliary model routing foundation** — typed review, classification, compression, vision, memory, and reference-analysis roles resolve explicitly to the current runtime, a provider profile, another authorized agent, or disabled
+- **Skill provenance and capability audit** — optional strict container-skill manifests bind reviewed content hashes to capability/runtime requirements, while canonical tool calls emit redacted, correlated lifecycle events
 - **Web access** — search and fetch content from the web
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional per-container CPU/memory caps, optional OneCLI-only egress lockdown, optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation, or Apple Container as a macOS-native opt-in
 - **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
@@ -89,6 +92,7 @@ This fork stays close to upstream NanoClaw's host/container/session-DB architect
 - **First-class Codex runtime path** — Codex support is present in this tree, including provider adapters, generated `AGENTS.md`, Codex CLI install data, and container-side runner support.
 - **DB-backed per-group runtime config** — provider, model, effort, skills, MCP servers, CLI scope, and shared resources are selected per agent group instead of living only in instruction files.
 - **Fail-closed capability compilation** — code-owned capability manifests are resolved against the selected runtime and deterministic local availability before spawn; runtimes without tool support receive no MCP server configuration.
+- **Approval-gated manifested skills** — the effective built-in/custom skill directory is hashed deterministically; changed or unapproved manifested content is not activated, and its required capabilities are compiled before spawn.
 - **Shared resources across providers** — shared mounts and resources are resolved once and exposed through provider-specific docs and runtime config.
 - **Built-in Telegram adapter and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, and optional pool routing via explicit `bot_index`.
 - **Private skills submodule** — fork-specific skills can live in `container/skills/custom` as a private submodule while the public tree stays generic.

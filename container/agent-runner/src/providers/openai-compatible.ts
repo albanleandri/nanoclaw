@@ -9,6 +9,8 @@ import type {
 } from './types.js';
 import { readProtocolIteration, toolResultItems, toolSchemasForFamily } from '../tool-loop/openai-wire.js';
 import { ProtocolToolError } from '../tool-loop/types.js';
+import type { ProviderUsage } from './types.js';
+import { normalizeProviderUsage } from './usage.js';
 
 interface TranscriptMessage {
   role: 'user' | 'assistant';
@@ -73,7 +75,7 @@ function extractJsonText(family: 'responses' | 'chat-completions', value: unknow
 async function* readStreamingEvents(
   response: Response,
   family: 'responses' | 'chat-completions',
-): AsyncGenerator<{ type: 'activity' } | { type: 'text'; text: string }> {
+): AsyncGenerator<{ type: 'activity' } | { type: 'text'; text: string } | { type: 'usage'; usage: ProviderUsage }> {
   if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -92,6 +94,8 @@ async function* readStreamingEvents(
       if (!payload || payload === '[DONE]') continue;
       const event = JSON.parse(payload) as Record<string, any>;
       if (family === 'chat-completions') {
+        const usage = normalizeProviderUsage(event.usage);
+        if (usage) yield { type: 'usage', usage };
         const text = event.choices?.[0]?.delta?.content ?? '';
         if (text) {
           emittedText = true;
@@ -102,9 +106,13 @@ async function* readStreamingEvents(
           emittedText = true;
           yield { type: 'text', text: event.delta };
         }
-      } else if (event.type === 'response.completed' && !emittedText) {
-        const text = extractJsonText(family, event.response);
-        if (text) yield { type: 'text', text };
+      } else if (event.type === 'response.completed') {
+        const usage = normalizeProviderUsage(event.response?.usage);
+        if (usage) yield { type: 'usage', usage };
+        if (!emittedText) {
+          const text = extractJsonText(family, event.response);
+          if (text) yield { type: 'text', text };
+        }
       }
     }
   }
@@ -152,6 +160,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
           const transcript = loadTranscript(options.stateStore!);
           let terminalError: ProviderEvent | undefined;
           let resultText = '';
+          let usage: ProviderUsage | undefined;
           const family = options.providerProfile!.apiFamily!;
           const broker = options.providerProfile!.toolStrategy === 'native' ? options.protocolToolBroker : undefined;
           broker?.resetTurn?.();
@@ -222,10 +231,13 @@ export class OpenAICompatibleProvider implements AgentProvider {
               if (contentType.includes('text/event-stream')) {
                 for await (const event of readStreamingEvents(response, family)) {
                   if (event.type === 'activity') yield { type: 'activity' };
-                  else resultText += event.text;
+                  else if (event.type === 'text') resultText += event.text;
+                  else usage = event.usage;
                 }
               } else {
-                resultText = extractJsonText(family, await response.json());
+                const value = await response.json();
+                resultText = extractJsonText(family, value);
+                usage = normalizeProviderUsage((value as Record<string, unknown>).usage);
               }
               break;
             }
@@ -281,7 +293,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
           transcript.push({ role: 'user', content: turn.prompt }, { role: 'assistant', content: resultText });
           saveTranscript(options.stateStore!, transcript);
           turn.ack?.();
-          yield { type: 'result', text: resultText };
+          yield { type: 'result', text: resultText, usage };
         }
       },
     };

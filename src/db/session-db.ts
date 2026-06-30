@@ -269,6 +269,7 @@ export function getContainerState(outDb: Database.Database): ContainerState | nu
 
 export interface OutboundMessage {
   id: string;
+  timestamp: string;
   kind: string;
   platform_id: string | null;
   channel_type: string | null;

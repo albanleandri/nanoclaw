@@ -31,7 +31,7 @@ Provider descriptors are installed code metadata. Provider profiles are local DB
 
 Runtime descriptors separate the orchestration harness from endpoint/model settings. The three core mappings are `claude → claude-sdk`, `codex → codex-app-server`, and `openai-compatible → openai-protocol-loop`. Their capability and continuation facts are derived from provider descriptors during the compatibility migration. At spawn, the host resolves this runtime selection in shadow and asserts parity with the effective provider config.
 
-The host then compiles code-owned capability manifests against the runtime, local availability, and session policy. Required unsupported capabilities fail before spawn. Tool-less runtimes receive no MCP server configuration; tool-capable runtimes retain the original configuration unchanged. The initial capability profile is deliberately small, with DB-backed and skill-declared capability selection deferred.
+The host then compiles code-owned capability manifests against the runtime, local availability, session policy, and approved requirements declared by selected container skills. Required unsupported capabilities fail before spawn. Tool-less runtimes receive no MCP server configuration; tool-capable runtimes retain the original configuration unchanged. Optional skill capabilities may degrade explicitly; required skill capabilities may not.
 
 Verified OpenAI-compatible profiles embed their protocol-tool bindings in the
 session runtime JSON. The runner converts only those bindings into Responses or
@@ -438,6 +438,51 @@ Ordinary agent messages remain conversational and uncorrelated. Durable delegati
 Progress, blocked, artifact, completion, failure, and cancellation operations return as host-validated `system` actions. The host checks requester/assignee ownership, applies monotonic idempotent state transitions, appends one correlated event, and writes `agent-task-event:<taskId>:<seq>` into the original requester session. Cancellation also writes `agent-task-cancel:<taskId>` to the assignee.
 
 The assignee uses its own provider profile, credentials, CLI scope, mounts, workspace policy, and compiled capabilities. Requester policy is never copied. Artifact bytes move only through the existing assignee outbox → requester inbox safety path; central rows contain filename, size, hash, and requester-local path, not bytes or host paths. `scope: plan-role` is reserved but not dispatched until the central workflow executor exists.
+
+### Auxiliary routing and session search
+
+Auxiliary roles (`review`, `classification`, `context-compression`,
+`memory-extraction`, `vision`, and `reference-analysis`) resolve through
+host-owned `auxiliary_routes`. Missing routes are disabled. Resolution compiles
+a tool-free `SessionRuntimePlan` with disabled CLI and a read-only workspace;
+agent targets additionally require an agent destination. Durable invocation
+state reuses `jobs` plus the narrow `auxiliary_invocations` relation. The
+service accepts an execution adapter so the future orchestration executor can
+dispatch through the existing container path without adding a host-side model
+client.
+
+The host also maintains a repairable FTS5 projection of human-visible
+user/assistant text. Per-session DBs remain the source of truth and retain
+their existing writers. Live indexing happens after successful inbound writes
+and outbound delivery; indexing failure does not fail messaging. The
+`memory.session-search` capability uses a correlated system-action/response
+over the existing session DBs. Host-side scope is always derived from the
+calling session, and results include source session/message IDs.
+
+### Skill provenance and capability audit
+
+Container skills are resolved through one effective catalog:
+`container/skills/custom/<name>` overrides `container/skills/<name>`. A strict
+optional `skill.json` declares source identity, semantic version, required and
+optional canonical capabilities, named configuration/secret assignments, and
+compatible runtime IDs. Manifest-less skills remain instruction-only during
+the compatibility rollout.
+
+Every effective directory receives a deterministic SHA-256 over file names,
+mode class, sizes, and bytes. Symlinks, special files, and oversized files are
+rejected. Manifested content starts quarantined and must be approved through
+the CLI. Approval is for one hash; changed content becomes drifted on the next
+activation check and is excluded from generated instructions. Provenance
+records are evidence about reviewed bytes, not a claim that those bytes are
+safe.
+
+Canonical runner tools share one audit wrapper for native MCP and the generic
+protocol broker. It writes `requested`, `started`, and terminal events through
+the existing outbox. The host derives agent/session identity from the source
+session, validates capability version and entrypoint, enforces lifecycle
+transitions, and persists only hashes, classifications, timing, and normalized
+usage. Sensitive argument fields are removed before hashing; raw arguments,
+results, prompts, files, and credentials are not stored.
 
 ### Routing
 

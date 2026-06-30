@@ -13,6 +13,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpToolDefinition } from './types.js';
+import { beginCapabilityAudit } from '../audit-emitter.js';
 
 function log(msg: string): void {
   console.error(`[mcp-tools] ${msg}`);
@@ -20,6 +21,55 @@ function log(msg: string): void {
 
 const allTools: McpToolDefinition[] = [];
 const toolMap = new Map<string, McpToolDefinition>();
+const CANONICAL_CAPABILITIES: Record<string, NonNullable<McpToolDefinition['audit']>> = {
+  send_message: { capabilityId: 'nanoclaw.send-message', capabilityVersion: 1, sensitiveFields: ['text'] },
+  schedule_task: {
+    capabilityId: 'nanoclaw.schedule-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['prompt'],
+  },
+  request_agent_task: {
+    capabilityId: 'nanoclaw.request-agent-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['prompt', 'description', 'metadata'],
+  },
+  get_agent_task: { capabilityId: 'nanoclaw.get-agent-task', capabilityVersion: 1 },
+  cancel_agent_task: {
+    capabilityId: 'nanoclaw.cancel-agent-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['reason'],
+  },
+  report_agent_task_progress: {
+    capabilityId: 'nanoclaw.report-agent-task-progress',
+    capabilityVersion: 1,
+    sensitiveFields: ['message', 'metadata'],
+  },
+  block_agent_task: {
+    capabilityId: 'nanoclaw.block-agent-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['reason', 'metadata'],
+  },
+  complete_agent_task: {
+    capabilityId: 'nanoclaw.complete-agent-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['result', 'metadata'],
+  },
+  fail_agent_task: {
+    capabilityId: 'nanoclaw.fail-agent-task',
+    capabilityVersion: 1,
+    sensitiveFields: ['error', 'reason', 'metadata'],
+  },
+  publish_agent_task_artifact: {
+    capabilityId: 'nanoclaw.publish-agent-task-artifact',
+    capabilityVersion: 1,
+    sensitiveFields: ['content', 'path', 'metadata'],
+  },
+  session_search: {
+    capabilityId: 'memory.session-search',
+    capabilityVersion: 1,
+    sensitiveFields: ['query'],
+  },
+};
 
 export function registerTools(tools: McpToolDefinition[]): void {
   for (const t of tools) {
@@ -27,8 +77,38 @@ export function registerTools(tools: McpToolDefinition[]): void {
       log(`Warning: tool "${t.tool.name}" already registered, skipping duplicate`);
       continue;
     }
-    allTools.push(t);
-    toolMap.set(t.tool.name, t);
+    const audit = t.audit ?? CANONICAL_CAPABILITIES[t.tool.name];
+    const registered = audit
+      ? {
+          ...t,
+          audit,
+          handler: async (args: Record<string, unknown>) => {
+            const invocation = beginCapabilityAudit(
+              audit.capabilityId,
+              audit.capabilityVersion,
+              `tool:${t.tool.name}`,
+              args,
+              audit.sensitiveFields,
+            );
+            try {
+              const result = await t.handler(args);
+              invocation.emit(result.isError ? 'failed' : 'succeeded', 3, {
+                resultClass: result.isError ? 'tool-error' : 'success',
+                durationMs: Date.now() - invocation.startedAt,
+              });
+              return result;
+            } catch (error) {
+              invocation.emit('failed', 3, {
+                resultClass: 'exception',
+                durationMs: Date.now() - invocation.startedAt,
+              });
+              throw error;
+            }
+          },
+        }
+      : t;
+    allTools.push(registered);
+    toolMap.set(t.tool.name, registered);
   }
 }
 

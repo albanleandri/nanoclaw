@@ -192,6 +192,15 @@ CREATE TABLE session_state (
 
 Access: `container/agent-runner/src/db/session-state.ts`.
 
+### 4.4 Host-mediated session search
+
+The runner writes a `system` outbound row with `action: "session_search"` and
+a stable `requestId`. The host derives the source agent group, queries the
+central FTS5 projection, and inserts a trigger-0 `system` response into
+`inbound.db`. The MCP handler reads and acknowledges that response through
+`processing_ack`. Search text and results never require a central DB mount or
+another writer for either session DB.
+
 ---
 
 ## 5. Schema evolution

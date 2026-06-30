@@ -130,6 +130,36 @@ describe('OpenAICompatibleProvider', () => {
     query.end();
   });
 
+  it('preserves provider-reported token usage on terminal results', async () => {
+    const fetchMock = (async () =>
+      sse([
+        { choices: [{ delta: { content: 'ok' } }] },
+        {
+          choices: [],
+          usage: { prompt_tokens: 12, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 4 } },
+        },
+      ])) as typeof fetch;
+    const query = provider(fetchMock).query({ prompt: 'hi', cwd: '/' });
+    expect(await nextOfType(query.events[Symbol.asyncIterator](), 'result')).toMatchObject({
+      usage: { inputTokens: 12, outputTokens: 3, cachedTokens: 4, source: 'provider' },
+    });
+    query.end();
+  });
+
+  it('preserves Responses usage when text was already streamed', async () => {
+    const fetchMock = (async () =>
+      sse([
+        { type: 'response.output_text.delta', delta: 'ok' },
+        { type: 'response.completed', response: { usage: { input_tokens: 8, output_tokens: 2 } } },
+      ])) as typeof fetch;
+    const query = provider(fetchMock, memoryStore(), 'responses').query({ prompt: 'hi', cwd: '/' });
+    expect(await nextOfType(query.events[Symbol.asyncIterator](), 'result')).toMatchObject({
+      text: 'ok',
+      usage: { inputTokens: 8, outputTokens: 2, source: 'provider' },
+    });
+    query.end();
+  });
+
   it('classifies authentication errors without storing a transcript', async () => {
     const store = memoryStore();
     const fetchMock = (async () =>

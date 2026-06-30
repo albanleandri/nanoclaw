@@ -46,6 +46,9 @@ export {
 } from './sessions.js';
 export * from './jobs.js';
 export * from './agent-tasks.js';
+export * from './auxiliary-routes.js';
+export * from './auxiliary-invocations.js';
+export * from './skill-provenance.js';
 export * from './provider-profiles.js';
 export * from './schedule-admin-grants.js';
 export {

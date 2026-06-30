@@ -62,6 +62,8 @@ import './cli/delivery-action.js';
 import './jobs/stock-market-screen.js';
 import './jobs/actions.js';
 import './jobs/agent-task-actions.js';
+import './session-search/action.js';
+import './audit/host-bridge.js';
 import { startCliServer, stopCliServer } from './cli/socket-server.js';
 
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';

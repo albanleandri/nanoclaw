@@ -51,6 +51,19 @@ registerCapability({
 });
 
 registerCapability({
+  id: 'memory.session-search',
+  version: 1,
+  description: 'Search source-attributed text from this agent group’s prior sessions.',
+  requirements: { toolCalling: 'native-or-bridged', durableState: true },
+  sideEffects: 'none',
+  approval: 'never',
+  adapters: [
+    { kind: 'host-action', entrypoint: 'host:session-search' },
+    { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:session_search' },
+  ],
+});
+
+registerCapability({
   id: 'web.browse',
   version: 1,
   description: 'Fetch and read web pages through a configured browser MCP server.',

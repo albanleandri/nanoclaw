@@ -4,6 +4,7 @@ import type { EffectiveRuntimeSelection } from '../providers/runtime-descriptor.
 import type { AgentRuntimeDescriptor } from '../providers/runtime-descriptor.js';
 import { applyToolGating, buildAvailabilityContext, deriveCapabilityProfile } from './spawn-gate.js';
 import { compileSessionRuntimePlan, type SessionRuntimePlan } from './session-runtime-plan.js';
+import { resolveSkillRequirements } from '../skills/resolve-requirements.js';
 
 export interface CompiledSessionPlan {
   compiledPlan: SessionRuntimePlan;
@@ -19,6 +20,18 @@ export function compileEffectiveSessionPlan(input: {
   requiredCapabilities?: string[];
 }): CompiledSessionPlan {
   const profile = deriveCapabilityProfile(input.config);
+  const skillRequirements = resolveSkillRequirements({
+    projectRoot: process.cwd(),
+    selection: input.config.skills,
+    runtimeId: input.runtime.runtimeId,
+  });
+  for (const capability of skillRequirements.requiredCapabilities) {
+    if (!profile.requested.includes(capability)) profile.requested.push(capability);
+  }
+  for (const capability of skillRequirements.optionalCapabilities) {
+    if (!profile.requested.includes(capability)) profile.requested.push(capability);
+    if (!profile.allowDegraded.includes(capability)) profile.allowDegraded.push(capability);
+  }
   for (const capability of input.requiredCapabilities ?? []) {
     if (!profile.requested.includes(capability)) profile.requested.push(capability);
   }

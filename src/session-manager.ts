@@ -36,6 +36,7 @@ import {
   migrateMessagesInTable,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { tryIndexSessionMessage } from './session-search/indexer.js';
 import type { Session } from './types.js';
 
 function isPathInside(parent: string, child: string): boolean {
@@ -247,6 +248,16 @@ export function writeSessionMessage(
   }
 
   updateSession(sessionId, { last_active: new Date().toISOString() });
+  tryIndexSessionMessage({
+    agentGroupId,
+    sessionId,
+    sourceKind: 'inbound',
+    messageId: message.id,
+    timestamp: message.timestamp,
+    kind: message.kind,
+    channelType: message.channelType,
+    content,
+  });
 }
 
 /** Idempotent variant for host-owned durable workflows with stable message IDs. */

@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import type { AgentProfile } from './agent-profile.js';
+import { getSkillInstallation } from './db/skill-provenance.js';
 import { resolveAvailableSharedResources } from './shared-resources.js';
+import { discoverSkillCatalog } from './skills/catalog.js';
 
 const RUNTIME_CONTRACT_CONTAINER_PATH = '/app/CLAUDE.md';
-const SHARED_SKILLS_CONTAINER_BASE = '/app/skills';
 const MCP_TOOLS_CONTAINER_BASE = '/app/src/mcp-tools';
 const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
 
@@ -98,47 +99,25 @@ export function collectSkillInstructionFragments(
   projectRoot: string,
   selection: string[] | 'all',
 ): SkillInstructionFragment[] {
-  const sharedSkillsDir = path.join(projectRoot, 'container', 'skills');
-  const customSkillsDir = path.join(sharedSkillsDir, 'custom');
-  const available = new Map<string, SkillInstructionFragment>();
-
-  function addSkill(name: string, hostDir: string, containerBase: string): void {
-    const hostFragment = path.join(hostDir, name, 'instructions.md');
-    if (!fs.existsSync(hostFragment)) return;
-    available.set(name, {
-      name,
-      containerPath: `${containerBase}/${name}/instructions.md`,
-    });
-  }
-
-  if (fs.existsSync(sharedSkillsDir)) {
-    for (const entry of fs.readdirSync(sharedSkillsDir)) {
-      if (entry === 'custom') continue;
-      try {
-        if (fs.statSync(path.join(sharedSkillsDir, entry)).isDirectory()) {
-          addSkill(entry, sharedSkillsDir, SHARED_SKILLS_CONTAINER_BASE);
-        }
-      } catch {
-        /* skip unreadable skill entries */
-      }
-    }
-  }
-
-  if (fs.existsSync(customSkillsDir)) {
-    for (const entry of fs.readdirSync(customSkillsDir)) {
-      try {
-        if (fs.statSync(path.join(customSkillsDir, entry)).isDirectory()) {
-          addSkill(entry, customSkillsDir, `${SHARED_SKILLS_CONTAINER_BASE}/custom`);
-        }
-      } catch {
-        /* skip unreadable custom skill entries */
-      }
-    }
-  }
-
-  const names = selection === 'all' ? [...available.keys()] : selection;
+  const catalog = discoverSkillCatalog(projectRoot);
+  const names = selection === 'all' ? [...catalog.keys()] : selection;
   return names
-    .map((name) => available.get(name))
-    .filter((fragment): fragment is SkillInstructionFragment => fragment !== undefined)
+    .map((name) => {
+      const entry = catalog.get(name);
+      if (!entry || entry.error || !fs.existsSync(path.join(entry.directory, 'instructions.md'))) return undefined;
+      if (entry.manifest) {
+        let installation;
+        try {
+          installation = getSkillInstallation(name);
+        } catch {
+          return undefined;
+        }
+        if (!installation || installation.state !== 'active' || installation.approved_hash !== entry.hash) {
+          return undefined;
+        }
+      }
+      return { name, containerPath: `${entry.containerPath}/instructions.md` };
+    })
+    .filter((fragment): fragment is SkillInstructionFragment => Boolean(fragment))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

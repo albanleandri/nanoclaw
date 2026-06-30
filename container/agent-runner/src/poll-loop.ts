@@ -18,7 +18,7 @@ import {
   stripInternalTags,
   type RoutingContext,
 } from './formatter.js';
-import type { AgentProvider, AgentQuery, ProviderEvent } from './providers/types.js';
+import type { AgentProvider, AgentQuery, ProviderEvent, ProviderUsage } from './providers/types.js';
 
 const POLL_INTERVAL_MS = 1000;
 const ACTIVE_POLL_INTERVAL_MS = 500;
@@ -320,6 +320,7 @@ type InitialBatchOutcome = 'result' | 'terminal-error' | 'silent-close' | 'inter
 interface QueryResult {
   continuation?: string;
   outcome: InitialBatchOutcome;
+  usage?: ProviderUsage;
 }
 
 interface ProcessQueryOptions {
@@ -346,6 +347,7 @@ export async function processQuery(
   let unwrappedNudged = false;
   let providerFailureNotified = false;
   let initialTurnCompleted = false;
+  let usage: ProviderUsage | undefined;
   let lastPostResultHeartbeat = 0;
   const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
   const readPendingMessages = opts.getPendingMessages ?? getPendingMessages;
@@ -530,6 +532,7 @@ export async function processQuery(
         });
         break;
       } else if (event.type === 'result') {
+        if (!initialBatchResolved) usage = event.usage;
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for
@@ -613,7 +616,7 @@ export async function processQuery(
     outcome = 'silent-close';
   }
 
-  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted' };
+  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted', usage };
 }
 
 function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {

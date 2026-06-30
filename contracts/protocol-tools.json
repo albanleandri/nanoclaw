@@ -1,5 +1,9 @@
 [
   {
+    "capabilityId": "memory.session-search",
+    "toolName": "session_search"
+  },
+  {
     "capabilityId": "nanoclaw.block-agent-task",
     "toolName": "block_agent_task"
   },

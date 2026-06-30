@@ -8,6 +8,7 @@ import type {
   McpServerConfig,
   ProviderEvent,
   ProviderOptions,
+  ProviderUsage,
   QueryInput,
 } from './types.js';
 import {
@@ -25,6 +26,7 @@ import {
   steerCodexTurn,
   writeCodexConfigToml,
 } from './codex-app-server.js';
+import { normalizeProviderUsage } from './usage.js';
 
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 const SUPPORTED_EFFORTS = new Set<CodexReasoningEffort>(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
@@ -219,6 +221,7 @@ async function* runOneTurn(
   let resultText = '';
   let turnDone = false;
   let turnId: string | null = null;
+  let usage: ProviderUsage | undefined;
 
   // A finished turn can no longer absorb steered input: codex's turn/steer
   // against a completed turn resolves as a no-op, so a follow-up routed there
@@ -284,8 +287,13 @@ async function* runOneTurn(
       }
       case 'turn/completed': {
         const turn = params.turn as
-          | { error?: { message?: string; additionalDetails?: string | null } | null; items?: unknown[] }
+          | {
+              error?: { message?: string; additionalDetails?: string | null } | null;
+              items?: unknown[];
+              usage?: unknown;
+            }
           | undefined;
+        usage = normalizeProviderUsage(turn?.usage);
         const agentMessage = turn?.items
           ?.filter((item): item is { type: string; text?: string } => typeof item === 'object' && item !== null)
           .find((item) => item.type === 'agentMessage' && item.text);
@@ -364,7 +372,7 @@ async function* runOneTurn(
       throw state.error;
     }
 
-    yield { type: 'result', text: resultText || null };
+    yield { type: 'result', text: resultText || null, usage };
   } finally {
     clearTimeout(timer);
     clearActiveTurn();

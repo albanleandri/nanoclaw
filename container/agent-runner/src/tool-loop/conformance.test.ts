@@ -56,6 +56,10 @@ function sendMessageBroker() {
   );
 }
 
+function externalMessages() {
+  return getUndeliveredMessages().filter((message) => message.kind !== 'system');
+}
+
 async function collectToResult(provider: OpenAICompatibleProvider): Promise<ProviderEvent[]> {
   const query = provider.query({ prompt: 'send hello', cwd: '/' });
   const events: ProviderEvent[] = [];
@@ -95,7 +99,7 @@ describe('protocol tool conformance', () => {
   it('routes the compiled send-message capability through the existing handler', async () => {
     const broker = sendMessageBroker();
     await broker.execute({ id: 'call-1', name: 'send_message', argumentsJson: '{"text":"hello"}' });
-    const [out] = getUndeliveredMessages();
+    const [out] = externalMessages();
     expect(out).toMatchObject({ channel_type: 'telegram', platform_id: 'chat-1', thread_id: 'thread-1' });
     expect(JSON.parse(out.content).text).toBe('hello');
   });
@@ -169,7 +173,7 @@ describe('protocol tool conformance', () => {
       expect(events.filter((event) => event.type === 'result')).toEqual([{ type: 'result', text: 'done' }]);
       expect(events.some((event) => event.type === 'error')).toBe(false);
       expect(requests[0].tools[0]).toBeDefined();
-      const [out] = getUndeliveredMessages();
+      const [out] = externalMessages();
       expect(out).toMatchObject({ channel_type: 'telegram', platform_id: 'chat-1', thread_id: 'thread-1' });
       expect(JSON.parse(out.content).text).toBe('hello');
     });
@@ -212,7 +216,7 @@ describe('protocol tool conformance', () => {
       protocolToolBroker: sendMessageBroker(),
     });
     await collectToResult(provider);
-    expect(getUndeliveredMessages()).toHaveLength(1);
+    expect(externalMessages()).toHaveLength(1);
   });
 
   it('keeps an unverified generic profile schema-free and unable to execute tools', async () => {

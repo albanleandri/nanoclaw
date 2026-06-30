@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
 import { callRegisteredTool, listRegisteredToolDefinitions, registerTools } from './server.js';
+import { closeSessionDb, getInboundDb, initTestSessionDb } from '../db/connection.js';
+import './catalog.js';
 
 describe('in-process MCP tool catalog', () => {
   it('lists and invokes registered definitions without starting stdio', async () => {
@@ -35,5 +37,35 @@ describe('in-process MCP tool catalog', () => {
     await expect(callRegisteredTool(name, {})).resolves.toEqual({
       content: [{ type: 'text', text: 'first' }],
     });
+  });
+});
+
+describe('canonical capability audit', () => {
+  it('emits redacted lifecycle rows around a canonical native tool', async () => {
+    const { outbound } = initTestSessionDb();
+    getInboundDb()
+      .prepare(
+        `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id)
+         VALUES ('peer', 'Peer', 'agent', NULL, NULL, 'peer')`,
+      )
+      .run();
+    await callRegisteredTool('send_message', { to: 'peer', text: 'sensitive body' });
+    const rows = outbound.prepare("SELECT content FROM messages_out WHERE kind='system' ORDER BY seq").all() as Array<{
+      content: string;
+    }>;
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => JSON.parse(row.content).eventType)).toEqual(['requested', 'started', 'succeeded']);
+    expect(rows.every((row) => !row.content.includes('sensitive body'))).toBe(true);
+    const firstHash = JSON.parse(rows[0].content).argsSha256;
+    await callRegisteredTool('send_message', { to: 'peer', text: 'different sensitive body' });
+    const secondHash = JSON.parse(
+      (
+        outbound.prepare("SELECT content FROM messages_out WHERE kind='system' ORDER BY seq DESC LIMIT 1").get() as {
+          content: string;
+        }
+      ).content,
+    ).argsSha256;
+    expect(secondHash).toBe(firstHash);
+    closeSessionDb();
   });
 });
