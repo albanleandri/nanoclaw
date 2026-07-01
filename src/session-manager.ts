@@ -218,6 +218,11 @@ export function writeSessionMessage(
      */
     sourceSessionId?: string | null;
     /**
+     * Host-owned central orchestration run correlated with this input.
+     * Kept separate from the adapter-provided message id.
+     */
+    orchestrationRunId?: string | null;
+    /**
      * 1 = only deliver on the container's first poll (fresh start).
      * Dying containers (past first poll) skip these rows.
      */
@@ -241,6 +246,7 @@ export function writeSessionMessage(
       recurrence: message.recurrence ?? null,
       trigger: message.trigger ?? 1,
       sourceSessionId: message.sourceSessionId ?? null,
+      orchestrationRunId: message.orchestrationRunId ?? null,
       onWake: message.onWake ?? 0,
     });
   } finally {

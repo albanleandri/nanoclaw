@@ -27,6 +27,7 @@ export interface CapabilityAuditEvent {
   resultClass?: string;
   durationMs?: number;
   usage?: ModelUsage;
+  orchestrationRunId?: string;
   createdAt: string;
 }
 
@@ -55,7 +56,8 @@ export function appendCapabilityAuditEvent(event: CapabilityAuditEvent): void {
       existing.invocation_id !== event.invocationId ||
       existing.seq !== event.seq ||
       existing.event_type !== event.eventType ||
-      existing.args_sha256 !== event.argsSha256
+      existing.args_sha256 !== event.argsSha256 ||
+      existing.orchestration_run_id !== (event.orchestrationRunId ?? null)
     ) {
       throw new Error(`Capability audit event conflict: ${event.eventId}`);
     }
@@ -79,10 +81,12 @@ export function appendCapabilityAuditEvent(event: CapabilityAuditEvent): void {
         `INSERT INTO capability_audit_events
        (event_id, invocation_id, seq, event_type, agent_group_id, session_id,
         runtime_id, capability_id, capability_version, adapter, entrypoint,
-        args_sha256, decision, result_class, duration_ms, usage_json, created_at)
+        args_sha256, decision, result_class, duration_ms, usage_json,
+        orchestration_run_id, created_at)
        VALUES (@eventId, @invocationId, @seq, @eventType, @agentGroupId, @sessionId,
         @runtimeId, @capabilityId, @capabilityVersion, @adapter, @entrypoint,
-        @argsSha256, @decision, @resultClass, @durationMs, @usageJson, @createdAt)`,
+        @argsSha256, @decision, @resultClass, @durationMs, @usageJson,
+        @orchestrationRunId, @createdAt)`,
       )
       .run({
         ...event,
@@ -91,6 +95,7 @@ export function appendCapabilityAuditEvent(event: CapabilityAuditEvent): void {
         resultClass: event.resultClass ?? null,
         durationMs: event.durationMs ?? null,
         usageJson: event.usage ? JSON.stringify(event.usage) : null,
+        orchestrationRunId: event.orchestrationRunId ?? null,
       });
   } catch (error) {
     if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
@@ -115,7 +120,8 @@ export function listCapabilityAuditEvents(input: {
     .prepare(
       `SELECT event_id, invocation_id, seq, event_type, agent_group_id, session_id,
               runtime_id, capability_id, capability_version, adapter, entrypoint,
-              args_sha256, decision, result_class, duration_ms, usage_json, created_at
+              args_sha256, decision, result_class, duration_ms, usage_json,
+              orchestration_run_id, created_at
        FROM capability_audit_events
        WHERE agent_group_id=@agentGroupId
          AND (@sessionId IS NULL OR session_id=@sessionId)

@@ -4,7 +4,7 @@ import path from 'path';
 import type { AgentProfile } from './agent-profile.js';
 import { getSkillInstallation } from './db/skill-provenance.js';
 import { resolveAvailableSharedResources } from './shared-resources.js';
-import { discoverSkillCatalog } from './skills/catalog.js';
+import { discoverSkillCatalog, selectSkillCatalog } from './skills/catalog.js';
 
 const RUNTIME_CONTRACT_CONTAINER_PATH = '/app/CLAUDE.md';
 const MCP_TOOLS_CONTAINER_BASE = '/app/src/mcp-tools';
@@ -100,11 +100,10 @@ export function collectSkillInstructionFragments(
   selection: string[] | 'all',
 ): SkillInstructionFragment[] {
   const catalog = discoverSkillCatalog(projectRoot);
-  const names = selection === 'all' ? [...catalog.keys()] : selection;
-  return names
-    .map((name) => {
-      const entry = catalog.get(name);
-      if (!entry || entry.error || !fs.existsSync(path.join(entry.directory, 'instructions.md'))) return undefined;
+  return selectSkillCatalog(catalog, selection)
+    .entries.map((entry) => {
+      const name = entry.name;
+      if (entry.error || !fs.existsSync(path.join(entry.directory, 'instructions.md'))) return undefined;
       if (entry.manifest) {
         let installation;
         try {

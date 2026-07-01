@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3';
 
 import '../capabilities/builtins/index.js';
 import { requireCapability } from '../capabilities/capability-registry.js';
-import { registerDeliveryAction } from '../delivery.js';
+import { registerDeliveryAction, type DeliveryActionSource } from '../delivery.js';
+import { getCorrelatedOrchestrationRunId } from '../orchestration/run-store.js';
 import type { Session } from '../types.js';
 import { appendCapabilityAuditEvent, type CapabilityAuditEventType } from './capability-events.js';
 
@@ -20,6 +21,7 @@ export async function handleCapabilityAudit(
   content: Record<string, unknown>,
   session: Session,
   _inDb: Database.Database,
+  source?: DeliveryActionSource,
 ): Promise<void> {
   const capabilityId = String(content.capabilityId ?? '');
   const manifest = requireCapability(capabilityId);
@@ -47,6 +49,7 @@ export async function handleCapabilityAudit(
     decision: typeof content.decision === 'string' ? content.decision : undefined,
     resultClass: typeof content.resultClass === 'string' ? content.resultClass : undefined,
     durationMs: typeof content.durationMs === 'number' ? content.durationMs : undefined,
+    orchestrationRunId: source?.inReplyTo ? getCorrelatedOrchestrationRunId(session.id, source.inReplyTo) : undefined,
     createdAt: typeof content.createdAt === 'string' ? content.createdAt : new Date().toISOString(),
   });
 }

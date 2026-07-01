@@ -16,14 +16,13 @@ export const CONTAINER_RUNTIME_BIN = 'docker';
 export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 
 /**
- * Address the credential proxy binds to.
- * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
- * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
- *   falling back to 0.0.0.0 if the interface isn't found.
+ * Resolve the address the credential proxy binds to.
+ *
+ * This is deliberately lazy: network interface discovery is an environment
+ * operation and importing container helpers must remain side-effect free.
  */
-export const PROXY_BIND_HOST = process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
-
-function detectProxyBindHost(): string {
+export function resolveProxyBindHost(): string {
+  if (process.env.CREDENTIAL_PROXY_HOST) return process.env.CREDENTIAL_PROXY_HOST;
   if (os.platform() === 'darwin') return '127.0.0.1';
 
   // WSL uses Docker Desktop (same VM routing as macOS) — loopback is correct.
@@ -31,7 +30,13 @@ function detectProxyBindHost(): string {
   if (fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')) return '127.0.0.1';
 
   // Bare-metal Linux: bind to the docker0 bridge IP instead of 0.0.0.0
-  const ifaces = os.networkInterfaces();
+  let ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+  try {
+    ifaces = os.networkInterfaces();
+  } catch (err) {
+    log.warn('Could not inspect host network interfaces; using wildcard proxy bind', { err });
+    return '0.0.0.0';
+  }
   const docker0 = ifaces['docker0'];
   if (docker0) {
     const ipv4 = docker0.find((a) => a.family === 'IPv4');

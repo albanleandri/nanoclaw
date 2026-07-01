@@ -158,9 +158,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
           }
           const turn = pending.shift()!;
           const transcript = loadTranscript(options.stateStore!);
-          let terminalError: ProviderEvent | undefined;
+          let terminalError: Extract<ProviderEvent, { type: 'error' }> | undefined;
           let resultText = '';
           let usage: ProviderUsage | undefined;
+          let sideEffectBoundaryCrossed = false;
           const family = options.providerProfile!.apiFamily!;
           const broker = options.providerProfile!.toolStrategy === 'native' ? options.protocolToolBroker : undefined;
           broker?.resetTurn?.();
@@ -250,6 +251,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
               if (protocol.calls.length > MAX_TOOL_CALLS_PER_ITERATION) {
                 throw new ProtocolToolError('Provider exceeded tool call limit', 'tool_loop_limit');
               }
+              if (protocol.calls.length > 0) sideEffectBoundaryCrossed = true;
               const results = [];
               for (const call of protocol.calls) {
                 if (aborted) return;
@@ -278,7 +280,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
             }
           }
           if (terminalError) {
-            yield terminalError;
+            yield { ...terminalError, sideEffectBoundaryCrossed };
             return;
           }
           if (!resultText.trim()) {

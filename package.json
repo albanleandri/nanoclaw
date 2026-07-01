@@ -28,7 +28,7 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --maxWorkers=1",
     "test:watch": "vitest",
     "container:build": "bash scripts/build-agent-image.sh",
     "service:restart": "bash scripts/service-restart.sh",

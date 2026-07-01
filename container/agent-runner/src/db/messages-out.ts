@@ -5,6 +5,7 @@
  * The host polls this DB (read-only) for undelivered messages.
  */
 import { getInboundDb, getOutboundDb } from './connection.js';
+import { getCurrentInReplyTo } from '../current-batch.js';
 
 export interface MessageOutRow {
   id: string;
@@ -63,7 +64,7 @@ export function writeMessageOut(msg: WriteMessageOut): number {
     .run({
       $id: msg.id,
       $seq: nextSeq,
-      $in_reply_to: msg.in_reply_to ?? null,
+      $in_reply_to: msg.in_reply_to === undefined ? getCurrentInReplyTo() : msg.in_reply_to,
       $deliver_after: msg.deliver_after ?? null,
       $recurrence: msg.recurrence ?? null,
       $kind: msg.kind,
@@ -91,9 +92,7 @@ export function getMessageIdBySeq(seq: number): string | null {
   const inbound = getInboundDb();
 
   // Inbound messages: ID is already the platform message ID
-  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as
-    | { id: string }
-    | undefined;
+  const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as { id: string } | undefined;
   if (inRow) return inRow.id;
 
   // Outbound messages: look up platform message ID from delivered table

@@ -49,6 +49,8 @@ describe('skill requirement resolution', () => {
     expect(resolveSkillRequirements({ projectRoot: root, selection: ['research'], runtimeId: 'claude-sdk' })).toEqual({
       requiredCapabilities: ['memory.session-search'],
       optionalCapabilities: ['web.browse'],
+      skippedSkills: [],
+      effectiveSkills: ['research'],
     });
   });
 
@@ -59,4 +61,22 @@ describe('skill requirement resolution', () => {
       resolveSkillRequirements({ projectRoot: root, selection: ['research'], runtimeId: 'claude-sdk' }),
     ).toThrow(/drifted/);
   });
+
+  it.each(['claude-sdk', 'codex-app-server'])(
+    'skips a removed configured skill without blocking %s startup',
+    (runtimeId) => {
+      expect(
+        resolveSkillRequirements({
+          projectRoot: root,
+          selection: ['removed-skill'],
+          runtimeId,
+        }),
+      ).toEqual({
+        requiredCapabilities: [],
+        optionalCapabilities: [],
+        skippedSkills: ['removed-skill'],
+        effectiveSkills: [],
+      });
+    },
+  );
 });

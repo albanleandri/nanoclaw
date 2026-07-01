@@ -29,6 +29,7 @@ import {
 import { findSessionForAgent } from './db/sessions.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
+import { dispatchDirectExecution } from './orchestration/engine.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { isContainerRunning, wakeContainer } from './container-runner.js';
 import { deliverSessionMessages } from './delivery.js';
@@ -511,7 +512,7 @@ async function deliverToAgent(
     );
   }
 
-  writeSessionMessage(session.agent_group_id, session.id, {
+  const inboundMessage = {
     id: messageIdForAgent(event.message.id, agent.agent_group_id),
     kind: event.message.kind,
     timestamp: event.message.timestamp,
@@ -520,7 +521,18 @@ async function deliverToAgent(
     threadId: deliveryAddr.threadId,
     content: event.message.content,
     trigger: wake ? 1 : 0,
-  });
+  } as const;
+  if (wake) {
+    dispatchDirectExecution({
+      taskId: inboundMessage.id,
+      objective: inboundText,
+      agentGroupId: session.agent_group_id,
+      sessionId: session.id,
+      message: inboundMessage,
+    });
+  } else {
+    writeSessionMessage(session.agent_group_id, session.id, inboundMessage);
+  }
 
   log.info('Message routed', {
     sessionId: session.id,

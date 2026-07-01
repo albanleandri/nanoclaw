@@ -10,6 +10,12 @@ import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 
 import { compileEffectiveSessionPlan } from './capabilities/compile-session-plan.js';
+import {
+  getRequiredCapabilitiesForSession,
+  recordActiveAttemptRuntimeFacts,
+  recordSessionCapabilityAuthorization,
+} from './orchestration/run-store.js';
+import { capabilityFingerprint, toolSchemaFingerprint } from './orchestration/invocation-fingerprint.js';
 import type { SessionRuntimePlan } from './capabilities/session-runtime-plan.js';
 import {
   CONTAINER_CPU_LIMIT,
@@ -24,15 +30,21 @@ import {
   TIMEZONE,
 } from './config.js';
 import { materializeContainerJson, materializeSessionRuntimeJson } from './container-config.js';
+import {
+  assertUniqueMountDestinations,
+  compileContainerLaunchPlan,
+  type ContainerLaunchPlan,
+} from './container-launch-plan.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
-import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, stopContainer } from './container-runtime.js';
 import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { resolveAvailableSharedResources } from './shared-resources.js';
+import { discoverSkillCatalog, selectSkillCatalog } from './skills/catalog.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { readEnvFileByPrefix } from './env.js';
@@ -61,7 +73,7 @@ import type { AgentGroup, Session } from './types.js';
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
 /** Active containers tracked by session ID. */
-const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
+const activeContainers = new Map<string, { process: ChildProcess; containerName: string; startedAtMs: number }>();
 
 /**
  * In-flight wake promises, keyed by session id. Deduplicates concurrent
@@ -71,7 +83,9 @@ const activeContainers = new Map<string, { process: ChildProcess; containerName:
  * a duplicate container against the same session directory, producing
  * racy double-replies.
  */
-const wakePromises = new Map<string, Promise<boolean>>();
+export type WakeContainerResult = { status: 'already-running' | 'started' } | { status: 'failed'; error: string };
+
+const wakePromises = new Map<string, Promise<WakeContainerResult>>();
 
 export function getActiveContainerCount(): number {
   return activeContainers.size;
@@ -79,6 +93,10 @@ export function getActiveContainerCount(): number {
 
 export function isContainerRunning(sessionId: string): boolean {
   return activeContainers.has(sessionId);
+}
+
+export function getContainerStartedAtMs(sessionId: string): number | undefined {
+  return activeContainers.get(sessionId)?.startedAtMs;
 }
 
 interface RuntimeShadowLogger {
@@ -121,10 +139,15 @@ export function computeRuntimeShadow(
  * its next tick. Callers that care (e.g. the router's typing indicator)
  * can branch on the boolean.
  */
-export function wakeContainer(session: Session): Promise<boolean> {
+export async function wakeContainer(session: Session): Promise<boolean> {
+  const result = await wakeContainerWithResult(session);
+  return result.status !== 'failed';
+}
+
+export function wakeContainerWithResult(session: Session): Promise<WakeContainerResult> {
   if (activeContainers.has(session.id)) {
     log.debug('Container already running', { sessionId: session.id });
-    return Promise.resolve(true);
+    return Promise.resolve({ status: 'already-running' });
   }
   const existing = wakePromises.get(session.id);
   if (existing) {
@@ -132,10 +155,10 @@ export function wakeContainer(session: Session): Promise<boolean> {
     return existing;
   }
   const promise = spawnContainer(session)
-    .then(() => true)
-    .catch((err) => {
+    .then((): WakeContainerResult => ({ status: 'started' }))
+    .catch((err): WakeContainerResult => {
       log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
-      return false;
+      return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
     })
     .finally(() => {
       wakePromises.delete(session.id);
@@ -147,8 +170,7 @@ export function wakeContainer(session: Session): Promise<boolean> {
 async function spawnContainer(session: Session): Promise<void> {
   const agentGroup = getAgentGroup(session.agent_group_id);
   if (!agentGroup) {
-    log.error('Agent group not found', { agentGroupId: session.agent_group_id });
-    return;
+    throw new Error(`Agent group not found: ${session.agent_group_id}`);
   }
 
   // Refresh the destination map and default reply routing so any admin
@@ -181,9 +203,32 @@ async function spawnContainer(session: Session): Promise<void> {
       effectiveProvider,
       runtime: runtimeSelection,
       runtimeDescriptor,
+      requiredCapabilities: getRequiredCapabilitiesForSession(session.id),
     });
+    if (planned.skippedSkills.length > 0) {
+      log.warn('Configured skills are not installed; continuing without them', {
+        sessionId: session.id,
+        skills: planned.skippedSkills,
+      });
+    }
     sessionRuntimePlan = planned.materializedPlan;
     planConfig = planned.gatedConfig;
+    recordSessionCapabilityAuthorization(
+      session.id,
+      planned.compiledPlan.capabilities.map((capability) => capability.id),
+    );
+    recordActiveAttemptRuntimeFacts(session.id, {
+      runtimeId: runtimeSelection.runtimeId,
+      endpointProfileId: runtimeSelection.endpointProfileId,
+      protocol: effectiveProvider.profile?.protocol ?? runtimeDescriptor.acceptedProtocols[0],
+      continuationSemantics: runtimeDescriptor.stateSemantics.continuation,
+      capabilityFingerprint: capabilityFingerprint(planned.compiledPlan),
+      toolSchemaFingerprint: toolSchemaFingerprint(planned.compiledPlan),
+      inputReconstructable:
+        runtimeDescriptor.kind === 'protocol-loop' && runtimeDescriptor.stateSemantics.continuation === 'transcript',
+    });
+  } else {
+    recordSessionCapabilityAuthorization(session.id, []);
   }
   const runtime = materializeSessionRuntimeJson(
     sessionDir(agentGroup.id, session.id),
@@ -209,7 +254,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
   const agentIdentifier = agentGroup.id;
-  const args = await buildContainerArgs(
+  const launchPlan = await buildContainerLaunchPlan(
     mounts,
     containerName,
     agentGroup,
@@ -227,9 +272,13 @@ async function spawnContainer(session: Session): Promise<void> {
   // immediate kill before the new container touches the file itself.
   fs.rmSync(heartbeatPath(agentGroup.id, session.id), { force: true });
 
-  const container = spawn(CONTAINER_RUNTIME_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const container = spawn(launchPlan.executable, launchPlan.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  await new Promise<void>((resolve, reject) => {
+    container.once('spawn', resolve);
+    container.once('error', reject);
+  });
 
-  activeContainers.set(session.id, { process: container, containerName });
+  activeContainers.set(session.id, { process: container, containerName, startedAtMs: Date.now() });
   markContainerRunning(session.id);
 
   // Log stderr. Keep a small tail so boot failures are visible at the default
@@ -362,17 +411,7 @@ export function buildSessionRuntimeConfigMounts(runtimeConfigPath: string): Volu
   ];
 }
 
-export function assertUniqueMountDestinations(mounts: VolumeMount[]): void {
-  const seen = new Set<string>();
-  for (const mount of mounts) {
-    const normalized = path.posix.normalize(mount.containerPath);
-    const destination = normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
-    if (seen.has(destination)) {
-      throw new Error(`Duplicate container mount destination: ${destination}`);
-    }
-    seen.add(destination);
-  }
-}
+export { assertUniqueMountDestinations };
 
 function buildMounts(
   agentGroup: AgentGroup,
@@ -523,47 +562,11 @@ export function syncSkillSymlinks(
     fs.mkdirSync(skillsDir, { recursive: true });
   }
 
-  // Build a map of every available skill: name → container path.
-  // Built-in skills live directly under container/skills/ → /app/skills/<name>.
-  // Custom skills live under container/skills/custom/ → /app/skills/custom/<name>.
-  // Custom wins on name collision (allows overriding a built-in).
   const projectRoot = process.cwd();
-  const sharedSkillsDir = path.join(projectRoot, 'container', 'skills');
-  const customSkillsDir = path.join(sharedSkillsDir, 'custom');
-
-  const available = new Map<string, string>(); // name → container target path
-
-  if (fs.existsSync(sharedSkillsDir)) {
-    for (const e of fs.readdirSync(sharedSkillsDir)) {
-      if (e === 'custom') continue;
-      try {
-        if (fs.statSync(path.join(sharedSkillsDir, e)).isDirectory()) {
-          available.set(e, `/app/skills/${e}`);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  if (fs.existsSync(customSkillsDir)) {
-    for (const e of fs.readdirSync(customSkillsDir)) {
-      try {
-        if (fs.statSync(path.join(customSkillsDir, e)).isDirectory()) {
-          available.set(e, `/app/skills/custom/${e}`);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  // Determine desired set: name → container target
-  let desired: Map<string, string>;
-  if (containerConfig.skills === 'all') {
-    desired = available;
-  } else {
-    desired = new Map(containerConfig.skills.filter((s) => available.has(s)).map((s) => [s, available.get(s)!]));
-  }
+  const selected = selectSkillCatalog(discoverSkillCatalog(projectRoot), containerConfig.skills);
+  const desired = new Map(
+    selected.entries.filter((entry) => !entry.error).map((entry) => [entry.name, entry.containerPath]),
+  );
 
   // Remove symlinks that are no longer in the desired set
   for (const entry of fs.readdirSync(skillsDir)) {
@@ -646,7 +649,7 @@ export function syncSharedResourceSymlinks(
   }
 }
 
-async function buildContainerArgs(
+async function buildContainerLaunchPlan(
   mounts: VolumeMount[],
   containerName: string,
   agentGroup: AgentGroup,
@@ -654,102 +657,40 @@ async function buildContainerArgs(
   _provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
-): Promise<string[]> {
-  const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
-
-  // Opt-in per-container resource caps. Swap policy stays host-managed.
-  if (CONTAINER_CPU_LIMIT) args.push('--cpus', CONTAINER_CPU_LIMIT);
-  if (CONTAINER_MEMORY_LIMIT) args.push('--memory', CONTAINER_MEMORY_LIMIT);
-
-  // Environment — only vars read by code we don't own.
-  // Everything NanoClaw-specific is in container.json (read by runner at startup).
-  args.push('-e', `TZ=${TIMEZONE}`);
-
-  // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
-  if (providerContribution.env) {
-    for (const [key, value] of Object.entries(providerContribution.env)) {
-      args.push('-e', `${key}=${value}`);
-    }
-  }
-
-  // Forward CONTAINER_SECRET_* vars from .env into the container as-is.
-  // This is the V2 mechanism for injecting secrets that aren't API keys
-  // (e.g. iCal URLs, webhook secrets) that OneCLI doesn't proxy.
-  const containerSecrets = readEnvFileByPrefix('CONTAINER_SECRET_');
-  for (const [key, value] of Object.entries(containerSecrets)) {
-    args.push('-e', `${key}=${value}`);
-  }
-
-  if (ensureEgressNetwork()) {
-    args.push(...egressNetworkArgs());
+): Promise<ContainerLaunchPlan> {
+  const lockdown = ensureEgressNetwork();
+  if (lockdown) {
     log.info('Egress lockdown active', { containerName, network: EGRESS_NETWORK });
-  } else {
-    args.push(...hostGatewayArgs());
   }
-
-  // User mapping
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
-  }
-
-  // Volume mounts
-  for (const mount of mounts) {
-    if (mount.readonly) {
-      args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
-    } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
-    }
-  }
-
-  // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
-  // are routed through the agent vault for credential injection, and mounts
-  // any credential stubs the gateway serves (e.g. a sentinel auth file).
-  // Runs AFTER the volume mounts so a stub nested inside one of our mounts
-  // (a parent dir mounted RW above it) lands later in the args and isn't
-  // shadowed by it. Treated as a transient hard failure: if we can't wire
-  // the gateway, we don't spawn. The caller (router or host-sweep) catches
-  // the throw, leaves the inbound message pending, and the next sweep tick
-  // retries.
-  if (agentIdentifier) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-  }
-  const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-  if (!onecliApplied) {
-    throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
-  }
-  log.info('OneCLI gateway applied', { containerName });
-
-  // If the user has a Claude subscription (OAuth), switch the container to OAuth mode:
-  // set placeholder bearer-token env vars and blank out ANTHROPIC_API_KEY (added by
-  // OneCLI). Claude Code 2.x uses ANTHROPIC_API_KEY when both vars are present, so we
-  // must clear it. The OneCLI proxy then intercepts Authorization: Bearer placeholder
-  // and injects the real token from the vault. ANTHROPIC_AUTH_TOKEN supports direct
-  // Anthropic SDK usage from skills without exposing a real token.
   const credsPath = path.join(process.env.HOME ?? '', '.claude', '.credentials.json');
+  let oauthCredentialsAvailable = false;
   try {
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8')) as Record<string, unknown>;
-    if ((creds?.claudeAiOauth as Record<string, unknown> | undefined)?.accessToken) {
-      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-      args.push('-e', 'ANTHROPIC_AUTH_TOKEN=placeholder');
-      args.push('-e', 'ANTHROPIC_API_KEY=');
-    }
+    oauthCredentialsAvailable = Boolean((creds?.claudeAiOauth as Record<string, unknown> | undefined)?.accessToken);
   } catch {
-    // No credentials file — API key mode via OneCLI is correct
+    // API key mode via OneCLI is correct.
   }
-
-  // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
-  args.push('--entrypoint', 'bash');
-
-  // Use per-agent-group image if one has been built, otherwise base image
-  const imageTag = containerConfig.imageTag || CONTAINER_IMAGE;
-  args.push(imageTag);
-
-  args.push('-c', 'exec bun run /app/src/index.ts');
-
-  return args;
+  const plan = await compileContainerLaunchPlan({
+    containerName,
+    installLabel: CONTAINER_INSTALL_LABEL,
+    imageTag: containerConfig.imageTag || CONTAINER_IMAGE,
+    timezone: TIMEZONE,
+    cpuLimit: CONTAINER_CPU_LIMIT,
+    memoryLimit: CONTAINER_MEMORY_LIMIT,
+    environment: providerContribution.env,
+    secrets: readEnvFileByPrefix('CONTAINER_SECRET_'),
+    networkArgs: lockdown ? egressNetworkArgs() : hostGatewayArgs(),
+    mounts,
+    hostUid: process.getuid?.(),
+    hostGid: process.getgid?.(),
+    agentIdentifier,
+    agentName: agentGroup.name,
+    oauthCredentialsAvailable,
+    ensureAgent: (input) => onecli.ensureAgent(input),
+    applyGateway: (args, agent) => onecli.applyContainerConfig(args, { addHostMapping: false, agent }),
+  });
+  log.info('OneCLI gateway applied', { containerName });
+  return { ...plan, executable: CONTAINER_RUNTIME_BIN };
 }
 
 /** Build a per-agent-group Docker image with custom packages. */

@@ -54,11 +54,24 @@ export const log = {
   fatal: (msg: string, data?: Record<string, unknown>) => emit('fatal', msg, data),
 };
 
-process.on('uncaughtException', (err) => {
-  log.fatal('Uncaught exception', { err });
-  process.exit(1);
-});
+let processErrorHandlersInstalled = false;
 
-process.on('unhandledRejection', (reason) => {
-  log.error('Unhandled rejection', { err: reason });
-});
+/**
+ * Install process-wide handlers from the executable bootstrap only.
+ *
+ * Keeping this out of module initialization makes importing the logger safe
+ * for tests, migration tools, and other embedded consumers.
+ */
+export function installProcessErrorHandlers(): void {
+  if (processErrorHandlersInstalled) return;
+  processErrorHandlersInstalled = true;
+
+  process.on('uncaughtException', (err) => {
+    log.fatal('Uncaught exception', { err });
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    log.error('Unhandled rejection', { err: reason });
+  });
+}

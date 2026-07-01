@@ -405,6 +405,28 @@ describe('decideStuckAction — pending-stuck (production bug: long task blocks 
     });
     expect(res.action).toBe('kill-pending-stuck');
   });
+
+  it('gives a new container a full pending-stuck window for a pre-existing backlog', () => {
+    const fresh = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [claim('active-backlog-item', 30_000)],
+      oldestDuePendingAgeMs: 30 * 24 * 60 * 60 * 1000,
+      containerUptimeMs: 60_000,
+    });
+    expect(fresh.action).toBe('ok');
+
+    const exhausted = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerState: null,
+      claims: [claim('active-backlog-item', 11 * 60_000)],
+      oldestDuePendingAgeMs: 30 * 24 * 60 * 60 * 1000,
+      containerUptimeMs: PENDING_STUCK_MS + 1_000,
+    });
+    expect(exhausted.action).toBe('kill-pending-stuck');
+  });
 });
 
 describe('parseSqliteUtc', () => {

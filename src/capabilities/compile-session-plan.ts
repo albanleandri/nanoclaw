@@ -10,6 +10,7 @@ export interface CompiledSessionPlan {
   compiledPlan: SessionRuntimePlan;
   materializedPlan?: SessionRuntimePlan;
   gatedConfig: ContainerConfig;
+  skippedSkills: string[];
 }
 
 export function compileEffectiveSessionPlan(input: {
@@ -55,9 +56,12 @@ export function compileEffectiveSessionPlan(input: {
     }
     materializedPlan = { ...compiledPlan, capabilities };
   }
+  let gatedConfig = applyToolGating(input.config, input.runtimeDescriptor);
+  gatedConfig = { ...gatedConfig, skills: skillRequirements.effectiveSkills };
   return {
     compiledPlan,
     materializedPlan,
-    gatedConfig: applyToolGating(input.config, input.runtimeDescriptor),
+    gatedConfig,
+    skippedSkills: skillRequirements.skippedSkills,
   };
 }

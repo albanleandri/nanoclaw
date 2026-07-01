@@ -228,20 +228,41 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Process the query while concurrently polling for new messages
     const skippedSet = new Set(skipped);
     const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
+    const orchestrationIds = orchestrationMessageIds(keep);
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
+    let orchestrationResult: QueryResult | undefined;
+    let orchestrationException = false;
+    let orchestrationResultWritten = false;
+    const persistInitialBatchResult = (result: QueryResult): void => {
+      if (orchestrationResultWritten) return;
+      writeOrchestrationResult(orchestrationIds, result.outcome, result.usage, result.error);
+      orchestrationResultWritten = true;
+    };
     try {
       const result = await processQuery(query, routing, processingIds, providerStateKey, {
         stopSignal: config.stopSignal,
+        onInitialBatchTerminal: persistInitialBatchResult,
       });
+      orchestrationResult = result;
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
         setContinuation(providerStateKey, continuation);
       }
     } catch (err) {
+      orchestrationException = true;
       const errMsg = err instanceof Error ? err.message : String(err);
       log(`Query error: ${errMsg}`);
+
+      // Persist the terminal fact before writing the user-facing error. The
+      // host reads outbound rows in sequence and gates correlated chat output
+      // on this fact, so reversing the order adds an avoidable delivery-poll
+      // delay and can recreate the result/stream lifecycle deadlock.
+      if (!orchestrationResultWritten) {
+        writeOrchestrationResult(orchestrationIds, 'exception');
+        orchestrationResultWritten = true;
+      }
 
       // Stale/corrupt continuation recovery: ask the provider whether
       // this error means the stored continuation is unusable, and clear
@@ -263,6 +284,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       });
     } finally {
       clearCurrentInReplyTo();
+    }
+    if (!orchestrationResultWritten) {
+      writeOrchestrationResult(
+        orchestrationIds,
+        orchestrationException ? 'exception' : (orchestrationResult?.outcome ?? 'interrupted'),
+        orchestrationResult?.usage,
+        orchestrationResult?.error,
+      );
     }
 
     // Safety net: processQuery completes the batch in every terminal branch
@@ -321,6 +350,38 @@ interface QueryResult {
   continuation?: string;
   outcome: InitialBatchOutcome;
   usage?: ProviderUsage;
+  error?: {
+    classification: string;
+    retryable: boolean;
+    sideEffectBoundaryCrossed: boolean | null;
+  };
+}
+
+export function writeOrchestrationResult(
+  inputMessageIds: string[],
+  outcome: InitialBatchOutcome | 'exception',
+  usage?: ProviderUsage,
+  error?: QueryResult['error'],
+): void {
+  if (inputMessageIds.length === 0) return;
+  const eventId = `orchestration-result:${generateId()}`;
+  writeMessageOut({
+    id: eventId,
+    kind: 'system',
+    content: JSON.stringify({
+      action: 'orchestration_result',
+      eventId,
+      inputMessageIds,
+      outcome,
+      usage,
+      error,
+      createdAt: new Date().toISOString(),
+    }),
+  });
+}
+
+export function orchestrationMessageIds(messages: Array<Pick<MessageInRow, 'id' | 'orchestration_run_id'>>): string[] {
+  return messages.filter((message) => message.orchestration_run_id != null).map((message) => message.id);
 }
 
 interface ProcessQueryOptions {
@@ -331,6 +392,7 @@ interface ProcessQueryOptions {
   getPendingMessages?: typeof getPendingMessages;
   markProcessing?: typeof markProcessing;
   markCompleted?: typeof markCompleted;
+  onInitialBatchTerminal?: (result: QueryResult) => void;
 }
 
 export async function processQuery(
@@ -348,6 +410,7 @@ export async function processQuery(
   let providerFailureNotified = false;
   let initialTurnCompleted = false;
   let usage: ProviderUsage | undefined;
+  let terminalError: QueryResult['error'];
   let lastPostResultHeartbeat = 0;
   const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
   const readPendingMessages = opts.getPendingMessages ?? getPendingMessages;
@@ -355,6 +418,24 @@ export async function processQuery(
   const completeMessages = opts.markCompleted ?? markCompleted;
   const postResultHeartbeatMs = opts.postResultHeartbeatMs ?? POST_RESULT_HEARTBEAT_MS;
   const activePollIntervalMs = opts.activePollIntervalMs ?? ACTIVE_POLL_INTERVAL_MS;
+  const resolveInitialBatch = (
+    resolvedOutcome: Exclude<InitialBatchOutcome, 'interrupted'>,
+    resolvedUsage?: ProviderUsage,
+    resolvedError?: QueryResult['error'],
+  ): void => {
+    if (initialBatchResolved) return;
+    initialBatchResolved = true;
+    outcome = resolvedOutcome;
+    usage = resolvedUsage;
+    terminalError = resolvedError;
+    completeMessages(initialBatchIds);
+    opts.onInitialBatchTerminal?.({
+      continuation: queryContinuation,
+      outcome: resolvedOutcome,
+      usage: resolvedUsage,
+      error: resolvedError,
+    });
+  };
   const abortQuery = () => {
     done = true;
     query.abort();
@@ -439,10 +520,14 @@ export async function processQuery(
         if (done) return;
 
         const keptIds = keep.map((m) => m.id);
+        const keptOrchestrationIds = orchestrationMessageIds(keep);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
-        query.push(prompt, () => completeMessages(keptIds));
+        query.push(prompt, () => {
+          writeOrchestrationResult(keptOrchestrationIds, 'result');
+          completeMessages(keptIds);
+        });
       } catch (err) {
         // Without this catch the rejection escapes the void IIFE and Node
         // terminates the container on unhandled-rejection. The initial-batch
@@ -496,30 +581,39 @@ export async function processQuery(
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
       } else if (event.type === 'error' && event.classification === 'quota') {
+        const error = {
+          classification: event.classification,
+          retryable: event.retryable,
+          sideEffectBoundaryCrossed: event.sideEffectBoundaryCrossed ?? null,
+        };
         // Anthropic usage/rate limit — notify the user and stop this turn.
         // The container cannot retry (the limit is account-wide), so there is
         // no value in keeping the stream open. Mark messages completed so the
         // host sweep does not reset them to pending and immediately re-wake.
-        completeMessages(initialBatchIds);
+        resolveInitialBatch('terminal-error', undefined, error);
         writeUsageLimitNotification(routing);
-        initialBatchResolved = true;
-        outcome = 'terminal-error';
         break;
       } else if (event.type === 'error' && event.classification === 'auth') {
+        const error = {
+          classification: event.classification,
+          retryable: event.retryable,
+          sideEffectBoundaryCrossed: event.sideEffectBoundaryCrossed ?? null,
+        };
         // Credential/auth failure (e.g. an expired shared OAuth token reaching
         // the container as a 401). The container cannot fix this itself, and a
         // tight retry would just re-hit the same dead credential — so mark the
         // batch completed (no re-wake storm) but SURFACE the failure to the
         // user instead of finishing silently.
-        completeMessages(initialBatchIds);
+        resolveInitialBatch('terminal-error', undefined, error);
         writeAuthErrorNotification(routing);
-        initialBatchResolved = true;
-        outcome = 'terminal-error';
         break;
       } else if (event.type === 'error' && !event.retryable) {
-        completeMessages(initialBatchIds);
-        initialBatchResolved = true;
-        outcome = 'terminal-error';
+        const error = {
+          classification: event.classification ?? 'unknown',
+          retryable: event.retryable,
+          sideEffectBoundaryCrossed: event.sideEffectBoundaryCrossed ?? null,
+        };
+        resolveInitialBatch('terminal-error', undefined, error);
         writeMessageOut({
           id: generateId(),
           kind: 'chat',
@@ -532,18 +626,13 @@ export async function processQuery(
         });
         break;
       } else if (event.type === 'result') {
-        if (!initialBatchResolved) usage = event.usage;
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for
         // follow-up pushes. The agent may have responded via MCP
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
-        completeMessages(initialBatchIds);
-        if (!initialBatchResolved) {
-          initialBatchResolved = true;
-          outcome = 'result';
-        }
+        resolveInitialBatch('result', event.usage);
         initialTurnCompleted = true;
         lastPostResultHeartbeat = Date.now();
         if (event.text) {
@@ -602,7 +691,7 @@ export async function processQuery(
     // the provider contract. Surface that failure and complete the batch so
     // the message is neither lost silently nor stuck processing in a live
     // container.
-    completeMessages(initialBatchIds);
+    resolveInitialBatch('silent-close');
     writeMessageOut({
       id: generateId(),
       kind: 'chat',
@@ -613,10 +702,9 @@ export async function processQuery(
         text: '⚠️ The model provider ended the turn without producing a response. Please try again.',
       }),
     });
-    outcome = 'silent-close';
   }
 
-  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted', usage };
+  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted', usage, error: terminalError };
 }
 
 function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {

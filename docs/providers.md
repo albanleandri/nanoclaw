@@ -49,6 +49,20 @@ The host writes a per-session `container.runtime.json` and mounts it at `/worksp
 
 Continuation and transcript state is scoped by profile plus a non-secret endpoint/model fingerprint. Two profiles using the same adapter cannot read each other's state. The generic adapter stores a bounded normalized transcript in the container-owned `outbound.db` so stateless endpoints retain context across container restarts.
 
+For default-off orchestration fallback evaluation, the generic protocol loop
+also reports whether a terminal failure occurred before any protocol tool call
+was entered. Missing or unknown state is never interpreted as pre-tool.
+Authentication, quota, invalid-request, native-harness continuation, and
+capability/tool-contract mismatches remain ineligible.
+
+When an explicitly evaluated fallback policy is enabled in code, every named
+candidate is resolved again through the normal provider/runtime and
+`SessionRuntimePlan` path. Dispatch re-runs provider verification through the
+real credential route and compares hashes of the concrete registered protocol
+tool schemas, not only binding names. An approved candidate executes in a
+dedicated session carrying that provider-profile override. The shipped active
+policy has no candidate profiles and keeps fallback disabled.
+
 ## Capability compilation
 
 Before spawn, the host compiles a session runtime plan from code-owned capability manifests, the selected runtime descriptor, policy, and deterministic local availability checks. The initial built-ins cover message delivery, task scheduling, browser MCP access, and workspace editing.
@@ -57,12 +71,27 @@ Required capability loss throws before container materialization. Explicitly opt
 
 For a verified generic profile, the compiled `SessionRuntimePlan` is embedded in the existing per-session runtime JSON. The runner exposes only code-owned NanoClaw tools named by that plan. Selected manifested skills contribute required capabilities before compilation; unapproved, drifted, incompatible, or unsatisfied skills fail before spawn. Manifest-less skills remain instruction-only during rollout.
 
+A configured skill that is no longer installed is omitted from the effective
+session plan and logged at container wake instead of blocking the entire
+runtime. This does not weaken manifested-skill checks: an installed skill that
+is invalid, unapproved, drifted, runtime-incompatible, or missing a required
+capability/configuration/secret still fails closed before spawn.
+
 Canonical NanoClaw tool definitions are also the audit boundary for native MCP
 and protocol-loop execution. The runner emits redacted lifecycle records
 through `outbound.db`; the host validates the declared capability/version and
 source session before writing the central append-only audit table. Audit
 records contain a hash of non-sensitive validated arguments, never raw model
 or tool payloads.
+
+For orchestration-scoped direct turns, terminal provider outcome and normalized
+usage are returned through a separate redacted system action. If one provider
+turn consumes several queued orchestration messages, usage is persisted once
+with explicit shared-batch attribution; it is not copied into every run.
+Active step capability requirements are passed into the same pre-spawn
+`SessionRuntimePlan` compiler used by ordinary provider selection.
+The compiled capability IDs are persisted as a session authorization snapshot;
+known correlated host actions fail closed when absent from that snapshot.
 
 ## Generic endpoint limitations
 

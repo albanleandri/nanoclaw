@@ -1,9 +1,11 @@
 import { getSkillInstallation, observeSkill } from '../db/skill-provenance.js';
-import { discoverSkillCatalog } from './catalog.js';
+import { discoverSkillCatalog, selectSkillCatalog } from './catalog.js';
 
 export interface SkillRequirements {
   requiredCapabilities: string[];
   optionalCapabilities: string[];
+  skippedSkills: string[];
+  effectiveSkills: string[];
 }
 
 export function resolveSkillRequirements(input: {
@@ -14,14 +16,15 @@ export function resolveSkillRequirements(input: {
   availableSecrets?: ReadonlySet<string>;
 }): SkillRequirements {
   const catalog = discoverSkillCatalog(input.projectRoot);
-  const names = input.selection === 'all' ? [...catalog.keys()] : input.selection;
+  const selection = selectSkillCatalog(catalog, input.selection);
   const required = new Set<string>();
   const optional = new Set<string>();
+  const skipped = new Set<string>();
   const config = input.availableConfig ?? new Set(Object.keys(process.env));
   const secrets = input.availableSecrets ?? new Set(Object.keys(process.env));
-  for (const name of names) {
-    const entry = catalog.get(name);
-    if (!entry) throw new Error(`Selected skill is not installed: ${name}`);
+  for (const name of selection.skippedSkills) skipped.add(name);
+  for (const entry of selection.entries) {
+    const name = entry.name;
     if (entry.error) throw new Error(`Selected skill ${name} is invalid: ${entry.error}`);
     if (!entry.manifest) continue;
     const observed = observeSkill(entry);
@@ -43,5 +46,10 @@ export function resolveSkillRequirements(input: {
     for (const id of entry.manifest.requiresCapabilities) required.add(id);
     for (const id of entry.manifest.optionalCapabilities ?? []) optional.add(id);
   }
-  return { requiredCapabilities: [...required].sort(), optionalCapabilities: [...optional].sort() };
+  return {
+    requiredCapabilities: [...required].sort(),
+    optionalCapabilities: [...optional].sort(),
+    skippedSkills: [...skipped].sort(),
+    effectiveSkills: selection.entries.map((entry) => entry.name),
+  };
 }

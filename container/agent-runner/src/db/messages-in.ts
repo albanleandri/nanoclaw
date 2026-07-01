@@ -38,6 +38,7 @@ export interface MessageInRow {
   channel_type: string | null;
   thread_id: string | null;
   content: string;
+  orchestration_run_id?: string | null;
 }
 
 // Cap on how many messages reach the agent in one prompt. Read from
@@ -163,4 +164,3 @@ export function findQuestionResponse(questionId: string): MessageInRow | undefin
     inbound.close();
   }
 }
-

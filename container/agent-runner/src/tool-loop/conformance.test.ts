@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 
 import { closeSessionDb, getInboundDb, initTestSessionDb } from '../db/connection.js';
@@ -10,7 +11,7 @@ import { createProtocolToolBroker } from './broker.js';
 
 const protocolToolContract = JSON.parse(
   readFileSync(new URL('../../../../contracts/protocol-tools.json', import.meta.url), 'utf8'),
-) as Array<{ capabilityId: string; toolName: string }>;
+) as Array<{ capabilityId: string; toolName: string; schemaFingerprint: string }>;
 
 beforeEach(() => {
   initTestSessionDb();
@@ -74,9 +75,15 @@ async function collectToResult(provider: OpenAICompatibleProvider): Promise<Prov
 
 describe('protocol tool conformance', () => {
   it('implements every host protocol-tool contract entry in the runner catalog', () => {
-    const registered = new Set(listRegisteredToolDefinitions().map((definition) => definition.tool.name));
-    for (const binding of protocolToolContract)
-      expect(registered.has(binding.toolName), binding.capabilityId).toBe(true);
+    const registered = new Map(listRegisteredToolDefinitions().map((definition) => [definition.tool.name, definition]));
+    for (const binding of protocolToolContract) {
+      const definition = registered.get(binding.toolName);
+      expect(Boolean(definition), binding.capabilityId).toBe(true);
+      expect(
+        createHash('sha256').update(JSON.stringify(definition!.tool.inputSchema)).digest('hex'),
+        binding.capabilityId,
+      ).toBe(binding.schemaFingerprint);
+    }
     const broker = createProtocolToolBroker(
       {
         runtime: { runtimeId: 'openai-protocol-loop' },

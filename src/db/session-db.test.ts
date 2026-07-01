@@ -91,8 +91,16 @@ describe('migrateMessagesInTable', () => {
 
     const cols = (db.prepare("PRAGMA table_info('messages_in')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toContain('source_session_id');
+    expect(cols).toContain('orchestration_run_id');
 
     expect(getInboundSourceSessionId(db, 'legacy-2')).toBeNull();
+    expect(
+      (
+        db.prepare('SELECT orchestration_run_id FROM messages_in WHERE id = ?').get('legacy-2') as {
+          orchestration_run_id: string | null;
+        }
+      ).orchestration_run_id,
+    ).toBeNull();
     expect(getInboundSourceSessionId(db, 'does-not-exist')).toBeNull();
     db.close();
   });

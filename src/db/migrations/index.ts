@@ -23,6 +23,10 @@ import { migration023 } from './023-auxiliary-routing.js';
 import { migration024 } from './024-session-search.js';
 import { migration025 } from './025-skill-provenance.js';
 import { migration026 } from './026-capability-audit.js';
+import { migration027 } from './027-orchestration-runs.js';
+import { migration028 } from './028-orchestration-lifecycle.js';
+import { migration029 } from './029-orchestration-fallback.js';
+import { migration030 } from './030-orchestration-execution-sessions.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 
@@ -32,7 +36,7 @@ export interface Migration {
   up: (db: Database.Database) => void;
 }
 
-const migrations: Migration[] = [
+export const migrations: readonly Migration[] = [
   migration001,
   migration002,
   moduleApprovalsPendingApprovals,
@@ -57,9 +61,13 @@ const migrations: Migration[] = [
   migration024,
   migration025,
   migration026,
+  migration027,
+  migration028,
+  migration029,
+  migration030,
 ];
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database, plan: readonly Migration[] = migrations): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
@@ -78,7 +86,7 @@ export function runMigrations(db: Database.Database): void {
   const applied = new Set<string>(
     (db.prepare('SELECT name FROM schema_version').all() as { name: string }[]).map((r) => r.name),
   );
-  const pending = migrations.filter((m) => !applied.has(m.name));
+  const pending = plan.filter((m) => !applied.has(m.name));
   if (pending.length === 0) return;
 
   log.info('Running migrations', { count: pending.length });

@@ -45,8 +45,10 @@ import {
   type ContainerState,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { recoverFallbackDispatches } from './orchestration/fallback-dispatcher.js';
+import { recoverOrchestrationRuns } from './orchestration/run-store.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
-import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 
 /**
@@ -94,8 +96,10 @@ export function decideStuckAction(args: {
   claims: Array<{ message_id: string; status_changed: string }>;
   /** Age in ms of the oldest due-pending trigger message; 0 if none. */
   oldestDuePendingAgeMs?: number;
+  /** Uptime of the current container instance; omitted by legacy callers. */
+  containerUptimeMs?: number;
 }): StuckDecision {
-  const { now, heartbeatMtimeMs, containerState, claims, oldestDuePendingAgeMs = 0 } = args;
+  const { now, heartbeatMtimeMs, containerState, claims, oldestDuePendingAgeMs = 0, containerUptimeMs } = args;
   const declaredBashMs = bashTimeoutMs(containerState);
 
   // Ceiling check only applies when we have an actual heartbeat timestamp.
@@ -135,8 +139,12 @@ export function decideStuckAction(args: {
   // pending-stuck before it even starts creates a spawn-kill loop when old
   // unprocessed messages exceed the threshold.
   const pendingThreshold = Math.max(PENDING_STUCK_MS, declaredBashMs ?? 0);
-  if (heartbeatMtimeMs !== 0 && oldestDuePendingAgeMs > pendingThreshold) {
-    return { action: 'kill-pending-stuck', oldestPendingAgeMs: oldestDuePendingAgeMs, thresholdMs: pendingThreshold };
+  const effectivePendingAgeMs =
+    containerUptimeMs === undefined
+      ? oldestDuePendingAgeMs
+      : Math.min(oldestDuePendingAgeMs, Math.max(0, containerUptimeMs));
+  if (heartbeatMtimeMs !== 0 && effectivePendingAgeMs > pendingThreshold) {
+    return { action: 'kill-pending-stuck', oldestPendingAgeMs: effectivePendingAgeMs, thresholdMs: pendingThreshold };
   }
 
   return { action: 'ok' };
@@ -164,6 +172,14 @@ async function sweep(): Promise<void> {
   }
 
   try {
+    const recovered = recoverOrchestrationRuns();
+    if (recovered.expiredLeases > 0 || recovered.expiredRuns > 0) {
+      log.warn('Recovered expired orchestration work', recovered);
+    }
+    const fallbackRecovery = await recoverFallbackDispatches();
+    if (fallbackRecovery.recovered > 0 || fallbackRecovery.failed > 0) {
+      log.warn('Recovered queued fallback dispatches', fallbackRecovery);
+    }
     const sessions = getActiveSessions();
     for (const session of sessions) {
       await sweepSession(session);
@@ -273,6 +289,7 @@ function enforceRunningContainerSla(
   const now = Date.now();
   const oldestTs = getOldestDuePendingTimestamp(inDb);
   const oldestDuePendingAgeMs = oldestTs ? Math.max(0, now - parseSqliteUtc(oldestTs)) : 0;
+  const containerStartedAtMs = getContainerStartedAtMs(session.id);
 
   const decision = decideStuckAction({
     now,
@@ -280,6 +297,7 @@ function enforceRunningContainerSla(
     containerState: getContainerState(outDb),
     claims: getProcessingClaims(outDb),
     oldestDuePendingAgeMs,
+    containerUptimeMs: containerStartedAtMs === undefined ? undefined : Math.max(0, now - containerStartedAtMs),
   });
 
   if (decision.action === 'ok') return;

@@ -147,7 +147,18 @@ export type ProviderEvent =
    * even if it is not wrapped in message tags.
    */
   | { type: 'result'; text: string | null; isError?: boolean; usage?: ProviderUsage }
-  | { type: 'error'; message: string; retryable: boolean; classification?: string; usage?: ProviderUsage }
+  | {
+      type: 'error';
+      message: string;
+      retryable: boolean;
+      classification?: string;
+      usage?: ProviderUsage;
+      /**
+       * Explicit only when the provider can prove whether this turn entered
+       * tool execution. Undefined means unknown and must fail closed.
+       */
+      sideEffectBoundaryCrossed?: boolean;
+    }
   | { type: 'progress'; message: string }
   /**
    * Liveness signal. Providers MUST yield this on every underlying SDK

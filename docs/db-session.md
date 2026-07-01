@@ -56,6 +56,7 @@ CREATE TABLE messages_in (
   thread_id      TEXT,
   content        TEXT NOT NULL,            -- JSON; shape depends on kind
   source_session_id TEXT,                  -- agent-to-agent return path
+  orchestration_run_id TEXT,               -- central run correlation; NULL otherwise
   on_wake        INTEGER NOT NULL DEFAULT 0 -- 1 = only deliver on container's first poll
 );
 CREATE INDEX idx_messages_in_series ON messages_in(series_id);
@@ -200,6 +201,33 @@ central FTS5 projection, and inserts a trigger-0 `system` response into
 `inbound.db`. The MCP handler reads and acknowledges that response through
 `processing_ack`. Search text and results never require a central DB mount or
 another writer for either session DB.
+
+### 4.5 Orchestration terminal metadata
+
+For inbound rows carrying a non-null `orchestration_run_id`, the runner writes
+a `system` outbound row with `action: "orchestration_result"`. Correlation
+metadata is separate from the adapter-provided message ID, so routing and
+delivery IDs retain their existing shape. The action contains only the scoped
+inbound IDs, terminal outcome, normalized provider usage when available,
+timestamp, and stable event ID. Prompt text, model output, tool arguments, and
+files are not duplicated into the orchestration event.
+
+While processing a batch, runner-written outbound rows default
+`in_reply_to` to the first inbound message ID unless the caller supplies a
+more specific correlation. This includes host system actions, allowing the
+host to derive orchestration identity without trusting action content.
+
+The host derives the source session, updates the correlated central model-step
+attempt idempotently, and marks user-facing delivery separately from the
+normal outbound row's `in_reply_to`. Delivery waits while the model attempt is
+active and is suppressed after cancellation.
+
+An approved fallback does not rewrite the source session's provider state.
+The host creates a deterministic fallback session with its own `inbound.db`
+and `outbound.db`, copies only the reconstructable correlated input, and binds
+that session to the new central step attempt. The copied row retains the same
+`orchestration_run_id`; central `execution_session_id` ownership ensures that
+primary-session terminal output cannot complete the fallback attempt.
 
 ---
 

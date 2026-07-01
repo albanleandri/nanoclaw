@@ -403,6 +403,45 @@ installed.
 - **Readers/writers:** `src/skills/`, `src/db/skill-provenance.ts`,
   `src/audit/`, skill/audit CLI resources
 
+### 1.21 Orchestration runs
+
+Migration 027 adds `orchestration_runs`, `orchestration_step_attempts`, and
+append-only `orchestration_events`. The run stores the validated versioned
+plan, pattern/policy identity, source agent/session, status, and normalized
+usage. Attempts store step/role/kind, stable idempotency key, correlated
+inbound message ID, terminal classification, usage attribution, and timing.
+
+The first executable pattern is `direct@1`: one existing-session model step
+followed by one user-facing delivery step. Runs are created before the session
+message is written. Runner terminal metadata completes the model attempt;
+successful or permanently failed outbound delivery completes the delivery
+attempt. There is no automatic destructive retention job.
+
+- **Readers/writers:** `src/orchestration/`, router, container runner,
+  delivery, runner poll loop, orchestration CLI resource
+
+Migration 028 adds cancellation metadata to runs; lease, batch, and timeout
+metadata to attempts; and `orchestration_session_authorizations`, which stores
+the last compiled capability IDs for a session. It also links capability audit
+events to a source-derived orchestration run. The host sweep terminally
+recovers expired leases and wall-clock budgets. Cancellation is durable and
+idempotent; adapter cancellation is requested only for an isolated processing
+claim so a shared batch is not killed accidentally.
+
+Migration 029 adds per-attempt runtime/protocol/continuation identity,
+capability and tool-contract fingerprints, input reconstructability,
+tri-state side-effect-boundary state, result/artifact/delivery facts, and
+retryability. `orchestration_fallback_decisions` stores the evaluated
+candidate, policy version, allow/deny result, and all rejection reasons before
+an approved next attempt can be queued. The policy remains default-off.
+
+Migration 030 adds `orchestration_step_attempts.execution_session_id`.
+Initial model attempts are backfilled to the run's source session; an approved
+fallback attempt is bound to its deterministic provider-profile session before
+dispatch. Result, delivery, authorization, cancellation, and active-capability
+lookups use this execution owner rather than assuming every attempt runs in
+the source session.
+
 ---
 
 ## 2. Migration system
@@ -413,24 +452,28 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 2. Reads `MAX(version)` — call it `current`.
 3. For each migration with `version > current`, executes `up(db)` inside a transaction and appends a `schema_version` row.
 
-| #   | File                                     | Introduces                                                                                                                                                           |
-| --- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 001 | `001-initial.ts`                         | Core tables: `agent_groups`, `messaging_groups`, `messaging_group_agents`, `users`, `user_roles`, `agent_group_members`, `user_dms`, `sessions`, `pending_questions` |
-| 002 | `002-chat-sdk-state.ts`                  | `chat_sdk_kv`, `chat_sdk_subscriptions`, `chat_sdk_locks`, `chat_sdk_lists`                                                                                          |
-| 003 | `003-pending-approvals.ts`               | `pending_approvals` (session-bound + OneCLI fields)                                                                                                                  |
-| 004 | `004-agent-destinations.ts`              | `agent_destinations` + backfill from existing `messaging_group_agents` wirings                                                                                       |
-| 007 | `007-pending-approvals-title-options.ts` | `ALTER TABLE pending_approvals` add `title`, `options_json` (retrofits DBs created between 003 and 007)                                                              |
-| 008 | `008-dropped-messages.ts`                | `unregistered_senders`                                                                                                                                               |
-| 009 | `009-drop-pending-credentials.ts`        | Drop the defunct `pending_credentials` table                                                                                                                         |
-| 014 | `014-container-configs.ts`               | `container_configs` — per-agent-group container runtime config                                                                                                       |
-| 015 | `015-cli-scope.ts`                       | `ALTER TABLE container_configs ADD COLUMN cli_scope`                                                                                                                 |
-| 019 | `019-provider-profiles.ts`               | Provider profiles plus nullable group/session profile references                                                                                                     |
-| 020 | `020-schedule-admin-grants.ts`           | Generic schedule owner/admin grants                                                                                                                                  |
-| 022 | `022-agent-tasks.ts`                     | Durable cross-agent task ownership and correlation                                                                                                                   |
-| 023 | `023-auxiliary-routing.ts`               | Typed auxiliary routes and durable invocation relation                                                                                                               |
-| 024 | `024-session-search.ts`                  | Scoped session text metadata and FTS5 projection                                                                                                                     |
-| 025 | `025-skill-provenance.ts`                | Effective skill approval, observed hashes, drift state, and provenance events                                                                                        |
-| 026 | `026-capability-audit.ts`                | Redacted append-only canonical capability lifecycle events                                                                                                           |
+| #   | File                                      | Introduces                                                                                                                                                           |
+| --- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 001 | `001-initial.ts`                          | Core tables: `agent_groups`, `messaging_groups`, `messaging_group_agents`, `users`, `user_roles`, `agent_group_members`, `user_dms`, `sessions`, `pending_questions` |
+| 002 | `002-chat-sdk-state.ts`                   | `chat_sdk_kv`, `chat_sdk_subscriptions`, `chat_sdk_locks`, `chat_sdk_lists`                                                                                          |
+| 003 | `003-pending-approvals.ts`                | `pending_approvals` (session-bound + OneCLI fields)                                                                                                                  |
+| 004 | `004-agent-destinations.ts`               | `agent_destinations` + backfill from existing `messaging_group_agents` wirings                                                                                       |
+| 007 | `007-pending-approvals-title-options.ts`  | `ALTER TABLE pending_approvals` add `title`, `options_json` (retrofits DBs created between 003 and 007)                                                              |
+| 008 | `008-dropped-messages.ts`                 | `unregistered_senders`                                                                                                                                               |
+| 009 | `009-drop-pending-credentials.ts`         | Drop the defunct `pending_credentials` table                                                                                                                         |
+| 014 | `014-container-configs.ts`                | `container_configs` — per-agent-group container runtime config                                                                                                       |
+| 015 | `015-cli-scope.ts`                        | `ALTER TABLE container_configs ADD COLUMN cli_scope`                                                                                                                 |
+| 019 | `019-provider-profiles.ts`                | Provider profiles plus nullable group/session profile references                                                                                                     |
+| 020 | `020-schedule-admin-grants.ts`            | Generic schedule owner/admin grants                                                                                                                                  |
+| 022 | `022-agent-tasks.ts`                      | Durable cross-agent task ownership and correlation                                                                                                                   |
+| 023 | `023-auxiliary-routing.ts`                | Typed auxiliary routes and durable invocation relation                                                                                                               |
+| 024 | `024-session-search.ts`                   | Scoped session text metadata and FTS5 projection                                                                                                                     |
+| 025 | `025-skill-provenance.ts`                 | Effective skill approval, observed hashes, drift state, and provenance events                                                                                        |
+| 026 | `026-capability-audit.ts`                 | Redacted append-only canonical capability lifecycle events                                                                                                           |
+| 027 | `027-orchestration-runs.ts`               | Versioned execution plans, durable step attempts, normalized usage, and append-only run events                                                                       |
+| 028 | `028-orchestration-lifecycle.ts`          | Attempt leases, cancellation, session authorization snapshots, and capability-audit correlation                                                                      |
+| 029 | `029-orchestration-fallback.ts`           | Durable fallback compatibility/side-effect facts and append-only candidate decisions                                                                                 |
+| 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
 
 Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
 

@@ -1,46 +1,57 @@
 [
   {
     "capabilityId": "memory.session-search",
-    "toolName": "session_search"
+    "toolName": "session_search",
+    "schemaFingerprint": "fd46dc02341eb0dc9791a7350f6c02cedf338601d3303665b30fb4f8aacbc6de"
   },
   {
     "capabilityId": "nanoclaw.block-agent-task",
-    "toolName": "block_agent_task"
+    "toolName": "block_agent_task",
+    "schemaFingerprint": "f1959e3e3d9416333a53469f6964402edcb31eac1ab9828a063b40887d385f24"
   },
   {
     "capabilityId": "nanoclaw.cancel-agent-task",
-    "toolName": "cancel_agent_task"
+    "toolName": "cancel_agent_task",
+    "schemaFingerprint": "f08380e0062a095318443d03eb88eaca3f64ba6e2d801537c1129429ec211c2c"
   },
   {
     "capabilityId": "nanoclaw.complete-agent-task",
-    "toolName": "complete_agent_task"
+    "toolName": "complete_agent_task",
+    "schemaFingerprint": "cbf047fa5db80804031cf9e7fb25380c6dd9c27d7e45edd32158895dbd95c76d"
   },
   {
     "capabilityId": "nanoclaw.fail-agent-task",
-    "toolName": "fail_agent_task"
+    "toolName": "fail_agent_task",
+    "schemaFingerprint": "c7db8334e99b5ecb87822e232095f20bfe9de0dd170bc282f983c0530ad4d75d"
   },
   {
     "capabilityId": "nanoclaw.get-agent-task",
-    "toolName": "get_agent_task"
+    "toolName": "get_agent_task",
+    "schemaFingerprint": "f08380e0062a095318443d03eb88eaca3f64ba6e2d801537c1129429ec211c2c"
   },
   {
     "capabilityId": "nanoclaw.publish-agent-task-artifact",
-    "toolName": "publish_agent_task_artifact"
+    "toolName": "publish_agent_task_artifact",
+    "schemaFingerprint": "a597ff587aedfdec88de023a8fcd6675a55a0a061ed5acba4aebe282ab337ca1"
   },
   {
     "capabilityId": "nanoclaw.report-agent-task-progress",
-    "toolName": "report_agent_task_progress"
+    "toolName": "report_agent_task_progress",
+    "schemaFingerprint": "4e5fee7cfdcc49e49de2e1fd51156309f9069b2c2a86237ddc665ac63b9413f4"
   },
   {
     "capabilityId": "nanoclaw.request-agent-task",
-    "toolName": "request_agent_task"
+    "toolName": "request_agent_task",
+    "schemaFingerprint": "2b3d08072a5aebf475dfcee94e075931144b27fb04ace69e7595e747aa3a34fb"
   },
   {
     "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "schedule_task"
+    "toolName": "schedule_task",
+    "schemaFingerprint": "fdb8a99ba08ca3e5840b7f70d675024eaf47a75a0bcb7f8b6a9c05295acda2c5"
   },
   {
     "capabilityId": "nanoclaw.send-message",
-    "toolName": "send_message"
+    "toolName": "send_message",
+    "schemaFingerprint": "1c49357411934abfb2efedf6934236f77b707058cd82f4389ae390ff8cb893cb"
   }
 ]

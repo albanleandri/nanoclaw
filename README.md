@@ -80,6 +80,7 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 - **Scoped session search** — agents can search normalized text from their own prior sessions through SQLite FTS5; results carry source IDs and never cross agent-group boundaries
 - **Auxiliary model routing foundation** — typed review, classification, compression, vision, memory, and reference-analysis roles resolve explicitly to the current runtime, a provider profile, another authorized agent, or disabled
 - **Skill provenance and capability audit** — optional strict container-skill manifests bind reviewed content hashes to capability/runtime requirements, while canonical tool calls emit redacted, correlated lifecycle events
+- **Durable direct orchestration seam** — normal engaged messages compile to a versioned `direct@1` model→delivery plan, with dependency-ready leases, timeout recovery, cancellation, source-derived host-action authorization, provider usage, and delivery completion; restricted pre-tool fallback can dispatch through an isolated provider-profile session, but its code-owned policy remains default-off
 - **Web access** — search and fetch content from the web
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional per-container CPU/memory caps, optional OneCLI-only egress lockdown, optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation, or Apple Container as a macOS-native opt-in
 - **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
@@ -97,6 +98,7 @@ This fork stays close to upstream NanoClaw's host/container/session-DB architect
 - **Built-in Telegram adapter and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, and optional pool routing via explicit `bot_index`.
 - **Private skills submodule** — fork-specific skills can live in `container/skills/custom` as a private submodule while the public tree stays generic.
 - **Durable job/action framework** — host-side long-running jobs can persist progress, expose delivery actions, and report failures through the normal messaging path.
+- **Runner-neutral execution runs** — the existing direct session path is represented by a validated `ExecutionPlan`, inspected with `ncl orchestration-runs list --agent-group-id <id>`, cancelled with `ncl orchestration-runs cancel --id <run-id>`, and evaluated with `ncl orchestration-runs eval --agent-group-id <id>`; fallback requires an explicitly evaluated code-owned policy version and candidate profile list, while later advanced patterns remain gated.
 - **Local operator tooling** — helper scripts cover read-only SQLite inspection, backup/restore, token refresh, and systemd service management.
 
 ## Usage
@@ -172,13 +174,17 @@ Key files:
 - `src/delivery.ts` — polls `outbound.db`, delivers via adapter, handles system actions
 - `src/host-sweep.ts` — 60s sweep: stale detection, due-message wake, recurrence
 - `src/session-manager.ts` — resolves sessions, opens `inbound.db` / `outbound.db`
-- `src/container-runner.ts` — spawns per-session containers, materializes `container.json`, OneCLI credential injection
+- `src/container-launch-plan.ts` — deterministically compiles and validates Docker arguments before external effects
+- `src/container-runner.ts` — materializes per-session runtime state and supervises container processes
 - `src/db/` — central DB (users, roles, agent groups, messaging groups, wiring, migrations)
 - `src/channels/` — channel adapter infra (adapters installed via `/add-<channel>` skills)
 - `src/providers/` — host-side provider config and provider-contributed mounts/env
 - `src/capabilities/` — code-owned capability manifests, availability checks, runtime support resolution, and the pre-spawn compiler/gate
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
 - `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, materialized `container.json`)
+
+Coverage is part of CI. Run `pnpm run test:coverage` for the host and
+`cd container/agent-runner && bun run test:coverage` for the Bun runner.
 
 ## FAQ
 

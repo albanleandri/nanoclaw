@@ -63,6 +63,8 @@ describe('runtime by capability conformance matrix', () => {
           })),
       )
       .sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
-    expect(hostBindings).toEqual(protocolToolContract);
+    expect(hostBindings).toEqual(
+      protocolToolContract.map(({ capabilityId, toolName }) => ({ capabilityId, toolName })),
+    );
   });
 });

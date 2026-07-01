@@ -22,6 +22,7 @@ vi.mock('./config.js', async () => {
 
 // Mock container runner to prevent actual Docker spawning
 vi.mock('./container-runner.js', () => ({
+  getContainerStartedAtMs: vi.fn().mockReturnValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
   wakeContainer: vi.fn().mockResolvedValue(true),
   killContainer: vi.fn(),
@@ -29,7 +30,7 @@ vi.mock('./container-runner.js', () => ({
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from './db/index.js';
 import { createSession } from './db/sessions.js';
-import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { initSessionFolder, openOutboundDbRw, writeSessionMessage } from './session-manager.js';
 
@@ -82,6 +83,7 @@ async function runSweepTick(): Promise<void> {
 }
 
 beforeEach(() => {
+  vi.mocked(getContainerStartedAtMs).mockReset().mockReturnValue(undefined);
   vi.mocked(isContainerRunning).mockReset().mockReturnValue(false);
   vi.mocked(killContainer).mockReset();
   vi.mocked(wakeContainer)

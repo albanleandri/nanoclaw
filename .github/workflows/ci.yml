@@ -34,6 +34,13 @@ jobs:
       - name: Host tests
         run: pnpm exec vitest run
 
+      - name: Host coverage
+        run: pnpm run test:coverage
+
       - name: Container tests
         working-directory: container/agent-runner
         run: bun test
+
+      - name: Container coverage
+        working-directory: container/agent-runner
+        run: bun run test:coverage

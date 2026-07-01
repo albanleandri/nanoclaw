@@ -114,6 +114,8 @@ export function insertMessage(
      * path for the target's reply. NULL on channel-side inbound.
      */
     sourceSessionId?: string | null;
+    /** Host-owned central orchestration run correlated with this input. */
+    orchestrationRunId?: string | null;
     /**
      * 1 = only deliver on the container's first poll (fresh start).
      * Dying containers (past first poll) skip these rows.
@@ -122,13 +124,14 @@ export function insertMessage(
   },
 ): void {
   db.prepare(
-    `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger, source_session_id, on_wake)
-     VALUES (@id, @seq, @kind, @timestamp, 'pending', @platformId, @channelType, @threadId, @content, @processAfter, @recurrence, @id, @trigger, @sourceSessionId, @onWake)`,
+    `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger, source_session_id, orchestration_run_id, on_wake)
+     VALUES (@id, @seq, @kind, @timestamp, 'pending', @platformId, @channelType, @threadId, @content, @processAfter, @recurrence, @id, @trigger, @sourceSessionId, @orchestrationRunId, @onWake)`,
   ).run({
     ...message,
     trigger: message.trigger ?? 1,
     onWake: message.onWake ?? 0,
     sourceSessionId: message.sourceSessionId ?? null,
+    orchestrationRunId: message.orchestrationRunId ?? null,
     seq: nextEvenSeq(db),
   });
 }
@@ -346,6 +349,10 @@ export function migrateMessagesInTable(db: Database.Database): void {
     // For agent-to-agent return-path routing. NULL on existing rows is fine —
     // their replies fall back to the legacy "newest active session" lookup.
     db.prepare('ALTER TABLE messages_in ADD COLUMN source_session_id TEXT').run();
+  }
+  if (!cols.has('orchestration_run_id')) {
+    // Existing messages are legacy inputs and intentionally retain NULL.
+    db.prepare('ALTER TABLE messages_in ADD COLUMN orchestration_run_id TEXT').run();
   }
   if (!cols.has('on_wake')) {
     // 1 = only deliver on the container's first poll (fresh start).

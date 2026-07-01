@@ -28,9 +28,29 @@ import { hasPoolBots, deliverViaPool } from './channels/telegram-pool.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
 import { tryIndexSessionMessage } from './session-search/indexer.js';
+import {
+  authorizeCorrelatedHostAction,
+  directDeliveryDecision,
+  recordDirectDelivery,
+} from './orchestration/run-store.js';
 
 const ACTIVE_POLL_MS = 1000;
 const SWEEP_POLL_MS = 60_000;
+
+function recordOrchestrationDelivery(input: Parameters<typeof recordDirectDelivery>[0]): void {
+  try {
+    recordDirectDelivery(input);
+    // Orchestration telemetry must not turn an already-attempted channel
+    // delivery into a retry and risk duplicating the external side effect.
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch (err) {
+    log.warn('Failed to record orchestration delivery outcome', {
+      sessionId: input.sourceSessionId,
+      outboundMessageId: input.outboundMessageId,
+      err,
+    });
+  }
+}
 const MAX_DELIVERY_ATTEMPTS = 3;
 
 /** Track delivery attempt counts. Resets on process restart (gives failed messages a fresh chance). */
@@ -191,9 +211,29 @@ async function drainSession(session: Session): Promise<void> {
     migrateDeliveredTable(inDb);
 
     for (const msg of undelivered) {
+      if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+        const decision = directDeliveryDecision(session.id, msg.in_reply_to);
+        if (decision.state === 'wait') continue;
+        if (decision.state === 'suppress') {
+          markDeliveryFailed(inDb, msg.id);
+          log.info('Suppressed outbound delivery for cancelled orchestration run', {
+            messageId: msg.id,
+            runId: decision.runId,
+          });
+          continue;
+        }
+      }
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
+        if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+          recordOrchestrationDelivery({
+            sourceSessionId: session.id,
+            inputMessageId: msg.in_reply_to,
+            outboundMessageId: msg.id,
+            status: 'succeeded',
+          });
+        }
         tryIndexSessionMessage({
           agentGroupId: session.agent_group_id,
           sessionId: session.id,
@@ -226,6 +266,14 @@ async function drainSession(session: Session): Promise<void> {
             err,
           });
           markDeliveryFailed(inDb, msg.id);
+          if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+            recordOrchestrationDelivery({
+              sourceSessionId: session.id,
+              inputMessageId: msg.in_reply_to,
+              outboundMessageId: msg.id,
+              status: 'failed',
+            });
+          }
           deliveryAttempts.delete(msg.id);
         } else {
           log.warn('Message delivery failed, will retry', {
@@ -266,7 +314,10 @@ async function deliverMessage(
 
   // System actions — handle internally (schedule_task, cancel_task, etc.)
   if (msg.kind === 'system') {
-    await handleSystemAction(content, session, inDb);
+    await handleSystemAction(content, session, inDb, {
+      inReplyTo: msg.in_reply_to,
+      outboundMessageId: msg.id,
+    });
     return;
   }
 
@@ -415,10 +466,16 @@ async function deliverMessage(
  * Default when no handler registered and the switch doesn't match: log
  * "Unknown system action" and return.
  */
+export interface DeliveryActionSource {
+  inReplyTo: string | null;
+  outboundMessageId: string;
+}
+
 export type DeliveryActionHandler = (
   content: Record<string, unknown>,
   session: Session,
   inDb: Database.Database,
+  source?: DeliveryActionSource,
 ) => Promise<void>;
 
 const actionHandlers = new Map<string, DeliveryActionHandler>();
@@ -444,13 +501,22 @@ export async function handleSystemAction(
   content: Record<string, unknown>,
   session: Session,
   inDb: Database.Database,
+  source?: DeliveryActionSource,
 ): Promise<void> {
   const action = content.action as string;
   log.info('System action from agent', { sessionId: session.id, action });
 
   const registered = actionHandlers.get(action);
   if (registered) {
-    await registered(content, session, inDb);
+    if (source?.inReplyTo && action !== 'capability_audit' && action !== 'orchestration_result') {
+      authorizeCorrelatedHostAction({
+        sourceSessionId: session.id,
+        inputMessageId: source.inReplyTo,
+        outboundMessageId: source.outboundMessageId,
+        action,
+      });
+    }
+    await registered(content, session, inDb, source);
     return;
   }
 

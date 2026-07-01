@@ -32,6 +32,7 @@ import {
   getPendingQuestion,
   deletePendingQuestion,
 } from './index.js';
+import { migrations } from './migrations/index.js';
 
 function now() {
   return new Date().toISOString();
@@ -54,6 +55,32 @@ describe('migrations', () => {
     runMigrations(db);
     // Running again should not throw
     runMigrations(db);
+  });
+
+  it('upgrades a populated pre-orchestration database through the current schema', () => {
+    const db = initTestDb();
+    const legacyPlan = migrations.slice(
+      0,
+      migrations.findIndex((migration) => migration.name === 'orchestration-runs'),
+    );
+    runMigrations(db, legacyPlan);
+    db.prepare(
+      `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at)
+       VALUES ('legacy-agent', 'Legacy Agent', 'legacy-agent', NULL, '2026-01-01')`,
+    ).run();
+
+    runMigrations(db);
+
+    expect(db.prepare("SELECT name FROM agent_groups WHERE id='legacy-agent'").get()).toEqual({ name: 'Legacy Agent' });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestration_runs'").get()).toEqual(
+      { name: 'orchestration_runs' },
+    );
+    const attemptColumns = db.prepare('PRAGMA table_info(orchestration_step_attempts)').all() as Array<{
+      name: string;
+    }>;
+    expect(attemptColumns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['runtime_id', 'side_effect_boundary_crossed', 'execution_session_id']),
+    );
   });
 });
 

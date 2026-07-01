@@ -14,6 +14,27 @@ export interface SkillCatalogEntry {
   error?: string;
 }
 
+export interface EffectiveSkillSelection {
+  entries: SkillCatalogEntry[];
+  skippedSkills: string[];
+}
+
+/** Resolve names once with deterministic ordering for every skill consumer. */
+export function selectSkillCatalog(
+  catalog: ReadonlyMap<string, SkillCatalogEntry>,
+  selection: string[] | 'all',
+): EffectiveSkillSelection {
+  const names = selection === 'all' ? [...catalog.keys()] : [...new Set(selection)];
+  const entries: SkillCatalogEntry[] = [];
+  const skippedSkills: string[] = [];
+  for (const name of names.sort()) {
+    const entry = catalog.get(name);
+    if (entry) entries.push(entry);
+    else skippedSkills.push(name);
+  }
+  return { entries, skippedSkills };
+}
+
 export function discoverSkillCatalog(projectRoot: string): Map<string, SkillCatalogEntry> {
   const root = path.join(projectRoot, 'container', 'skills');
   const entries = new Map<string, SkillCatalogEntry>();

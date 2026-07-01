@@ -169,10 +169,18 @@ Non-Chat-SDK channels (WhatsApp via Baileys, Gmail, custom integrations) impleme
 
 The host is an orchestrator:
 
-1. **Spawn** — when wakeUpAgent is called and no container exists for the session
-2. **Idle kill** — when a container has no unprocessed messages for some timeout period
-3. **Limits** — `MAX_CONCURRENT_CONTAINERS` caps active containers; optional `CONTAINER_CPU_LIMIT` and `CONTAINER_MEMORY_LIMIT` map to Docker `--cpus` and `--memory` per spawned container
-4. **Egress lockdown** — when `NANOCLAW_EGRESS_LOCKDOWN=true`, spawned containers join an internal Docker network and can only reach the OneCLI gateway
+1. **Plan** — compile a deterministic launch plan containing validated mounts,
+   resource limits, network arguments, provider environment, and the final Bun
+   entrypoint. OneCLI gateway contributions are applied only after parent
+   mounts so nested credential stubs cannot be shadowed.
+2. **Spawn** — when a wake is requested and no container exists for the
+   session. Startup reports a typed result internally and is not marked
+   successful until the Docker child emits `spawn`.
+3. **Reconcile** — host sweep evaluates heartbeat, claim age, pending-message
+   age, and the current container instance's uptime before deciding whether to
+   stop or retry work.
+4. **Limits** — `MAX_CONCURRENT_CONTAINERS` caps active containers; optional `CONTAINER_CPU_LIMIT` and `CONTAINER_MEMORY_LIMIT` map to Docker `--cpus` and `--memory` per spawned container
+5. **Egress lockdown** — when `NANOCLAW_EGRESS_LOCKDOWN=true`, spawned containers join an internal Docker network and can only reach the OneCLI gateway
 
 When a container spins up, the agent-runner immediately starts polling its session DB. Messages are already there waiting.
 
@@ -459,6 +467,89 @@ and outbound delivery; indexing failure does not fail messaging. The
 over the existing session DBs. Host-side scope is always derived from the
 calling session, and results include source session/message IDs.
 
+### Direct orchestration execution
+
+Engaged inbound messages now enter the host-owned orchestration seam before
+the existing session write. The code-owned `direct@1` pattern compiles a
+versioned runner-neutral `ExecutionPlan` with exactly one executor model step
+and one dependent delivery step. Validation rejects unknown capabilities,
+invalid role contracts, dependency cycles, budget overruns, and multiple
+delivery owners. Stable hashed task IDs make repeated routing idempotent
+without trusting platform message-ID syntax.
+
+The run and both step attempts are persisted before the idempotent
+`messages_in` write. The runner still receives the normal chat/task content
+and uses the existing Claude SDK, Codex, or protocol-loop provider path.
+Inbound rows carrying `orchestration_run_id` cause it to emit only terminal
+outcome and normalized usage metadata through `outbound.db`; adapter-provided
+message IDs remain unchanged and no model output is copied into the central
+event stream. Follow-up turns use the same result seam.
+
+Active model-step capability requirements are unioned into the normal
+`SessionRuntimePlan` compilation at container spawn. User-facing outbound
+delivery, correlated by `in_reply_to`, closes the delivery step. Batched
+provider usage is stored once on a deterministic owner run and sibling runs
+record the shared attribution rather than duplicating token totals. One
+delivered response closes every run represented by that provider batch.
+
+Migration 028 adds the lifecycle substrate shared by future patterns.
+Dependency-ready attempts acquire bounded durable leases. The host sweep fails
+expired leases and wall-clock budgets idempotently. Cancellation marks every
+unfinished attempt, suppresses queued delivery and host actions, marks the
+session input failed, and requests runner cancellation only when that input is
+the container's sole processing claim.
+
+Runner host actions inherit the active inbound correlation. The host derives
+the run from the source session and input ID, requires the model lease to
+still be active, and checks known host actions against the exact compiled
+session capability snapshot. Capability audit rows carry the same
+source-derived run ID. User-facing output waits for a terminal model result;
+cancelled output is recorded as suppressed rather than delivered.
+
+Migration 029 adds the first Phase-H safety substrate without activating
+fallback. A versioned code-owned policy keeps fallback, plan-role workers,
+ensembles, and graph recovery independently default-off and requires a
+same-version evaluation identifier before any gate can be enabled. Model
+attempts persist runtime/protocol/continuation identity, capability and tool
+contract fingerprints, input reconstructability, result/artifact/delivery
+facts, and a tri-state side-effect boundary. Unknown boundary state fails
+closed. The generic protocol runner reports an explicit false boundary only
+when it can prove no tool call was entered; native harnesses never become
+fallback-eligible from missing metadata.
+
+Fallback decisions and every rejection reason are append-only facts. An
+approved decision may queue the next attempt only when the validated plan
+declares fallback, the source attempt is durably failed, cancellation is
+absent, and attempt budgets remain.
+
+Migration 030 associates each model attempt with its actual execution
+session. When an explicitly evaluated fallback policy names candidate
+provider profiles, the dispatcher resolves each profile through the normal
+runtime and capability compiler, verifies its credential/protocol path at
+dispatch time, and compares both capability IDs and concrete registered tool
+schema hashes with the failed attempt. Only a reconstructable attachment-free
+input from an eligible generic protocol-loop failure can proceed.
+
+An approved retry receives a deterministic dedicated session with a
+provider-profile override and its own session DB pair. The host stops the
+previous execution owner, clones the correlated input into that session,
+leases the existing plan step, and wakes it through the normal container
+path. Stale output from the primary session is suppressed; only the latest
+attempt's execution session can complete delivery. The host sweep recovers a
+persisted failure or queued retry idempotently, and cancellation remains
+monotonic during the failed-primary/pending-fallback transition. Attempt usage
+is aggregated on the run. The default active policy has no candidates and
+keeps fallback disabled, so production behavior is unchanged.
+
+Operators can inspect the default policy, bounded direct
+success/latency/usage baseline, and named safety fixtures with
+`ncl orchestration-runs eval --agent-group-id <id>`; the report never
+auto-enables a feature.
+
+This is still the direct execution cutover, not a general pattern dispatcher.
+Plan-role workers, isolated task workspaces, reference ensembles, and
+arbitrary graph adapters remain disabled.
+
 ### Skill provenance and capability audit
 
 Container skills are resolved through one effective catalog:
@@ -467,6 +558,12 @@ optional `skill.json` declares source identity, semantic version, required and
 optional canonical capabilities, named configuration/secret assignments, and
 compatible runtime IDs. Manifest-less skills remain instruction-only during
 the compatibility rollout.
+
+The same effective selection drives capability requirements, generated
+instructions, and runtime symlinks. A configured name that no longer exists is
+reported and removed from the per-session effective config; installed invalid,
+unapproved, drifted, incompatible, or unsatisfied manifested skills still fail
+closed before spawn.
 
 Every effective directory receives a deterministic SHA-256 over file names,
 mode class, sizes, and bytes. Symlinks, special files, and oversized files are

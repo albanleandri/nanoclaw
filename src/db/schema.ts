@@ -270,6 +270,9 @@ CREATE TABLE IF NOT EXISTS messages_in (
   -- group's "newest" session. NULL on channel-side inbound and on a2a rows
   -- written before this column existed.
   source_session_id TEXT,
+  -- Correlates a host-created orchestration run without changing the
+  -- adapter-provided message id. NULL for non-orchestrated inbound rows.
+  orchestration_run_id TEXT,
   on_wake        INTEGER NOT NULL DEFAULT 0
                -- 1 = only deliver on the container's first poll (fresh start).
                -- Dying containers (past first poll) skip these rows.

@@ -17,7 +17,9 @@ import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, st
 import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
-import { log } from './log.js';
+import { installProcessErrorHandlers, log } from './log.js';
+
+installProcessErrorHandlers();
 
 // Response + shutdown registries live in response-registry.ts to break the
 // circular import cycle: src/index.ts imports src/modules/index.js for side
@@ -64,6 +66,7 @@ import './jobs/actions.js';
 import './jobs/agent-task-actions.js';
 import './session-search/action.js';
 import './audit/host-bridge.js';
+import './orchestration/host-bridge.js';
 import { startCliServer, stopCliServer } from './cli/socket-server.js';
 
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
