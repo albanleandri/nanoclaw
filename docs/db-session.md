@@ -45,7 +45,7 @@ CREATE TABLE messages_in (
   seq            INTEGER UNIQUE,           -- EVEN only (host assigns) — see §3
   kind           TEXT NOT NULL,
   timestamp      TEXT NOT NULL,
-  status         TEXT DEFAULT 'pending',   -- pending|completed|failed|paused
+  status         TEXT DEFAULT 'pending',   -- pending|processing|completed|failed|paused
   process_after  TEXT,
   recurrence     TEXT,                     -- cron expr for recurring
   series_id      TEXT,                     -- groups occurrences of a recurring task
@@ -181,7 +181,10 @@ drop or no-op a late push.
 
 ### 4.3 `session_state`
 
-Persistent container-owned KV store. Main consumer is the Chat SDK session ID — storing it here lets the agent's conversation resume across container restarts. Cleared by `/clear`.
+Persistent container-owned KV store. Provider continuations and bounded
+provider transcript state are keyed by runtime/profile identity here so a
+conversation can resume across container restarts. The selected provider's
+state is cleared by `/clear`.
 
 ```sql
 CREATE TABLE session_state (
@@ -193,7 +196,25 @@ CREATE TABLE session_state (
 
 Access: `container/agent-runner/src/db/session-state.ts`.
 
-### 4.4 Host-mediated session search
+### 4.4 `container_state`
+
+Single-row runner liveness detail for a tool currently in flight:
+
+```sql
+CREATE TABLE container_state (
+  id                       INTEGER PRIMARY KEY CHECK (id = 1),
+  current_tool             TEXT,
+  tool_declared_timeout_ms INTEGER,
+  tool_started_at          TEXT,
+  updated_at               TEXT NOT NULL
+);
+```
+
+The runner updates this around tool execution. Host sweep reads it to avoid
+declaring a container stuck before a user-declared Bash timeout has elapsed.
+It is advisory liveness state, not a durable job record.
+
+### 4.5 Host-mediated session search
 
 The runner writes a `system` outbound row with `action: "session_search"` and
 a stable `requestId`. The host derives the source agent group, queries the
@@ -202,7 +223,7 @@ central FTS5 projection, and inserts a trigger-0 `system` response into
 `processing_ack`. Search text and results never require a central DB mount or
 another writer for either session DB.
 
-### 4.5 Orchestration terminal metadata
+### 4.6 Orchestration terminal metadata
 
 For inbound rows carrying a non-null `orchestration_run_id`, the runner writes
 a `system` outbound row with `action: "orchestration_result"`. Correlation
@@ -211,6 +232,12 @@ delivery IDs retain their existing shape. The action contains only the scoped
 inbound IDs, terminal outcome, normalized provider usage when available,
 timestamp, and stable event ID. Prompt text, model output, tool arguments, and
 files are not duplicated into the orchestration event.
+
+The terminal action is written at the provider turn boundary and before any
+user-facing result/error row. Provider streams may intentionally remain open
+for follow-up turns, so orchestration completion must not wait for stream
+shutdown. The host processes outbound rows in sequence and can authorize the
+following correlated reply in the same delivery drain.
 
 While processing a batch, runner-written outbound rows default
 `in_reply_to` to the first inbound message ID unless the caller supplies a

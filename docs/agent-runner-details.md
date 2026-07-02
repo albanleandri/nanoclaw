@@ -8,7 +8,11 @@ The agent-runner has two layers:
 
 1. **Agent-runner core** — owns the poll loop, message formatting, DB reads/writes, MCP tool implementations, routing, status management, media handling. This is NanoClaw-specific and shared across all providers.
 
-2. **Agent provider** — owns the SDK/runtime interaction. Takes formatted prompts, pushes them to the provider, yields events back. Trunk ships two providers: `claude` (the default, on the Anthropic Agent SDK + Bun) and `codex` (spawns a `codex app-server` subprocess). Additional providers (OpenCode, Ollama, etc.) are installed by `/add-<provider>` skills from the `providers` branch.
+2. **Agent provider** — owns the SDK/runtime interaction. Takes formatted
+   prompts, pushes them to the provider, and yields normalized events. Trunk
+   registers `claude`, `codex`, `openai-compatible`, and the test-only `mock`
+   provider. OpenAI-compatible endpoints (including Ollama) use DB-backed
+   profiles; additional native providers may be installed by provider skills.
 
 The boundary: the agent-runner decides **what** to send and **what to do** with results. The provider decides **how** to talk to the SDK.
 
@@ -16,41 +20,30 @@ The boundary: the agent-runner decides **what** to send and **what to do** with 
 
 ```typescript
 interface AgentProvider {
+  readonly supportsNativeSlashCommands: boolean;
+
   /** Start a new query. Returns a handle for streaming input and output. */
   query(input: QueryInput): AgentQuery;
+
+  /** Whether a thrown error invalidates the stored continuation. */
+  isSessionInvalid(err: unknown): boolean;
+
+  /** Optional pre-resume transcript rotation/archiving policy. */
+  maybeRotateContinuation?(continuation: string, cwd: string): string | null;
 }
 
 interface QueryInput {
-  /** Initial prompt (already formatted by agent-runner).
-   *  String for text-only. ContentBlock[] for multimodal (images, PDFs, audio). */
-  prompt: string | ContentBlock[];
+  /** Initial prompt, already formatted by the runner. */
+  prompt: string;
 
-  /** Session ID to resume, if any */
-  sessionId?: string;
+  /** Opaque provider continuation: session/thread/transcript identity. */
+  continuation?: string;
 
-  /** Resume from a specific point in the session (provider-specific, may be ignored) */
-  resumeAt?: string;
-
-  /** Working directory inside the container */
+  /** Working directory inside the container. */
   cwd: string;
 
-  /** MCP server configurations (normalized format — provider translates) */
-  mcpServers: Record<string, McpServerConfig>;
-
-  /** System prompt / developer instructions */
-  systemPrompt?: string;
-
-  /** Environment variables for the SDK process */
-  env: Record<string, string | undefined>;
-
-  /** Additional directories the agent can access */
-  additionalDirectories?: string[];
-}
-
-interface McpServerConfig {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
+  /** Provider translates neutral request instructions at its boundary. */
+  systemContext?: { instructions?: string };
 }
 
 interface AgentQuery {
@@ -74,26 +67,41 @@ interface AgentQuery {
 }
 
 type ProviderEvent =
-  | { type: 'init'; sessionId: string }
-  | { type: 'result'; text: string | null }
-  | { type: 'error'; message: string; retryable: boolean; classification?: string }
-  | { type: 'progress'; message: string };
+  | { type: 'init'; continuation: string }
+  | { type: 'result'; text: string | null; isError?: boolean; usage?: ProviderUsage }
+  | {
+      type: 'error';
+      message: string;
+      retryable: boolean;
+      classification?: string;
+      usage?: ProviderUsage;
+      sideEffectBoundaryCrossed?: boolean;
+    }
+  | { type: 'progress'; message: string }
+  | { type: 'activity' };
 ```
 
 ### What the interface does NOT include
 
 - **Message formatting** — the agent-runner formats messages before passing to the provider. The provider receives a ready-to-send prompt string.
 - **Hooks** — Claude-specific. The Claude provider registers hooks internally (PreCompact, PreToolUse, etc.). Other providers don't need them.
-- **Tool allowlists** — Claude uses `allowedTools`. Codex uses `approvalPolicy`. OpenCode uses `permission`. Each provider configures this internally based on the same intent: "allow everything, no prompting."
-- **Session persistence** — Claude persists sessions to disk automatically. Codex and OpenCode manage their own session state. The agent-runner doesn't control this — it just passes `sessionId` and `resumeAt`.
+- **Tool policy** — native providers translate the compiled runtime intent
+  into their own policy. Generic profiles receive only verified, compiled
+  protocol-tool bindings.
+- **Session persistence** — each provider owns the meaning of its opaque
+  continuation. The runner stores it in `outbound.db.session_state`, scoped by
+  runtime/profile identity.
 - **Sandbox configuration** — provider-specific. Each provider configures its own sandbox internally.
 
 ### Provider event semantics
 
-- **`init`** — emitted once per query when the provider establishes or resumes a session. The agent-runner captures `sessionId` for future resume.
+- **`init`** — emitted when the provider establishes or resumes state. The
+  runner persists the opaque `continuation` immediately.
 - **`result`** — emitted when the agent produces a complete response. May be emitted multiple times per query (e.g., Claude's multi-turn with subagents). The agent-runner writes each result to messages_out.
 - **`error`** — emitted on failure. `retryable` indicates whether the agent-runner should retry. `classification` is optional detail (e.g., 'quota', 'auth', 'transport').
 - **`progress`** — optional, for logging. The agent-runner logs these but doesn't act on them.
+- **`activity`** — liveness only; providers emit it for underlying SDK
+  activity that is not otherwise a normalized event.
 
 Follow-up acknowledgement is separate from result emission. When the poll loop
 finds new inbound rows while a query is active, it marks them `processing`,
@@ -114,7 +122,10 @@ outer loop and host sweep.
 
 ## Provider Implementations
 
-The `claude` and `codex` providers ship in trunk (registered in `container/agent-runner/src/providers/index.ts`). The OpenCode section below documents the provider interface for reference and for skills that install additional providers — OpenCode and other non-default providers are not baked into the core image.
+The `claude`, `codex`, `openai-compatible`, and test-only `mock` providers are
+registered in `container/agent-runner/src/providers/index.ts`. The OpenCode
+section below is an illustrative adapter sketch for provider skills, not
+shipped runtime behavior.
 
 ### Claude Provider
 
@@ -130,14 +141,13 @@ class ClaudeProvider implements AgentProvider {
       prompt: stream,
       options: {
         cwd: input.cwd,
-        resume: input.sessionId,
-        resumeSessionAt: input.resumeAt,
-        systemPrompt: input.systemPrompt
-          ? { type: 'preset', preset: 'claude_code', append: input.systemPrompt }
+        resume: input.continuation,
+        systemPrompt: input.systemContext?.instructions
+          ? { type: 'preset', preset: 'claude_code', append: input.systemContext.instructions }
           : undefined,
-        mcpServers: input.mcpServers, // already the right shape
-        additionalDirectories: input.additionalDirectories,
-        env: input.env,
+        mcpServers: this.mcpServers,
+        additionalDirectories: this.additionalDirectories,
+        env: this.env,
         allowedTools: NANOCLAW_TOOL_ALLOWLIST,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
@@ -160,7 +170,7 @@ class ClaudeProvider implements AgentProvider {
 
 `translateClaudeEvents` is an async generator that maps SDK messages to `ProviderEvent`:
 
-- `message.type === 'system' && message.subtype === 'init'` → `{ type: 'init', sessionId }`
+- `message.type === 'system' && message.subtype === 'init'` → `{ type: 'init', continuation: sessionId }`
 - `message.type === 'result'` → `{ type: 'result', text }`
 - `message.type === 'system' && message.subtype === 'api_retry'` → `{ type: 'error', retryable: true }`
 - `message.type === 'system' && message.subtype === 'rate_limit_event'` → `{ type: 'error', retryable: false, classification: 'quota' }`
@@ -170,7 +180,7 @@ class ClaudeProvider implements AgentProvider {
 **Claude-specific features preserved inside the provider:**
 
 - `MessageStream` for async iterable input (push-based)
-- `resumeSessionAt` for resume at specific message UUID
+- SDK continuation persisted immediately on init
 - PreCompact hook for transcript archiving
 - PreToolUse hook for sanitizing bash env vars
 - Full tool allowlist
@@ -195,7 +205,7 @@ class CodexProvider implements AgentProvider {
 
       // 3. Start (or resume) a thread; emit its id as the session id
       const { threadId } = await startOrResumeCodexThread(server, input.continuation);
-      yield { type: 'init', sessionId: threadId };
+      yield { type: 'init', continuation: threadId };
 
       // 4. Run a turn per prompt; map app-server notifications → ProviderEvent
       for await (const prompt of prompts) {
@@ -225,7 +235,7 @@ JSON-RPC helpers (`spawnCodexAppServer`, `initializeCodexAppServer`, `startOrRes
 - Stale-thread detection (`STALE_THREAD_RE` / `isSessionInvalid`)
 - Opt-in to the runner's persistent `memory/` scaffold (Codex has no native NanoClaw memory)
 
-### OpenCode Provider
+### OpenCode Provider (illustrative, not shipped)
 
 Wraps `@opencode-ai/sdk`.
 
@@ -257,7 +267,7 @@ class OpenCodeProvider implements AgentProvider {
 
   private async *run(client, server, stream, input, getPendingFollowUp): AsyncIterable<ProviderEvent> {
     const session = await client.session.create();
-    yield { type: 'init', sessionId: session.data.id };
+    yield { type: 'init', continuation: session.data.id };
 
     await client.session.promptAsync({
       path: { id: session.data.id },
@@ -675,33 +685,20 @@ The runner formats assignments as `<agent_task>`, correlated updates as `<agent_
 
 #### Inbound (messages_in → agent prompt)
 
-The agent-runner inspects attachments in chat/chat-sdk messages and handles them based on type and provider capability:
-
-**Provider-native content blocks:**
-
-| Type                                      | Claude                        | Codex / OpenCode |
-| ----------------------------------------- | ----------------------------- | ---------------- |
-| Images (JPEG, PNG, GIF, WebP)             | Native image content block    | Save to disk     |
-| PDFs                                      | Native document content block | Save to disk     |
-| Audio                                     | Native audio content block    | Save to disk     |
-| Other files (code, data, video, archives) | Save to disk                  | Save to disk     |
-
-**"Save to disk"** means: download to `/workspace/downloads/{messageId}/`, reference in the prompt text:
+The host decodes attachment data into
+`/workspace/inbox/<message-id>/<filename>` before writing the inbound content.
+The runner formats each attachment as a text reference to that local path:
 
 ```
 <message sender="John" time="10:00">
   Check this spreadsheet
-  [file available at: /workspace/downloads/msg-123/data.xlsx]
+  [file: data.xlsx — saved to /workspace/inbox/msg-123/data.xlsx]
 </message>
 ```
 
-The agent can use tools (Read, Bash) to access saved files.
-
-For channels where direct download isn't possible (e.g., WhatsApp buffered streams), the channel adapter serves the media via a local URL. The agent-runner downloads from that URL.
-
-**Content block construction (Claude):** The agent-runner builds multi-part `MessageParam` content: `[{ type: 'image', source: { type: 'base64', media_type, data } }, { type: 'text', text: '...' }]`. The prompt passed to the provider is not a plain string in this case — the `QueryInput.prompt` field needs to support structured content for Claude. The provider's `query()` method handles the format-specific construction.
-
-**Content block construction (Codex/OpenCode):** Everything is text. File references are inlined in the prompt string. The provider receives a plain string prompt.
+`QueryInput.prompt` is currently a string for every provider. The acting
+runtime can inspect the mounted file with its granted native tools. The runner
+does not currently construct provider-native image/PDF/audio content blocks.
 
 #### Outbound (agent → messages_out)
 
@@ -719,18 +716,24 @@ For `task` kind messages with a `script` field in the content:
 
 ### Transcript Archiving
 
-The agent-runner archives conversation transcripts before context compaction. For Claude, this is handled via the PreCompact hook (provider-internal). For other providers that don't have hooks, the agent-runner archives after each query completes based on the provider's output.
-
-Archive location: `/workspace/agent/conversations/{date}-{summary}.md`
+Claude can archive its on-disk transcript when continuation rotation decides
+that the transcript is too large or old to cold-resume safely. That behavior
+is provider-specific. Codex owns thread state in app-server storage; the
+generic protocol loop persists a bounded normalized transcript in
+`outbound.db.session_state`. The runner does not synthesize a common Markdown
+archive after every provider query.
 
 ### Session Resume
 
-The agent-runner tracks `sessionId` and `resumeAt` across queries:
+The runner captures `ProviderEvent { type: 'init', continuation }` and writes
+the opaque continuation immediately to `outbound.db.session_state`. Keys are
+scoped by provider/profile runtime identity, so switching profiles cannot
+resume another endpoint's state. On the next query or container process, the
+runner passes the value as `QueryInput.continuation`.
 
-- `sessionId` — captured from `ProviderEvent { type: 'init' }`. Passed back to `QueryInput.sessionId` on the next query.
-- `resumeAt` — Claude-specific (last assistant message UUID). Stored by the agent-runner, passed to `QueryInput.resumeAt`. Providers that don't support this ignore it.
-
-These are ephemeral to the container's lifetime. When the container is killed and restarted, the host passes the stored `sessionId` from the central DB's sessions table. `resumeAt` is lost on container restart (the provider resumes from the end of the session).
+Claude interprets it as an SDK session ID, Codex as an app-server thread ID,
+and the generic protocol loop uses its own bounded transcript state. The
+central `sessions` table does not store provider continuation IDs.
 
 ### Container Startup
 
@@ -761,9 +764,13 @@ Provider-specific settings (model, reasoning effort, MCP servers) also come from
 
 ## Agent-Runner Properties
 
-- MCP server is a separate Node process spawned by the provider (via `mcpServers` config)
-- The MCP server binary is shared across providers — same tools, same DB access
-- CLAUDE.md loading (global + per-group) — agent-runner reads and passes as `systemPrompt`
+- Native providers receive configured MCP servers; the NanoClaw server runs
+  with Bun. Verified generic profiles execute the same registered canonical
+  handlers through the in-process protocol-tool broker instead of MCP
+  discovery.
+- Provider-native project docs are loaded by their native runtimes. The host
+  also materializes bounded request-level system instructions in runtime
+  config where required.
 - Additional directories discovery (`/workspace/extra/*`)
 - Logging via stderr (`[agent-runner] ...`)
 

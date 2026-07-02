@@ -1,197 +1,251 @@
 # NanoClaw Security Model
 
-## Trust Model
+NanoClaw treats model/provider output as untrusted. Containers reduce the
+filesystem and process impact of a compromised or mistaken agent; host-side
+authorization remains authoritative for identity, capabilities, routing, and
+external side effects.
 
-| Entity            | Trust Level | Rationale                        |
-| ----------------- | ----------- | -------------------------------- |
-| Main group        | Trusted     | Private self-chat, admin control |
-| Non-main groups   | Untrusted   | Other users may be malicious     |
-| Container agents  | Sandboxed   | Isolated execution environment   |
-| Incoming messages | User input  | Potential prompt injection       |
+This document describes the current implementation, not a claim that
+containers make arbitrary model execution risk-free.
 
-## Security Boundaries
+## Trust boundaries
 
-### 1. Container Isolation (Primary Boundary)
-
-Agents execute in containers (lightweight Linux VMs), providing:
-
-- **Process isolation** - Container processes cannot affect the host
-- **Filesystem isolation** - Only explicitly mounted directories are visible
-- **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
-- **Ephemeral containers** - Fresh environment per invocation (`--rm`)
-
-This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
-
-### 2. Mount Security
-
-**External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
-
-- Outside project root
-- Never mounted into containers
-- Cannot be modified by agents
-
-**Default Blocked Patterns:**
-
-```
-.ssh, .gnupg, .aws, .azure, .gcloud, .kube, .docker,
-credentials, .env, .netrc, .npmrc, id_rsa, id_ed25519,
-private_key, .secret
+```text
+messaging platform / user input          untrusted
+provider/model output                    untrusted
+agent container                          isolated execution domain
+session DB rows from the container       untrusted requests
+host process                             trusted policy enforcement
+central DB                               trusted admin/durable state
+OneCLI gateway                           trusted credential boundary
 ```
 
-**Protections:**
+The host does not grant authority because a prompt or model response says it
+has authority. It derives the source session, user, agent group, wiring,
+compiled capability authorization, and destination from host-owned state.
 
-- Symlink resolution before validation (prevents traversal attacks)
-- Container path validation (rejects `..` and absolute paths)
-- `nonMainReadOnly` option forces read-only for non-main groups
+## Container isolation
 
-**Read-Only Project Root:**
+Each active session runs in its own Docker container by default. Apple
+Container and Docker Sandboxes are optional runtime choices documented
+separately.
 
-The main group's project root is mounted read-only. Writable paths the agent needs (store, group folder, IPC, `.claude/`) are mounted separately. This prevents the agent from modifying host application code (`src/`, `dist/`, `package.json`, etc.) which would bypass the sandbox entirely on next restart. The `store/` directory is mounted read-write so the main agent can access the SQLite database directly.
+The container receives explicit mounts only:
 
-### 3. Session Isolation
+- its session folder at `/workspace`;
+- its agent-group workspace at `/workspace/agent` and compatibility alias
+  `/workspace/group`;
+- the effective session runtime JSON as read-only nested mounts;
+- agent-runner source, enabled skills, selected shared resources, and docs;
+- provider-specific state/auth stubs contributed by installed provider code;
+- operator-approved additional mounts.
 
-Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
+The repository root and central `data/v2.db` are not mounted by the standard
+launch path. Additional mounts are normalized and validated before spawn, and
+duplicate container destinations are rejected so a later nested mount cannot
+silently shadow a security-relevant mount.
 
-- Groups cannot see other groups' conversation history
-- Session data includes full message history and file contents read
-- Prevents cross-group information disclosure
+The agent-group workspace is intentionally writable: it is the agent's durable
+memory and work area. Sessions for the same agent group share it. Different
+agent groups use different folders and provider-state roots.
 
-### 4. IPC Authorization
+Optional `CONTAINER_CPU_LIMIT` and `CONTAINER_MEMORY_LIMIT` become Docker
+resource limits. They constrain resource use; they are not authorization
+controls.
 
-Messages and task operations are verified against group identity:
+## Database isolation
 
-| Operation                   | Main Group | Non-Main Group |
-| --------------------------- | ---------- | -------------- |
-| Send message to own chat    | ✓          | ✓              |
-| Send message to other chats | ✓          | ✗              |
-| Schedule task for self      | ✓          | ✓              |
-| Schedule task for others    | ✓          | ✗              |
-| View all tasks              | ✓          | Own only       |
-| Manage other groups         | ✓          | ✗              |
+Every session owns two SQLite files:
 
-### 5. Credential Isolation (OneCLI Agent Vault)
+- `inbound.db`: host writer, container read-only;
+- `outbound.db`: container writer, host reader.
 
-Anthropic credentials do not need to enter containers when NanoClaw is configured to use [OneCLI's Agent Vault](https://github.com/onecli/onecli). NanoClaw requests OneCLI gateway config at container startup and routes outbound Anthropic traffic through that gateway.
+Each file has one writer and uses DELETE journaling across the bind mount.
+The container cannot mark its own outbound message delivered or directly
+change inbound status. Instead:
 
-**How it works:**
+- processing state is reported through `outbound.db.processing_ack`;
+- delivery outcome is written by the host to `inbound.db.delivered`;
+- liveness is a `.heartbeat` file touch;
+- host sweep reconciles acknowledgements and stale work.
 
-1. Credentials are registered once with `onecli secrets create`, stored and managed by OneCLI
-2. When `ONECLI_URL` is configured, NanoClaw calls `applyContainerConfig()` before `docker run`
-3. The gateway returns proxy env vars and CA mounts, and NanoClaw uses `ANTHROPIC_AUTH_MODE` to choose the SDK placeholder auth flow (`api-key` or `oauth`)
-4. The gateway matches requests by host and path, injects the real Anthropic credential, and forwards
-5. Agents cannot discover the real Anthropic credential in environment, stdin, files, or `/proc`
+The central DB is host-only. Container requests to modify central state are
+structured outbound system actions processed by registered host handlers.
 
-**Per-group policy hook:**
-NanoClaw requests OneCLI container config using the group folder as the agent identifier. This gives OneCLI a stable per-group hook for policy when configured on the gateway side.
+## Identity and permissions
 
-**Explicit exception:**
-Variables forwarded with the `CONTAINER_SECRET_*` prefix are still injected directly into the container environment by design. They are an explicit opt-in escape hatch for non-proxied secrets such as calendar URLs, and agents can read them.
+Messaging identities are normalized into namespaced users. Privilege is
+user-level:
 
-**NOT Mounted:**
+- `owner` is global;
+- `admin` may be global or scoped to an agent group;
+- unprivileged access requires agent-group membership.
 
-- Channel auth sessions (`store/auth/`) — host only
-- Mount allowlist — external, never mounted
-- Any credentials matching blocked patterns
-- `.env` is shadowed with `/dev/null` in the project root mount
+`messaging_group_agents` wiring declares which agent handles a platform chat
+and its engagement/session behavior. Unknown-sender policy is stored on the
+messaging group (`strict`, `request_approval`, or `public`).
 
-### 6. Egress Lockdown (Opt-In Forced Proxy)
+The router checks identity, role/membership, engagement rules, command
+authority, and wiring before writing an inbound row. Agent instructions cannot
+override these checks.
 
-`HTTPS_PROXY` only affects proxy-aware clients. A tool that ignores proxy env vars
-or opens raw sockets can otherwise reach the internet directly and bypass OneCLI
-credential injection, policy, and audit.
+## Destination authorization
 
-When `NANOCLAW_EGRESS_LOCKDOWN=true`, NanoClaw puts agent containers on a Docker
-internal network with no internet route. The OneCLI gateway container is attached
-to that network as `host.docker.internal`, so the gateway is the only reachable
-egress hop. If NanoClaw cannot create the network or attach the gateway, it
-refuses to spawn the agent rather than falling back to open egress. Host sweep
-also re-checks the network so an out-of-band gateway detach can self-heal.
+Allowed channel and peer-agent destinations are projected into each session's
+`inbound.db.destinations` table for local name resolution. This projection is
+not the final security decision.
 
-Configuration:
+Before external delivery or agent-to-agent routing, the host revalidates the
+destination against central wiring/ACL state. A stale or forged session row
+therefore cannot create a new destination. Agent-to-agent replies use a
+host-derived source-session return path.
 
-| Env                        | Default           | Meaning                                              |
-| -------------------------- | ----------------- | ---------------------------------------------------- |
-| `NANOCLAW_EGRESS_LOCKDOWN` | `false`           | Set `true` to force agent egress through OneCLI.     |
-| `NANOCLAW_EGRESS_NETWORK`  | `nanoclaw-egress` | Internal Docker network name.                        |
-| `ONECLI_GATEWAY_CONTAINER` | `onecli`          | Gateway container to attach to the internal network. |
+Different sessions of the same agent group share workspace trust. Use separate
+agent groups whenever participants or confidentiality boundaries differ. See
+[isolation-model.md](isolation-model.md).
 
-With lockdown enabled, workflows that rely on non-proxy-aware tools reaching the
-internet directly will fail by design. Leave it unset for the existing open
-egress behavior.
+## Capability and tool authorization
 
-## Privilege Comparison
+Before spawn, the host compiles code-owned capability manifests against:
 
-| Capability          | Main Group                                                  | Non-Main Group                                              |
-| ------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| Project root access | `/workspace/project` (ro)                                   | None                                                        |
-| Store (SQLite DB)   | `/workspace/project/store` (rw)                             | None                                                        |
-| Group folder        | `/workspace/agent` and legacy alias `/workspace/group` (rw) | `/workspace/agent` and legacy alias `/workspace/group` (rw) |
-| Global memory       | Implicit via project                                        | `/workspace/global` (ro)                                    |
-| Additional mounts   | Configurable                                                | Read-only unless allowed                                    |
-| Network access      | Unrestricted                                                | Unrestricted                                                |
-| MCP tools           | All                                                         | All                                                         |
+- the selected runtime/provider profile;
+- deterministic local availability;
+- session policy and CLI scope;
+- active orchestration-step requirements;
+- enabled skill requirements and approval/provenance state.
 
-## Security Architecture Diagram
+Required unsupported capabilities fail before the container starts.
+Tool-less runtimes receive no MCP configuration. Installed manifested skills
+that are unapproved, drifted, incompatible, or missing requirements fail
+closed. A configured skill that is no longer installed is omitted with a
+warning rather than preventing all startup.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        UNTRUSTED ZONE                             │
-│  Incoming Messages (potentially malicious)                         │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Trigger check, input escaping
-┌──────────────────────────────────────────────────────────────────┐
-│                     HOST PROCESS (TRUSTED)                        │
-│  • Message routing                                                │
-│  • IPC authorization                                              │
-│  • Mount validation (external allowlist)                          │
-│  • Container lifecycle                                            │
-│  • OneCLI Agent Vault (injects credentials, enforces policies)   │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Explicit mounts only, no secrets
-┌──────────────────────────────────────────────────────────────────┐
-│                CONTAINER (ISOLATED/SANDBOXED)                     │
-│  • Agent execution                                                │
-│  • Bash commands (sandboxed)                                      │
-│  • File operations (limited to mounts)                            │
-│  • API calls routed through OneCLI Agent Vault                   │
-│  • No real credentials in environment or filesystem              │
-└──────────────────────────────────────────────────────────────────┘
-```
+Native providers translate compiled intent into provider-native policy.
+Generic OpenAI-compatible profiles remain text-only until function calling is
+verified through the real endpoint/credential route. Verified generic
+profiles receive only compiled canonical NanoClaw tools with strict argument
+validation, bounded iterations/calls/results, and duplicate-call suppression.
+Verification does not enable arbitrary MCP discovery.
 
-## Supply Chain Security (pnpm)
+Canonical tool invocations emit redacted audit lifecycle events. The audit
+stores capability/version, source correlation, state, and a hash of validated
+non-sensitive arguments—not raw prompts, model output, tool arguments, or
+secrets.
 
-NanoClaw uses pnpm with two supply chain defenses configured in `pnpm-workspace.yaml`:
+## Host actions
 
-### Minimum Release Age
+Agent tools request host behavior by writing structured `system` rows to
+`outbound.db`. Host handlers:
 
-`minimumReleaseAge: 4320` (3 days). pnpm will refuse to resolve any package version published less than 3 days ago. This defends against typosquatting and compromised maintainer accounts — most malicious publishes are detected and pulled within 72 hours.
+1. identify the source session and agent group;
+2. validate the action schema;
+3. derive the correlated user/orchestration context;
+4. check role, destination, and compiled capability authorization;
+5. perform the bounded host operation;
+6. return a structured response through `inbound.db` when needed.
 
-**Excluding a package from the release age gate** (`minimumReleaseAgeExclude`):
+Known correlated actions require an active source-derived orchestration run
+and the capability in that session's compiled authorization snapshot. Late or
+cancelled actions fail closed.
 
-This should be rare. When a zero-day fix or critical dependency requires an immediate update:
+## Orchestration safety
 
-1. The exclusion must be reviewed and approved by a human maintainer
-2. The entry must pin the **exact version** being excluded — never a range or wildcard
-   ```yaml
-   minimumReleaseAgeExclude:
-     some-package: '1.2.3' # Approved by @user, 2026-04-14 — CVE-XXXX-YYYY fix
-   ```
-3. The exclusion should be removed once the version ages past the threshold (i.e. after 3 days)
-4. Automated agents (Claude, CI bots) must never add exclusions without human sign-off
+Direct engaged messages use a host-owned versioned plan and central step
+attempts. Provider output cannot choose a run ID: correlation is carried in a
+host-written nullable inbound column.
 
-### Build Script Allowlist
+User-facing correlated delivery waits while its model attempt is active and
+is suppressed after cancellation or loss of delivery ownership. The runner
+writes terminal orchestration metadata before the reply, so authorization
+does not depend on provider stream shutdown.
 
-`onlyBuiltDependencies` restricts which packages can execute install/postinstall scripts. Only packages on this list are permitted to run build scripts during `pnpm install`. Currently allowed:
+Restricted fallback is default-off. Even when a policy names candidates, it
+is allowed only for reconstructable input and a failure proven to occur
+before tool/host/artifact/delivery side effects. Runtime/protocol,
+capabilities, concrete tool schema, credentials, cancellation, and attempt
+budgets are rechecked at dispatch. Unknown side-effect state fails closed.
 
-- `better-sqlite3` — compiles native SQLite bindings
-- `esbuild` — downloads platform-specific binary
-- `protobufjs` — generates protobuf bindings (used by Baileys/libsignal)
-- `sharp` — downloads platform-specific image processing binary
+## Credential boundary
 
-Adding a package to this list requires human approval — build scripts execute arbitrary code with the installing user's permissions.
+Provider API-key credentials normally use OneCLI and are not stored in
+`container.json`, prompts, or the central DB. Before Docker spawn, the host:
 
-### `.npmrc` Safety Net
+1. ensures the stable OneCLI agent identity using the agent-group ID;
+2. asks OneCLI to apply gateway policy and credential mounts/environment;
+3. refuses to spawn if the gateway contribution fails;
+4. supplies placeholder SDK auth values where the native SDK requires them.
 
-The `.npmrc` file contains `minReleaseAge=3d` as a fallback. The authoritative setting is in `pnpm-workspace.yaml`, but `.npmrc` provides defense-in-depth if npm is ever invoked directly (e.g. by a tool that doesn't respect pnpm).
+The gateway injects the real credential on an authorized outbound request.
+Provider profiles store only a secret reference.
+
+`CONTAINER_SECRET_*` variables are an explicit exception: values are forwarded
+directly into the container environment for integrations that cannot use the
+gateway. Any process in that container can read them. Prefer OneCLI or another
+scoped proxy whenever possible.
+
+`CODEX_CHATGPT_AUTH=host-file` is another explicit exception. It copies the
+host Codex ChatGPT `auth.json` into the selected agent group's private
+`.codex-shared` directory. The Codex process can read those subscription
+tokens; use this mode only for agent groups that should receive that authority.
+
+Provider-native local state such as `.claude-shared` and `.codex-shared` is
+scoped per agent group. DB-backed runtime/profile keys further prevent one
+endpoint profile from resuming another profile's continuation state.
+
+## Network controls
+
+By default, a container can use Docker's normal outbound network. This is
+necessary for provider APIs and web/tool access but means container isolation
+alone is not an egress allowlist.
+
+With `NANOCLAW_EGRESS_LOCKDOWN=true`, NanoClaw creates an internal Docker
+network and routes the permitted gateway through OneCLI. Direct host services
+such as a local Ollama endpoint are not reachable in that mode unless an
+explicitly reviewed gateway route is added.
+
+Docker `--add-host=host.docker.internal:host-gateway` is added on Linux in
+normal mode for cross-platform host addressing.
+
+## Supply-chain controls
+
+The host uses pnpm with:
+
+- committed `pnpm-lock.yaml`;
+- a three-day `minimumReleaseAge`;
+- an `onlyBuiltDependencies` allowlist for install scripts.
+
+The runner has a separate committed Bun lockfile. Bun has no equivalent
+release-age policy, so runtime dependency updates require deliberate review.
+The container image pins Bun and global CLI versions in the Dockerfile.
+
+CI installs both trees with frozen lockfiles, typechecks host and runner, runs
+host and runner tests plus coverage, and checks formatting.
+
+## Operational guidance
+
+- Keep `.env`, OneCLI state, local handoffs, DB backups, and private skills
+  out of the public repository.
+- Use `pnpm run backup` before writable maintenance.
+- Inspect SQLite with the read-only wrapper documented in [db.md](db.md).
+- Rebuild host TypeScript before restarting after `src/` changes.
+- Recycle running agent containers after runner-source or mounted-skill
+  changes.
+- Review additional mounts and direct container secrets as security changes,
+  not convenience configuration.
+- Treat a provider/tool verification result as scoped to its fingerprint;
+  endpoint/model/protocol changes require re-verification.
+
+## Known limits
+
+- Writable agent workspaces allow the model to change its own durable files.
+- Sessions in the same agent group intentionally share those files.
+- Default Docker networking permits general egress unless lockdown is enabled.
+- Containers reduce host exposure but do not protect data deliberately mounted
+  into them.
+- A tool with external side effects can still make a bad authorized decision;
+  isolation and validation do not replace least privilege or human approval.
+- Runtime and provider CLIs are substantial dependencies and must be kept
+  patched and reviewed.
+
+Security-sensitive implementation changes should include tests at both sides
+of the boundary: runner emission and host authorization/delivery.

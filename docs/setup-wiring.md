@@ -5,6 +5,7 @@ Last updated: 2026-04-09
 ## What's Done
 
 ### Two-DB Split (session DB write isolation)
+
 - Session DB split into `inbound.db` (host-owned) and `outbound.db` (container-owned)
 - Each file has exactly one writer — eliminates SQLite write contention across host-container mount
 - Host uses even seq numbers, container uses odd (collision-free)
@@ -17,22 +18,27 @@ Last updated: 2026-04-09
 - E2E verified: host → Docker container → Claude responds → "E2E works!" ✓
 
 ### OneCLI Integration
+
 - `ensureAgent()` call added before `applyContainerConfig()` in `src/container-runner.ts`
 - Without `ensureAgent`, OneCLI rejects unknown agent identifiers and returns false, leaving container with no credentials
 - E2E verified with OneCLI credential injection ✓
 
-### Channel Barrel
+### Channel Registry
+
 - `src/index.ts` imports `./channels/index.js` (the barrel)
-- Trunk ships the barrel + Chat SDK bridge only; `/add-<channel>` skills drop adapter files in and register them via the barrel slot
-- No channel adapters ship in trunk
+- This fork ships the Telegram adapter and Chat SDK bridge. Additional
+  adapters are installed by channel skills and self-register through the
+  barrel.
 
 ### Setup Registration (partially)
+
 - `setup/register.ts` creates entities (`agent_groups`, `messaging_groups`, `messaging_group_agents`) in `data/v2.db`
 - Accepts `--platform-id` flag
 - `getMessagingGroupAgentByPair()` prevents duplicate wiring
 - `setup/verify.ts` checks the central DB (counts agent groups with wiring)
 
 ### Router Logging
+
 - `src/router.ts` logs `MESSAGE DROPPED` at WARN level when no agents wired, with actionable guidance
 
 ---
@@ -64,12 +70,15 @@ Added `session_mode: 'agent-shared'` for cross-channel shared sessions (e.g. Git
 ## Architecture Reference
 
 ### Entity Model
+
 ```
-agent_groups (id, name, folder, agent_provider, container_config)
+agent_groups (id, name, folder, agent_provider)
     ↕ many-to-many
 messaging_groups (id, channel_type, platform_id, name, is_group, unknown_sender_policy)
     via
-messaging_group_agents (messaging_group_id, agent_group_id, trigger_rules, session_mode, priority)
+messaging_group_agents
+  (messaging_group_id, agent_group_id, engage_mode, engage_pattern,
+   sender_scope, ignored_message_policy, session_mode, priority)
 
 users (id, kind, display_name)          -- namespaced as "<channel>:<handle>"
 user_roles (user_id, role, agent_group_id)    -- owner / admin (global or scoped)
@@ -80,6 +89,7 @@ user_dms (user_id, channel_type, messaging_group_id)  -- cold-DM cache
 Privilege is a user-level concept — there is no "main" agent group or "admin" messaging group. `user_roles` carries `owner` (global only, first pairing sets it) and `admin` (global or scoped to an `agent_group_id`). Unknown-sender gating is per-messaging-group via `messaging_groups.unknown_sender_policy` (`strict | request_approval | public`).
 
 ### Message Flow
+
 ```
 Channel adapter → routeInbound() → resolve messaging_group → resolve agent via messaging_group_agents
 → resolve/create session → write to inbound.db → wake container → agent-runner polls inbound.db
@@ -87,15 +97,16 @@ Channel adapter → routeInbound() → resolve messaging_group → resolve agent
 ```
 
 ### Key Files
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Entry point, imports channel barrel |
-| `src/channels/index.ts` | Channel barrel — registry/Chat SDK bridge only in trunk; skills drop adapters in |
-| `src/router.ts` | Inbound routing, auto-creates messaging groups |
-| `src/session-manager.ts` | Creates inbound.db + outbound.db per session |
-| `src/delivery.ts` | Polls outbound.db, delivers, handles system actions |
-| `src/host-sweep.ts` | Syncs processing_ack, stale detection, recurrence |
-| `src/container-runner.ts` | Spawns containers, OneCLI ensureAgent + applyContainerConfig |
-| `setup/register.ts` | Creates entities (agent_group, messaging_group, wiring) |
-| `setup/verify.ts` | Checks central DB for registered groups |
-| `container/agent-runner/src/db/connection.ts` | Two-DB connection layer (inbound read-only, outbound read-write) |
+
+| File                                          | Purpose                                                                                   |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `src/index.ts`                                | Entry point, imports channel barrel                                                       |
+| `src/channels/index.ts`                       | Channel barrel — Telegram plus registry/Chat SDK bridge in this fork; skills add adapters |
+| `src/router.ts`                               | Inbound routing, auto-creates messaging groups                                            |
+| `src/session-manager.ts`                      | Creates inbound.db + outbound.db per session                                              |
+| `src/delivery.ts`                             | Polls outbound.db, delivers, handles system actions                                       |
+| `src/host-sweep.ts`                           | Syncs processing_ack, stale detection, recurrence                                         |
+| `src/container-runner.ts`                     | Spawns containers, OneCLI ensureAgent + applyContainerConfig                              |
+| `setup/register.ts`                           | Creates entities (agent_group, messaging_group, wiring)                                   |
+| `setup/verify.ts`                             | Checks central DB for registered groups                                                   |
+| `container/agent-runner/src/db/connection.ts` | Two-DB connection layer (inbound read-only, outbound read-write)                          |

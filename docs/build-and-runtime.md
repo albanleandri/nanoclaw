@@ -23,9 +23,9 @@ The container image also has pnpm + Node inside for global CLIs (`@anthropic-ai/
 
 ## Lockfiles
 
-| Tree | Lockfile | Manager | Regenerate after dep change |
-|------|----------|---------|----------------------------|
-| Host | `pnpm-lock.yaml` | pnpm 10 | `pnpm install` |
+| Tree         | Lockfile                          | Manager  | Regenerate after dep change                |
+| ------------ | --------------------------------- | -------- | ------------------------------------------ |
+| Host         | `pnpm-lock.yaml`                  | pnpm 10  | `pnpm install`                             |
 | Agent-runner | `container/agent-runner/bun.lock` | Bun 1.3+ | `cd container/agent-runner && bun install` |
 
 Both are committed. CI and the Dockerfile run `--frozen-lockfile` variants — any drift between `package.json` and lockfile fails the build.
@@ -44,7 +44,10 @@ Both are committed. CI and the Dockerfile run `--frozen-lockfile` variants — a
 - **BuildKit cache mounts** — `/var/cache/apt`, `/var/lib/apt`, `/root/.bun/install/cache`, `/root/.cache/pnpm`. Rebuilds where `package.json`/`bun.lock` haven't changed are fast. Requires BuildKit (default on Docker 23+, Apple Container-compat).
 - **`tini` as init** — reaps Chromium zombies, forwards signals so in-flight `outbound.db` writes finalize on SIGTERM.
 - **`entrypoint.sh`** (extracted) — `exec bun run /app/src/index.ts` under tini. Readable and diffable.
-- **No compiled `/app/dist`** — Bun runs TS directly. The host also mounts fresh source over `/app/src` at session start, so host edits take effect without rebuilding the image.
+- **No compiled `/app/dist`** — Bun runs TS directly. The host bind-mounts
+  `container/agent-runner/src` over `/app/src` at session start, so runner
+  source edits take effect in newly spawned containers without rebuilding the
+  image.
 
 ## Session wake (two paths)
 
@@ -62,8 +65,9 @@ Both paths end with Bun running the same source file from `/app/src/index.ts`.
 3. `pnpm run format:check`
 4. `pnpm exec tsc --noEmit` (host typecheck)
 5. `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` (container typecheck)
-6. `pnpm exec vitest run` (host tests)
-7. `bun test` in `container/agent-runner/` (container tests)
+6. `pnpm exec vitest run` and `pnpm run test:coverage` (host)
+7. `bun test` and `bun run test:coverage` in
+   `container/agent-runner/` (container)
 
 Any failure fails the PR.
 

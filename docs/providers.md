@@ -45,7 +45,11 @@ Runtime selection order is:
 4. legacy group provider
 5. Claude
 
-The host writes a per-session `container.runtime.json` and mounts it at `/workspace/agent/container.json`. The group-level `groups/<folder>/container.json` remains an operator snapshot and never carries a session override.
+The host writes a per-session `container.runtime.json` and mounts it at
+`/workspace/agent/container.json` and the compatibility path
+`/workspace/group/container.json`. The group-level
+`groups/<folder>/container.json` remains an operator snapshot and never
+carries a session override.
 
 Continuation and transcript state is scoped by profile plus a non-secret endpoint/model fingerprint. Two profiles using the same adapter cannot read each other's state. The generic adapter stores a bounded normalized transcript in the container-owned `outbound.db` so stateless endpoints retain context across container restarts.
 

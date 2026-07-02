@@ -1,178 +1,222 @@
 # NanoClaw Debug Checklist
 
-For routine operations, prefer the canonical repo commands in `docs/OPERATIONS.md`:
-- `npm run container:build`
-- `npm run service:status`
-- `npm run service:restart`
-- `npm run setup:bootstrap`
-- `npm run setup:step -- <step> [args...]`
+Run commands from the repository root. See [OPERATIONS.md](OPERATIONS.md) for
+the canonical build/test/restart matrix and [db.md](db.md) before inspecting
+session databases.
 
-## Known Issues (2026-02-08)
+## Quick status
 
-### 1. [FIXED] Resume branches from stale tree position
-When agent teams spawns subagent CLI processes, they write to the same session JSONL. On subsequent `query()` resumes, the CLI reads the JSONL but may pick a stale branch tip (from before the subagent activity), causing the agent's response to land on a branch the host never receives a `result` for. **Fix**: pass `resumeSessionAt` with the last assistant message UUID to explicitly anchor each resume.
-
-### 2. IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
-Both timers fire at the same time, so containers always exit via hard SIGKILL (code 137) instead of graceful `_close` sentinel shutdown. The idle timeout should be shorter (e.g., 5 min) so containers wind down between messages, while container timeout stays at 30 min as a safety net for stuck agents.
-
-### 3. Cursor advanced before agent succeeds
-`processGroupMessages` advances `lastAgentTimestamp` before the agent runs. If the container times out, retries find no messages (cursor already past them). Messages are permanently lost on timeout.
-
-### 4. Kubernetes image garbage collection deletes nanoclaw-agent image
-
-**Symptoms**: `Container exited with code 125: pull access denied for nanoclaw-agent` — the container image disappears overnight or after a few hours, even though you just built it.
-
-**Cause**: If your container runtime has Kubernetes enabled (Rancher Desktop enables it by default), the kubelet runs image garbage collection when disk usage exceeds 85%. NanoClaw containers are ephemeral (run and exit), so `nanoclaw-agent:latest` is never protected by a running container. The kubelet sees it as unused and deletes it — often overnight when no messages are being processed. Other images (docker-compose services) survive because they have long-running containers referencing them.
-
-**Fix**: Disable Kubernetes if you don't need it:
 ```bash
-# Rancher Desktop
-rdctl set --kubernetes-enabled=false
-
-# Then rebuild the container image
-npm run container:build
+pnpm run service:status
+docker ps --format '{{.Names}} {{.Image}} {{.Status}}'
+docker ps -a --format '{{.Names}} {{.Image}} {{.Status}}' | grep nanoclaw-v2
 ```
 
-**Diagnosis**: Check the k3s log for image GC activity:
+Linux systemd logs:
+
 ```bash
-grep -i "nanoclaw" ~/Library/Logs/rancher-desktop/k3s.log
-# Look for: "Removing image to free bytes" with the nanoclaw-agent image ID
+journalctl --user -u nanoclaw -n 200 --no-pager
+journalctl --user -u nanoclaw -f
 ```
 
-Check NanoClaw logs for image status:
+The installed service also appends stdout/stderr to:
+
 ```bash
-grep -E "image found|image NOT found|image missing" logs/nanoclaw.log
+tail -n 200 logs/nanoclaw.log
+tail -n 200 logs/nanoclaw.error.log
 ```
 
-If you need Kubernetes enabled, set `CONTAINER_IMAGE` to an image stored in a registry that the kubelet won't GC, or raise the GC thresholds.
+macOS launchd and the fallback launcher use those log files directly.
 
-## Quick Status Check
+## Agent did not reply
+
+Follow the durable path in order instead of guessing at provider failure.
+
+### 1. Confirm routing and session creation
+
+Look for router, wake, and spawn events:
 
 ```bash
-# 1. Is the service running?
-npm run service:status
-# Expected: PID  0  com.nanoclaw (PID = running, "-" = not running, non-zero exit = crashed)
-
-# 2. Any running containers?
-docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep nanoclaw
-
-# 3. Any stopped/orphaned containers?
-docker ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | grep nanoclaw
-
-# 4. Recent errors in service log?
-grep -E 'ERROR|WARN' logs/nanoclaw.log | tail -20
-
-# 5. Are channels connected? (look for last connection event)
-grep -E 'Connected|Connection closed|connection.*close|channel.*ready' logs/nanoclaw.log | tail -5
-
-# 6. Are groups loaded?
-grep 'groupCount' logs/nanoclaw.log | tail -3
+rg 'Inbound|Session created|Spawning container|wakeContainer failed|Container exited' logs/nanoclaw*.log
 ```
 
-## Session Transcript Branching
+Inspect recent sessions:
 
 ```bash
-# Check for concurrent CLI processes in session debug logs
-ls -la data/sessions/<group>/.claude/debug/
-
-# Count unique SDK processes that handled messages
-# Each .txt file = one CLI subprocess. Multiple = concurrent queries.
-
-# Check parentUuid branching in transcript
-python3 -c "
-import json, sys
-lines = open('data/sessions/<group>/.claude/projects/-workspace-group/<session>.jsonl').read().strip().split('\n')
-for i, line in enumerate(lines):
-  try:
-    d = json.loads(line)
-    if d.get('type') == 'user' and d.get('message'):
-      parent = d.get('parentUuid', 'ROOT')[:8]
-      content = str(d['message'].get('content', ''))[:60]
-      print(f'L{i+1} parent={parent} {content}')
-  except: pass
-"
+pnpm exec tsx scripts/q.ts --readonly data/v2.db \
+  "SELECT id,agent_group_id,messaging_group_id,thread_id,status,container_status,last_active FROM sessions ORDER BY last_active DESC LIMIT 20"
 ```
 
-## Container Timeout Investigation
+Resolve the agent group and messaging wiring when the session is unexpected:
 
 ```bash
-# Check for recent timeouts
-grep -E 'Container timeout|timed out' logs/nanoclaw.log | tail -10
-
-# Check container log files for the timed-out container
-ls -lt groups/*/logs/container-*.log | head -10
-
-# Read the most recent container log (replace path)
-cat groups/<group>/logs/container-<timestamp>.log
-
-# Check if retries were scheduled and what happened
-grep -E 'Scheduling retry|retry|Max retries' logs/nanoclaw.log | tail -10
+pnpm exec tsx scripts/q.ts --readonly data/v2.db \
+  "SELECT mga.id,mg.channel_type,mg.platform_id,mga.agent_group_id,mga.engage_mode,mga.engage_pattern,mga.ignored_message_policy,mga.session_mode FROM messaging_group_agents mga JOIN messaging_groups mg ON mg.id=mga.messaging_group_id ORDER BY mga.created_at DESC"
 ```
 
-## Agent Not Responding
+### 2. Inspect the session queue
 
-```bash
-# Check if messages are being received from channels
-grep 'New messages' logs/nanoclaw.log | tail -10
+Session files are under:
 
-# Check if messages are being processed (container spawned)
-grep -E 'Processing messages|Spawning container' logs/nanoclaw.log | tail -10
-
-# Check if messages are being piped to active container
-grep -E 'Piped messages|sendMessage' logs/nanoclaw.log | tail -10
-
-# Check the queue state — any active containers?
-grep -E 'Starting container|Container active|concurrency limit' logs/nanoclaw.log | tail -10
-
-# Check lastAgentTimestamp vs latest message timestamp
-sqlite3 store/messages.db "SELECT chat_jid, MAX(timestamp) as latest FROM messages GROUP BY chat_jid ORDER BY latest DESC LIMIT 5;"
+```text
+data/v2-sessions/<agent-group-id>/<session-id>/
 ```
 
-## Container Mount Issues
+Inbound:
 
 ```bash
-# Check mount validation logs (shows on container spawn)
-grep -E 'Mount validated|Mount.*REJECTED|mount' logs/nanoclaw.log | tail -10
-
-# Verify the mount allowlist is readable
-cat ~/.config/nanoclaw/mount-allowlist.json
-
-# Check group's container_config in DB
-sqlite3 store/messages.db "SELECT name, container_config FROM registered_groups;"
-
-# Test-run a container to check mounts (dry run)
-# Replace <group-folder> with the group's folder name
-docker run -i --rm --entrypoint ls nanoclaw-agent:latest /workspace/extra/
+pnpm exec tsx scripts/q.ts --readonly \
+  data/v2-sessions/<agent-group-id>/<session-id>/inbound.db \
+  "SELECT id,seq,kind,status,process_after,tries,trigger,orchestration_run_id,timestamp FROM messages_in ORDER BY seq DESC LIMIT 30"
 ```
 
-## Channel Auth Issues
+Runner acknowledgements and provider state:
 
 ```bash
-# Check if QR code was requested (means auth expired)
-grep 'QR\|authentication required\|qr' logs/nanoclaw.log | tail -5
-
-# Check auth files exist
-ls -la store/auth/
-
-# Re-authenticate if needed
-npm run auth
+pnpm exec tsx scripts/q.ts --readonly \
+  data/v2-sessions/<agent-group-id>/<session-id>/outbound.db \
+  "SELECT message_id,status,status_changed FROM processing_ack ORDER BY status_changed DESC LIMIT 30"
 ```
 
-## Service Management
+```bash
+pnpm exec tsx scripts/q.ts --readonly \
+  data/v2-sessions/<agent-group-id>/<session-id>/outbound.db \
+  "SELECT id,current_tool,tool_declared_timeout_ms,tool_started_at,updated_at FROM container_state"
+```
+
+Interpretation:
+
+- `messages_in.status=pending`: the host has durable work; check wake/spawn.
+- `processing_ack.status=processing`: the runner claimed it; check heartbeat,
+  current tool, and container logs.
+- completed ack but no output: inspect provider result formatting and system
+  actions.
+
+### 3. Inspect runner output and delivery
 
 ```bash
-# Restart the service
-npm run service:restart
+pnpm exec tsx scripts/q.ts --readonly \
+  data/v2-sessions/<agent-group-id>/<session-id>/outbound.db \
+  "SELECT id,seq,in_reply_to,kind,channel_type,platform_id,deliver_after,timestamp,content FROM messages_out ORDER BY seq DESC LIMIT 30"
+```
 
-# View live logs
-tail -f logs/nanoclaw.log
+```bash
+pnpm exec tsx scripts/q.ts --readonly \
+  data/v2-sessions/<agent-group-id>/<session-id>/inbound.db \
+  "SELECT message_out_id,platform_message_id,status,delivered_at FROM delivered ORDER BY delivered_at DESC LIMIT 30"
+```
 
-# Stop the service (careful — running containers are detached, not killed)
-launchctl bootout gui/$(id -u)/com.nanoclaw
+Interpretation:
 
-# Start / status guidance
-npm run service:status
+- No `messages_out` row: provider/runner path.
+- Outbound row without a `delivered` ledger row: host delivery,
+  authorization, adapter, or retry path.
+- `delivered.status=failed`: delivery exhausted its bounded retries or output
+  was deliberately suppressed.
 
-# Rebuild after code changes
-npm run build && npm run service:restart
+### 4. Inspect the concrete container
+
+```bash
+docker ps --format '{{.Names}} {{.Status}}' | grep nanoclaw-v2
+docker logs --tail 200 <container-name>
+docker inspect <container-name> --format '{{json .Mounts}}'
+```
+
+The expected runtime source mount is
+`container/agent-runner/src → /app/src`. The session directory mounts at
+`/workspace`; the group workspace mounts at `/workspace/agent` and
+`/workspace/group`.
+
+### 5. Inspect orchestration gating
+
+```bash
+ncl orchestration-runs list --agent-group-id <agent-group-id>
+```
+
+For direct messages, a running model attempt intentionally gates correlated
+user-facing delivery. The runner must write an `orchestration_result` system
+row before the reply. If the reply exists but the model attempt remains
+running, inspect the runner version/container logs and the ordered outbound
+rows.
+
+## Provider startup
+
+```bash
+ncl providers list
+ncl providers profiles
+ncl groups config get --id <agent-group-id>
+```
+
+For a DB-backed profile:
+
+```bash
+ncl providers verify --id <profile-id> --agent-group-id <agent-group-id>
+```
+
+Generic OpenAI-compatible profiles remain text-only unless
+`providers verify-tools` succeeds and activates the fingerprinted tool
+strategy.
+
+Provider-specific checks:
+
+- Claude: inspect runner logs for SDK init/result/error events and verify the
+  OneCLI agent credential.
+- Codex: inspect app-server JSON-RPC startup, approval, thread, and turn errors
+  in runner logs.
+- A stale configured skill is omitted with a wake warning; an installed but
+  invalid/unapproved manifested skill fails closed.
+
+## Stuck-work and heartbeat checks
+
+```bash
+stat data/v2-sessions/<agent-group-id>/<session-id>/.heartbeat
+```
+
+Host sweep combines heartbeat age, processing-claim age, pending-message age,
+the current tool's declared timeout, and the concrete container's start time.
+A fresh container is not killed merely because it picked up old backlog.
+
+Do not “fix” liveness by changing session DBs to WAL or by allowing both host
+and container to write the same SQLite file.
+
+## Build/restart matrix
+
+Host `src/` change:
+
+```bash
+pnpm run build
+pnpm run service:restart
+```
+
+Runner `container/agent-runner/src/` change:
+
+```bash
+cd container/agent-runner && bun test
+```
+
+Runner source is bind-mounted; stop existing agent containers so the next wake
+starts a fresh Bun process. No image rebuild is required for source-only
+changes.
+
+Image/dependency/Dockerfile change:
+
+```bash
+./container/build.sh
+pnpm run service:restart
+```
+
+## Database safety
+
+Use the read-only query wrapper for inspection:
+
+```bash
+pnpm exec tsx scripts/q.ts --readonly <db-path> "<single SELECT/WITH/read-only PRAGMA>"
+```
+
+Do not use writable ad-hoc SQLite helpers to “unstick” messages until the
+cause is understood. Preserve the one-writer boundary and take a backup before
+maintenance:
+
+```bash
+pnpm run backup
 ```

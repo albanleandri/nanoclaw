@@ -1,1141 +1,382 @@
-# NanoClaw Architecture (Draft)
+# NanoClaw Architecture
 
-## Core Idea
+This document describes the current implementation. Detailed table schemas
+live in [db-central.md](db-central.md) and
+[db-session.md](db-session.md); provider behavior lives in
+[providers.md](providers.md) and
+[agent-runner-details.md](agent-runner-details.md).
 
-Each agent session has a mounted SQLite DB. The DB is the one and only IO mechanism between host and container. No IPC files, no stdin piping. Two tables: messages_in (host → agent-runner) and messages_out (agent-runner → host). Everything is a message.
+## System boundary
 
-## Two-Level DB
+NanoClaw has two runtime processes:
 
-**Central DB (host process):**
+- A Node host owns channels, identity, permissions, routing, the central
+  database, session creation, container lifecycle, orchestration, and external
+  delivery.
+- A Bun agent-runner executes inside one container per active session. It
+  polls session input, invokes the selected provider, runs granted tools, and
+  writes session output.
 
-- Agent groups, conversations, routing tables
-- Maps platform IDs → agent groups → sessions
-- Channel adapters don't touch this directly — the host does the lookup
+The runtime data path is:
 
-**Per-session DB (mounted into container):**
-
-- messages_in (written by host, read by agent-runner)
-- messages_out (written by agent-runner, read by host)
-- Everything is a message: chat, tasks, webhooks, system actions, agent-to-agent — all use these two tables
-- One DB per session, not per agent group
-
-## Agent Groups, Profiles, and Sessions
-
-An agent group is the durable agent identity: central DB row, stable folder, display name, channel wiring, and persistent workspace. Multiple sessions can share the same agent group, so they share the same workspace and tool configuration but each session gets its own DB mounted at a known path. Each session = a separate container with the same agent group's workspace but a different session DB.
-
-At spawn time the host derives a provider-neutral `agentProfile` from the agent group plus `container_configs`. The profile is embedded in `groups/<folder>/container.json`, which is mounted read-only into the container. It describes identity, workspace/memory conventions, selected skills, MCP servers, CLI scope, and shared resources. See [agent-profile.md](agent-profile.md).
-
-Provider selection is separate from identity. The session can override the provider, otherwise `container_configs.provider` is used, otherwise NanoClaw defaults to Claude. Model and effort are provider settings, not agent identity.
-
-Provider descriptors are installed code metadata. Provider profiles are local DB-backed instances that add endpoint, model, auth-reference, and capability settings. Profile resolution precedes the legacy provider fields: session profile, group profile, session provider, group provider, then Claude.
-
-Runtime descriptors separate the orchestration harness from endpoint/model settings. The three core mappings are `claude → claude-sdk`, `codex → codex-app-server`, and `openai-compatible → openai-protocol-loop`. Their capability and continuation facts are derived from provider descriptors during the compatibility migration. At spawn, the host resolves this runtime selection in shadow and asserts parity with the effective provider config.
-
-The host then compiles code-owned capability manifests against the runtime, local availability, session policy, and approved requirements declared by selected container skills. Required unsupported capabilities fail before spawn. Tool-less runtimes receive no MCP server configuration; tool-capable runtimes retain the original configuration unchanged. Optional skill capabilities may degrade explicitly; required skill capabilities may not.
-
-Verified OpenAI-compatible profiles embed their protocol-tool bindings in the
-session runtime JSON. The runner converts only those bindings into Responses or
-Chat Completions function schemas, validates calls against the registered
-NanoClaw tool definitions, executes them sequentially through the existing
-session-DB handlers, and returns correlated results to the model. Unverified
-profiles remain on the text-only path. A checked-in protocol-tool contract is
-asserted from both host capability manifests and the runner catalog so renamed
-entrypoints fail conformance tests before deployment.
-
-The group workspace keeps an operator snapshot at `groups/<folder>/container.json`. After runtime/capability checks, the host writes a restrictive per-session `container.runtime.json`, mounted read-only at `/workspace/agent/container.json`. This prevents two sessions sharing one group workspace from racing when they select different providers or profiles.
-
-Provider-native instruction files are generated compatibility artifacts:
-
-- `CLAUDE.md` for Claude-compatible runners
-- `AGENTS.md` for Codex-compatible runners
-- `.claude-fragments/` for Claude import fragments
-- `CLAUDE.local.md` for existing Claude-compatible local memory/instructions
-
-The long-term boundary is: the host owns group/profile/workspace intent; provider adapters translate that intent into the files, mounts, auth state, SDK calls, and sandbox settings each runner needs.
-
-## Message Flow
-
-```
-Platform event
-  → Channel adapter (trigger check, ID extraction)
-  → Returns: { platformChannelId, platformThreadId, triggered }
-  → Host maps platformChannelId + platformThreadId → agent group + session
-  → Host writes message to session's DB
-  → Host calls wakeUpAgent(session)
-  → Host resolves runtime + compiles/gates capabilities
-  → Container spins up (or is already running)
-  → Agent-runner polls its session DB, finds new messages
-  → Agent-runner processes with the selected provider
-  → Agent-runner writes response to session DB
-  → Host polls active session DBs for responses
-  → Host reads response, looks up conversation, delivers through channel adapter
+```text
+messaging platform
+  → channel adapter
+  → host router
+  → session inbound.db
+  → Bun agent-runner
+  → selected provider/runtime
+  → session outbound.db
+  → host delivery
+  → channel adapter
+  → messaging platform
 ```
 
-## Channel Adapters
+Host-spawned containers do not receive prompts over stdin and do not return
+responses over stdout. Session databases are the message transport. A
+`.heartbeat` file is the separate liveness signal.
 
-Channel adapters are responsible for:
+## Host process
 
-1. Receiving platform events (webhooks, polling, websockets — platform-specific)
-2. **Filtering**: deciding which messages to forward to the host for processing. This can be stateless (regex trigger match) or stateful (e.g., "was the bot mentioned in this thread at some point? If so, forward all subsequent messages"). The adapter receives a stream of unfiltered platform messages and decides which ones to pass on. How it decides is an implementation detail — NanoClaw doesn't know or care.
-3. Extracting and standardizing two IDs:
-   - **Platform channel ID** — identifies the conversation (WhatsApp group, Slack channel, email thread)
-   - **Platform thread ID** — optional sub-context (Slack thread, GitHub PR comment thread)
-4. Outbound delivery — sending responses back to the platform
+The host entrypoint is `src/index.ts`. Its main responsibilities are:
 
-The channel adapter does NOT know about agent group IDs or session IDs. It returns platform-level identifiers. The host maps those to the entity model.
+- initialize `data/v2.db` and run numbered migrations;
+- load installed channel and provider registrations;
+- receive normalized inbound channel events;
+- apply identity, membership, role, engagement, and command gates;
+- resolve an agent group and session;
+- write inbound work and wake the session container;
+- poll outbound rows and deliver them through channel adapters;
+- reconcile processing acknowledgements, scheduled work, orchestration
+  leases, stale containers, and retries;
+- expose the local `ncl` CLI server.
 
-The two-level ID scheme (channel ID + thread ID) gives flexibility:
+Important modules:
 
-- Want every Slack thread to be a separate session? Return unique thread IDs.
-- Want all messages in a Slack channel to share a session? Return the same thread ID (or null).
-- This is configured per-channel, not globally.
+| Module                         | Responsibility                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| `src/router.ts`                | Inbound authorization, engagement, session resolution, and durable dispatch            |
+| `src/session-manager.ts`       | Session folders, DB access, routing projection, attachment extraction                  |
+| `src/container-runner.ts`      | Runtime/profile resolution, capability compilation, materialization, spawn supervision |
+| `src/container-launch-plan.ts` | Deterministic Docker command and mount validation                                      |
+| `src/delivery.ts`              | Outbound polling, host actions, destination validation, external delivery ledger       |
+| `src/host-sweep.ts`            | Ack reconciliation, liveness/stuck detection, due work, retry, orchestration recovery  |
+| `src/orchestration/`           | Versioned plans, attempts, leases, cancellation, delivery gating, default-off fallback |
+| `src/db/`                      | Central and session DB access                                                          |
 
-### Channel Adapter Configuration
+## Identity, routing, and isolation
 
-Adapters are stateless — they receive config from the host at setup time, not from the DB directly.
+An `agent_group` is a durable agent identity and workspace. A
+`messaging_group` is a channel/chat on a platform.
+`messaging_group_agents` wires the two and declares engagement and session
+behavior.
 
-**What lives in code (per channel type, doesn't change at runtime):**
+Session modes are:
 
-- Auto-registration behavior (enabled/disabled, how it works)
-- Sender allowlist rules
-- Whether allowlisted senders can auto-register groups
-- Platform-specific connection and message handling
+- `agent-shared`: all wired messaging groups for an agent group converge on
+  one conversation;
+- `shared`: one conversation per messaging group;
+- `per-thread`: one conversation per messaging group and platform thread.
 
-These are decisions made when setting up the channel adapter. Change them = change the code.
+Multiple sessions for the same agent group share the durable
+`groups/<folder>/` workspace but have independent session DBs and provider
+continuations. Different agent groups have different workspaces. See
+[isolation-model.md](isolation-model.md).
 
-**What lives in the DB (per group, varies group to group):**
+Permissions belong to users and roles, not to chat names. The router derives
+the caller from adapter identity, checks owner/admin/member access, applies
+the wiring's engagement policy, and only then writes a session message.
 
-- Which agent group handles it
-- Trigger / filter rules (regex, @mention-only, exclude certain senders, etc.)
-- Response scope (respond to all messages vs only triggered/allowlisted)
-- Session mode (shared vs per-thread)
+## Database boundary
 
-The host reads per-group config from the DB and passes it to the adapter at setup. If config changes at runtime (admin agent registers a new group, changes a trigger), the host calls the adapter's update method.
+NanoClaw uses one central DB and two SQLite files per session:
 
-### Auto-Registration
+| Database      | Writer    | Readers            | Purpose                                                              |
+| ------------- | --------- | ------------------ | -------------------------------------------------------------------- |
+| `data/v2.db`  | host      | host               | Identity, wiring, permissions, sessions, jobs, audit, orchestration  |
+| `inbound.db`  | host      | host and container | Host-to-runner messages, delivery ledger, routing projections        |
+| `outbound.db` | container | host and container | Runner-to-host messages, processing acknowledgements, provider state |
 
-When the adapter forwards a message from an unknown group, the host needs to decide whether to create the group and a session for it.
+Each SQLite file has exactly one writer. Session DBs use
+`journal_mode=DELETE`, not WAL, because WAL shared-memory visibility is not
+reliable across container bind mounts. Host inbound writes use
+open-write-close semantics for the same reason.
 
-**The adapter controls whether to forward unknown messages** — based on its code-level auto-registration rules (sender allowlist, group-add detection, etc.). If the adapter forwards it, the host creates the group + session.
+The container mounts `inbound.db` read-only and `outbound.db` read-write. The
+host writes delivery outcomes to `inbound.db.delivered`; it never marks an
+outbound row in place. The container reports inbound processing state through
+`outbound.db.processing_ack`; host sweep reconciles those acknowledgements
+back into `messages_in.status`.
 
-**Session creation for known groups:**
+Message sequence numbers share a session-wide namespace:
 
-- Shared session mode: host finds the existing session or creates one if it's the first message
-- Per-thread session mode: host looks up by threadId. If no session exists for this thread, auto-creates one with the same agent group
+- host-created inbound rows use even `seq` values;
+- container-created outbound rows use odd `seq` values.
 
-**The code-level rules are channel-specific:**
+That parity allows tools such as edit/reaction to reference either direction
+without ambiguous IDs.
 
-- WhatsApp: if an allowlisted number adds the bot to a group → auto-register. If an unknown number DMs → depends on the adapter's configuration.
-- Email: if the sender is known → auto-register the thread. If unknown → drop.
-- Slack: if someone @mentions the bot in a new channel → adapter decides whether to forward based on its rules.
+See [db.md](db.md) for invariants and
+[db-session.md](db-session.md) for complete session schemas.
 
-No `channel_configs` table — channel-type-level behavior is baked into the adapter code.
+## Session filesystem and mounts
 
-### Chat SDK Integration
+Host layout:
 
-Chat SDK adapters are wrapped per-channel:
+```text
+data/
+  v2.db
+  v2-sessions/
+    <agent-group-id>/
+      .claude-shared/
+      .codex-shared/
+      <session-id>/
+        inbound.db
+        outbound.db
+        container.runtime.json
+        .heartbeat
+        inbox/
+        outbox/
 
-- Each Chat SDK adapter gets its own Chat instance
-- Concurrency mode is configured per-channel (concurrent for chat, queue for tasks, debounce for webhooks)
-- A bridge wraps the Chat instance + adapter to conform to NanoClaw's standard channel interface
-- Chat SDK handles: webhook parsing, dedup, message history, platform API calls, rich content delivery
-- NanoClaw handles: routing, agent lifecycle, session management
-
-**Chat SDK's subscription model:**
-
-Chat SDK has its own thread-level subscription concept (distinct from NanoClaw's channel-level registration):
-
-- `onNewMention` / `onNewMessage(regex)` — fires on first contact (e.g., @mention in a Slack thread)
-- `thread.subscribe()` — opts into all future messages in that thread
-- `onSubscribedMessage` — fires for all messages in subscribed threads
-
-This is sub-channel granularity. NanoClaw registers at the channel level ("listen to this Discord channel"). Chat SDK subscribes at the thread level ("track this specific Slack thread"). The bridge lets Chat SDK manage its own subscriptions internally — NanoClaw doesn't interfere with or replicate this.
-
-**Platform capability differences:**
-
-Capabilities vary significantly across adapters (see [Chat SDK adapter docs](https://chat-sdk.dev/docs/adapters)):
-
-- **Slack**: Full rich content (Block Kit cards, modals, streaming, reactions, ephemeral messages)
-- **Discord**: Embeds, buttons, streaming via post+edit
-- **WhatsApp (Cloud API)**: DMs only, interactive reply buttons, no streaming, no reactions
-- **GitHub/Linear**: Markdown comments, no interactive elements
-- **Telegram**: Inline keyboard buttons, streaming via post+edit
-
-The host/bridge handles graceful degradation — if an agent posts a card on a platform that doesn't support cards, it falls back to text.
-
-Non-Chat-SDK channels (WhatsApp via Baileys, Gmail, custom integrations) implement the NanoClaw channel interface directly — no bridge, no Chat SDK types.
-
-## Container Lifecycle
-
-The host is an orchestrator:
-
-1. **Plan** — compile a deterministic launch plan containing validated mounts,
-   resource limits, network arguments, provider environment, and the final Bun
-   entrypoint. OneCLI gateway contributions are applied only after parent
-   mounts so nested credential stubs cannot be shadowed.
-2. **Spawn** — when a wake is requested and no container exists for the
-   session. Startup reports a typed result internally and is not marked
-   successful until the Docker child emits `spawn`.
-3. **Reconcile** — host sweep evaluates heartbeat, claim age, pending-message
-   age, and the current container instance's uptime before deciding whether to
-   stop or retry work.
-4. **Limits** — `MAX_CONCURRENT_CONTAINERS` caps active containers; optional `CONTAINER_CPU_LIMIT` and `CONTAINER_MEMORY_LIMIT` map to Docker `--cpus` and `--memory` per spawned container
-5. **Egress lockdown** — when `NANOCLAW_EGRESS_LOCKDOWN=true`, spawned containers join an internal Docker network and can only reach the OneCLI gateway
-
-When a container spins up, the agent-runner immediately starts polling its session DB. Messages are already there waiting.
-
-## Media Handling
-
-### Inbound
-
-Media is not downloaded by the host. Instead:
-
-- Messages include download URLs (signed URLs where possible)
-- Agent-runner downloads and processes media inside the container
-- For channels where signed URLs don't work (e.g., WhatsApp with buffered streams), the channel adapter downloads the media and serves it via a local URL/server that the container can access
-
-**Native content blocks (provider-dependent):**
-
-The agent-runner detects file types and passes supported types as native content blocks where the provider supports it:
-
-| Type                                      | Claude                        | Codex                             | OpenCode                          |
-| ----------------------------------------- | ----------------------------- | --------------------------------- | --------------------------------- |
-| Images (JPEG, PNG, GIF, WebP)             | Native image content block    | Save to disk, reference in prompt | Save to disk, reference in prompt |
-| PDFs                                      | Native document content block | Save to disk                      | Save to disk                      |
-| Audio                                     | Native audio content block    | Save to disk                      | Save to disk                      |
-| Other files (code, data, video, archives) | Save to disk                  | Save to disk                      | Save to disk                      |
-
-"Save to disk" means downloaded to `/workspace/downloads/{messageId}/` and referenced in the prompt text as an available file path. The agent can use tools (Read, Bash) to access it.
-
-The agent-runner builds the prompt differently per provider. For Claude, it constructs multi-part `MessageParam` content with image/document blocks. For Codex/OpenCode, everything is text with file path references.
-
-### Outbound
-
-Outbound file delivery is tool-based. The agent calls a tool (e.g., `send_file`) with a file path. The agent-runner moves the file to the outbox and writes the messages_out row.
-
-```
-/workspace/
-  outbox/
-    {message_id}/        ← one dir per messages_out row
-      chart.png
-      report.pdf
+groups/
+  <folder>/
+    CLAUDE.md
+    AGENTS.md
+    CLAUDE.local.md
+    .claude-fragments/
+    container.json
+    agent-runner-src/        # optional overlay
+    ...durable work files
 ```
 
-messages_out content references filenames only:
+Inside a running container:
 
-```json
-{ "text": "Here's the chart", "files": ["chart.png", "report.pdf"] }
+```text
+/workspace/                    session folder
+/workspace/agent/              canonical agent-group workspace
+/workspace/group/              compatibility alias to the same group folder
+/workspace/agent/container.json
+/workspace/group/container.json
+                               read-only mounts of container.runtime.json
+/app/src/                      bind-mounted agent-runner source
+/app/skills/                   bind-mounted container skills
+/app/shared/                   shared resources
+/app/docs/                     repository docs
 ```
 
-No paths in the DB — the convention is the contract. The host reads files from `outbox/{message_id}/` in the mounted session folder and delivers them via the adapter (Chat SDK `FileUpload` with buffer data, or platform-specific upload for native channels). Host cleans up the outbox directory after successful delivery.
+`groups/<folder>/container.json` is a generated operator snapshot.
+`container.runtime.json` is the effective session configuration and is the
+file mounted at the two in-container `container.json` paths.
 
-Outbound files use a dedicated `send_file` MCP tool (separate from `send_message`). See [agent-runner-details.md](agent-runner-details.md) for the tool interface.
+## Provider and runtime selection
 
-### Message Deduplication
+Agent identity is separate from model execution. Effective selection order is:
 
-Dedup is the channel adapter's responsibility. Chat SDK handles this internally. Native adapters track platform message IDs as needed. The host does not deduplicate — if the adapter forwards it, the host writes it.
+1. session provider profile;
+2. group provider profile;
+3. legacy session provider override;
+4. legacy group provider;
+5. Claude.
 
-## Session DB Schema
+Installed provider descriptors describe code and capabilities. DB-backed
+provider profiles add endpoint, API family, model, effort, auth reference, and
+tool-verification state. Runtime descriptors identify the execution harness:
 
-Two tables. JSON blobs for content — schema-free, format varies by `kind`.
+- Claude → `claude-sdk`;
+- Codex → `codex-app-server`;
+- OpenAI-compatible profile → `openai-protocol-loop`.
 
-```sql
--- Host writes, agent-runner reads
-CREATE TABLE messages_in (
-  id             TEXT PRIMARY KEY,
-  kind           TEXT NOT NULL,      -- 'chat' | 'chat-sdk' | 'task' | 'webhook' | 'system'
-  timestamp      TEXT NOT NULL,
-  status         TEXT DEFAULT 'pending',  -- 'pending' | 'processing' | 'completed' | 'failed'
-  status_changed TEXT,               -- ISO timestamp of last status change
-  process_after  TEXT,               -- ISO timestamp. NULL = process immediately.
-  recurrence     TEXT,               -- cron expression. NULL = one-shot.
-  tries          INTEGER DEFAULT 0,  -- number of processing attempts
+The Claude runner remains on `@anthropic-ai/claude-agent-sdk`. The Codex path
+uses `codex app-server`. Generic OpenAI-compatible profiles are text-only
+until function calling is verified through the real credential route.
 
-  -- routing (agent-runner copies to messages_out; agent never sees these)
-  platform_id    TEXT,
-  channel_type   TEXT,
-  thread_id      TEXT,
+Before spawn, the host compiles a `SessionRuntimePlan` from:
 
-  -- payload (structure depends on kind)
-  content        TEXT NOT NULL        -- JSON blob
-);
+- the effective provider/runtime;
+- code-owned capability manifests;
+- local capability availability;
+- active orchestration-step requirements;
+- selected skill requirements and approval state.
 
--- Agent-runner writes, host reads
-CREATE TABLE messages_out (
-  id             TEXT PRIMARY KEY,
-  in_reply_to    TEXT,               -- references messages_in.id (optional)
-  timestamp      TEXT NOT NULL,
-  delivered      INTEGER DEFAULT 0,
-  deliver_after  TEXT,               -- ISO timestamp. NULL = deliver immediately.
-  recurrence     TEXT,               -- cron expression. NULL = one-shot.
+Required unsupported capabilities fail before spawn. A runtime without MCP
+support receives no MCP configuration. A verified generic profile receives
+only the compiled canonical protocol-tool bindings.
 
-  -- routing (default: copied from messages_in by agent-runner)
-  kind           TEXT NOT NULL,      -- 'chat' | 'chat-sdk' | 'task' | 'webhook' | 'system'
-  platform_id    TEXT,
-  channel_type   TEXT,
-  thread_id      TEXT,
+The host materializes provider-native project documents (`CLAUDE.md` and
+`AGENTS.md`) as compatibility artifacts. Provider-specific state and auth
+mounts are contributed by provider adapters. API-key profiles normally remain
+behind OneCLI and are not stored in runtime JSON; explicitly enabled host-file
+or direct-secret modes are mounted into the container.
 
-  -- payload (format matches kind)
-  content        TEXT NOT NULL        -- JSON blob
-);
+## Container lifecycle
 
+`wakeContainerWithResult()` deduplicates concurrent wake requests per session.
+For a new container, the host:
+
+1. refreshes the session destination and default-routing projections;
+2. materializes the group snapshot;
+3. resolves provider/profile/runtime selection;
+4. compiles and records the session capability authorization;
+5. writes the per-session runtime JSON;
+6. validates mounts, resource limits, network arguments, and OneCLI gateway
+   contribution into a deterministic launch plan;
+7. spawns Docker and considers startup successful only after the child emits
+   `spawn`;
+8. tracks the concrete container instance and start time.
+
+The image runs Bun source directly; there is no container `tsc` build step.
+`container/agent-runner/src` is bind-mounted at `/app/src`, so source changes
+take effect in newly spawned containers without rebuilding the image.
+
+Host sweep uses heartbeat age, processing-claim age, pending-message age,
+current tool timeout, and the current container instance's uptime to decide
+whether work is stale. It does not rely on an in-process idle timer. A fresh
+container receives a full processing window even when it picks up old
+backlog.
+
+`MAX_CONCURRENT_CONTAINERS` limits active sessions. Optional CPU/memory limits
+become Docker `--cpus`/`--memory` arguments. Optional egress lockdown places
+containers on an internal network whose permitted gateway is OneCLI.
+
+## Runner poll loop
+
+The Bun runner:
+
+1. opens the mounted session DBs;
+2. migrates legacy continuation state for the selected runtime identity;
+3. clears stale processing acknowledgements from a prior crashed process;
+4. polls due trigger-bearing inbound messages;
+5. writes `processing` acknowledgements;
+6. formats the batch and starts the selected provider query;
+7. continues polling and pushes eligible follow-ups into the active query;
+8. writes outbound result/tool/system rows;
+9. writes terminal processing acknowledgements.
+
+Provider `push()` acceptance is not completion. A follow-up is completed only
+after the provider acknowledges the result for the turn that consumed it.
+
+Every initial provider turn must produce a terminal result or error. A stream
+that closes silently produces a user-visible provider error. Host stop or a
+runner command is an interruption and remains recoverable.
+
+The stream may stay open after a result so later messages can reuse the same
+provider process/session. Therefore orchestration completion is emitted at
+the terminal turn event, before the corresponding user-facing outbound row;
+it never waits for stream shutdown.
+
+## Outbound routing and delivery
+
+The host projects allowed destinations into `inbound.db.destinations`.
+Runner output uses `<message to="name">...</message>` envelopes. The runner
+resolves names locally, but the host re-validates every external or
+agent-to-agent destination against central state before delivery.
+
+Outbound rows are immutable. The host:
+
+1. reads due rows from `outbound.db`;
+2. skips rows already present in `inbound.db.delivered`;
+3. applies orchestration delivery authorization when `in_reply_to` is
+   correlated;
+4. handles registered `system` actions or calls the channel adapter;
+5. records `delivered` or `failed` in the inbound delivery ledger;
+6. records orchestration delivery completion where applicable.
+
+Running sessions are polled at approximately one second; all active sessions
+are swept at approximately 60 seconds. Delivery is guarded against concurrent
+drains of the same session.
+
+Files produced by an agent live under `outbox/<message-id>/`. Outbound DB
+content contains filenames, not host paths. The host validates and reads those
+files, passes buffers to the adapter, and removes the outbox directory after
+successful delivery.
+
+## Host actions and tools
+
+Tools never grant host authority directly. Native MCP tools and verified
+protocol-loop tools write structured outbound rows. Registered host action
+handlers validate the source session, caller permissions, correlation, and
+compiled capability authorization before changing host state.
+
+Examples include:
+
+- message/file/card delivery;
+- edit and reaction operations;
+- scheduling and task administration;
+- interactive questions;
+- session search;
+- durable agent-to-agent tasks;
+- approved self-modification actions.
+
+Canonical tool calls emit redacted lifecycle audit events. Raw prompts, model
+output, secrets, and tool payloads are not copied into the audit log.
+
+## Direct orchestration
+
+Every engaged direct message is represented by a validated, versioned
+`direct@1` plan:
+
+```text
+model step → delivery step
 ```
 
-### Scheduling
+Central orchestration state records the plan, step attempts, leases, runtime
+facts, normalized usage, cancellation, events, and delivery outcome. The
+adapter-provided inbound message ID remains unchanged; nullable
+`orchestration_run_id` supplies separate correlation.
 
-One-shot and recurring tasks use the same tables — no separate scheduler.
+For a correlated turn, the runner writes an `orchestration_result` system row
+before its user-facing output. The host marks the model attempt terminal,
+then permits or suppresses delivery. This ordering prevents delivery from
+waiting on a provider stream intentionally held open for follow-ups.
 
-**One-shot:** `process_after` (inbound) or `deliver_after` (outbound) with `recurrence = NULL`.
+Restricted fallback infrastructure exists for failures proven to occur before
+tool side effects. Candidate compatibility, credentials, protocol, tool
+schema, reconstructability, cancellation, and attempt limits are rechecked at
+dispatch. A fallback candidate runs in a deterministic isolated
+provider-profile session. The shipped code-owned policy has no candidates, so
+fallback remains disabled until an operator evaluation is reviewed.
 
-**Recurring:** Same, plus a `recurrence` cron expression. After the host marks a row as handled/delivered, if `recurrence` is set, it inserts a new row with `process_after`/`deliver_after` advanced to the next cron occurrence. Next time is computed from the scheduled time (not wall clock) to prevent drift.
+Inspect with:
 
-**Host sweep** (every ~60s across all session DBs):
-
-- `messages_in WHERE status = 'pending' AND (process_after IS NULL OR process_after <= now())` → wake agent
-- `messages_in WHERE status = 'processing' AND status_changed < (now - stale_threshold)` → stale detection, increment tries, reset to pending with backoff
-- `messages_out WHERE delivered = 0 AND (deliver_after IS NULL OR deliver_after <= now())` → deliver
-- After completing/delivering a row with `recurrence`, insert next occurrence
-
-**Active container poll** (~1s) checks the same conditions but only for sessions with running containers.
-
-**Agent-runner creates schedules** by writing messages_in (to itself) or messages_out (reminders/notifications) with `process_after` and optionally `recurrence`.
-
-### messages_in content by kind
-
-**`chat`** — simple NanoClaw format. Any channel can produce this.
-
-```json
-{
-  "sender": "John",
-  "senderId": "user123",
-  "text": "Check this PR",
-  "attachments": [{ "type": "image", "url": "https://signed-url..." }],
-  "isFromMe": false
-}
+```bash
+ncl orchestration-runs list --agent-group-id <id>
+ncl orchestration-runs cancel --id <run-id>
+ncl orchestration-runs eval --agent-group-id <id>
 ```
 
-**`chat-sdk`** — full Chat SDK `SerializedMessage`, passed through from bridge adapter. Includes `author`, `text`, `formatted` (mdast AST), `attachments`, `isMention`, `links`, `metadata`.
-
-**`task`** — scheduled task firing.
-
-```json
-{ "prompt": "Review open PRs", "script": "scripts/review.sh" }
-```
-
-**`webhook`** — raw webhook payload.
-
-```json
-{ "source": "github", "event": "pull_request", "payload": { ... } }
-```
-
-**`system`** — host action result (response to a system action the agent requested).
-
-```json
-{ "action": "register_group", "status": "success", "result": { "agent_group_id": "ag-456" } }
-```
-
-### messages_out content by kind
-
-Output `kind` determines the format and delivery adapter. Default: agent-runner copies `kind` and routing fields from the messages_in row it's responding to.
-
-**`chat`** — simple NanoClaw format. NanoClaw channel delivers via `sendMessage(text)`.
-
-```json
-{ "text": "LGTM, merging now" }
-```
-
-**`chat-sdk`** — Chat SDK `AdapterPostableMessage`. Bridge adapter delivers via `thread.post()`. Can be markdown, card, or raw — adapter handles platform conversion.
-
-```json
-{ "markdown": "## Review\n**LGTM**", "attachments": [...] }
-```
-
-```json
-{ "card": { "type": "card", "title": "Review", "children": [...] }, "fallbackText": "..." }
-```
-
-**`task`** — task result. Host logs and optionally notifies.
-
-```json
-{ "result": "3 PRs reviewed", "status": "success" }
-```
-
-**`webhook`** — webhook response. Host sends HTTP response or notifies.
-
-```json
-{ "response": { "status": 200, "body": { ... } } }
-```
-
-**`system`** — host action request (register group, reset session, etc.). Host reads, validates permissions, executes, writes result back as a `system` messages_in row.
-
-```json
-{ "action": "reset_session", "payload": { "session_id": "sess-123" } }
-```
-
-### Interactive Operations (Cards, Reactions, Edits)
-
-All interactive operations flow through messages_in/out — the DB is the only IO boundary for the container. The agent uses MCP tools; the agent-runner translates tool calls into structured messages_out rows; the host delivers through the appropriate adapter method.
-
-**Cards with user interaction (e.g., "Ask User Question"):**
-
-1. Agent calls `ask_user_question` tool with question + options
-2. Agent-runner writes messages_out with the question card
-3. Host delivers as interactive card through adapter (e.g., Slack Block Kit buttons)
-4. User clicks an option
-5. Platform sends event back to adapter → host writes messages_in with the response
-6. Agent-runner reads messages_in, matches to pending tool call, returns selection to agent as tool result
-
-The agent-runner holds the tool call open while waiting for the user's response in messages_in. The round-trip goes: agent → messages_out → host → platform → user clicks → platform → host → messages_in → agent-runner → agent.
-
-**Approvals:**
-
-Two patterns, both handled at the host level:
-
-- **Implicit**: Agent calls a tool that requires approval. Host intercepts, sends approval card to admin, waits for response, then executes or rejects. The agent doesn't know about the approval step.
-- **Explicit**: Agent explicitly requests approval via a tool. Agent-runner writes the approval request to messages_out. Same flow as "ask user question" — response comes back through messages_in.
-
-In both cases, the approval and action execution happen on the host side, not the agent side.
-
-**Approval routing:** Privilege is a user-level concept. `user_roles` records `owner` (global only — first user to pair becomes owner) and `admin` (global or scoped to a specific `agent_group_id`). When an action requires approval, `pickApprover(agentGroupId)` returns candidates in order: scoped admins for that agent group → global admins → owners (deduplicated). `pickApprovalDelivery` then takes the first candidate reachable via `ensureUserDm` (with a same-channel-kind tie-break so a Discord approval request prefers a Discord-using approver). The approval card lands in the approver's DM messaging group, not the origin chat. Delivery is resolved through the Chat SDK's `openDM` for resolution-required channels (Discord/Slack/…) or the user's handle directly for direct-addressable channels (Telegram/WhatsApp/…), and the mapping is cached in `user_dms` for subsequent requests. See `src/access.ts`, `src/user-dm.ts`.
-
-**Editing a sent message:**
-
-Agent calls an `edit_message` tool with the message ID and new content. Agent-runner writes messages_out with an edit operation. Host calls `adapter.editMessage()`. Messages in the agent's context include integer IDs so the agent can reference them.
-
-**Reactions:**
-
-Agent calls `add_reaction` tool with message ID and emoji. Agent-runner writes messages_out with a reaction operation. Host calls `adapter.addReaction()`.
-
-**Operations in messages_out content:**
-
-```json
-// Normal message (default)
-{ "text": "LGTM" }
-
-// Interactive card
-{ "operation": "ask_question", "title": "Deploy", "question": "Approve deployment?", "options": ["Yes", "No", "Defer"] }
-
-// Edit existing message
-{ "operation": "edit", "messageId": "3", "text": "Updated: LGTM with minor comments" }
-
-// Reaction
-{ "operation": "reaction", "messageId": "5", "emoji": "thumbs_up" }
-```
-
-The host reads the `operation` field (if present) and calls the right adapter method. No operation field = normal message delivery. Platform capabilities vary — the host/bridge handles graceful degradation (e.g., reaction on a platform that doesn't support it → skip or send as text).
-
-### Agent-to-Agent Communication
-
-Sending a message to another agent uses the same routing fields as channel delivery. The agent-runner sets `channel_type: 'agent'` and `platform_id` to the target agent group ID. Optionally, `thread_id` can target a specific session (null = find or create the default session).
-
-From the sending agent's perspective, it's the same mechanism as sending to Slack or WhatsApp — just a messages_out row with different routing. The host reads it, checks that this agent group has permission to message the target, resolves the target session, and writes a messages_in row to that session's DB.
-
-```json
-// messages_out routing fields
-{ "kind": "chat", "channel_type": "agent", "platform_id": "pr-worker", "thread_id": null }
-// messages_out content
-{ "text": "Reset your session and re-review", "sender": "Supervisor", "senderId": "agent:pr-admin" }
-```
-
-The receiving agent gets a normal chat message. It doesn't need to know the source is another agent unless that's relevant context.
-
-### Durable Agent Tasks
-
-Ordinary agent messages remain conversational and uncorrelated. Durable delegation uses the central `jobs`/`job_events` backbone plus migration 022's `agent_tasks` ownership relation. The requester calls `request_agent_task`; the host derives requester identity from the source session, checks its agent destination, compiles required capabilities against the assignee's own runtime policy, and writes a stable `agent-task:<taskId>` row into a dedicated assignee session.
-
-Progress, blocked, artifact, completion, failure, and cancellation operations return as host-validated `system` actions. The host checks requester/assignee ownership, applies monotonic idempotent state transitions, appends one correlated event, and writes `agent-task-event:<taskId>:<seq>` into the original requester session. Cancellation also writes `agent-task-cancel:<taskId>` to the assignee.
-
-The assignee uses its own provider profile, credentials, CLI scope, mounts, workspace policy, and compiled capabilities. Requester policy is never copied. Artifact bytes move only through the existing assignee outbox → requester inbox safety path; central rows contain filename, size, hash, and requester-local path, not bytes or host paths. `scope: plan-role` is reserved but not dispatched until the central workflow executor exists.
-
-### Auxiliary routing and session search
-
-Auxiliary roles (`review`, `classification`, `context-compression`,
-`memory-extraction`, `vision`, and `reference-analysis`) resolve through
-host-owned `auxiliary_routes`. Missing routes are disabled. Resolution compiles
-a tool-free `SessionRuntimePlan` with disabled CLI and a read-only workspace;
-agent targets additionally require an agent destination. Durable invocation
-state reuses `jobs` plus the narrow `auxiliary_invocations` relation. The
-service accepts an execution adapter so the future orchestration executor can
-dispatch through the existing container path without adding a host-side model
-client.
-
-The host also maintains a repairable FTS5 projection of human-visible
-user/assistant text. Per-session DBs remain the source of truth and retain
-their existing writers. Live indexing happens after successful inbound writes
-and outbound delivery; indexing failure does not fail messaging. The
-`memory.session-search` capability uses a correlated system-action/response
-over the existing session DBs. Host-side scope is always derived from the
-calling session, and results include source session/message IDs.
-
-### Direct orchestration execution
-
-Engaged inbound messages now enter the host-owned orchestration seam before
-the existing session write. The code-owned `direct@1` pattern compiles a
-versioned runner-neutral `ExecutionPlan` with exactly one executor model step
-and one dependent delivery step. Validation rejects unknown capabilities,
-invalid role contracts, dependency cycles, budget overruns, and multiple
-delivery owners. Stable hashed task IDs make repeated routing idempotent
-without trusting platform message-ID syntax.
-
-The run and both step attempts are persisted before the idempotent
-`messages_in` write. The runner still receives the normal chat/task content
-and uses the existing Claude SDK, Codex, or protocol-loop provider path.
-Inbound rows carrying `orchestration_run_id` cause it to emit only terminal
-outcome and normalized usage metadata through `outbound.db`; adapter-provided
-message IDs remain unchanged and no model output is copied into the central
-event stream. Follow-up turns use the same result seam.
-
-Active model-step capability requirements are unioned into the normal
-`SessionRuntimePlan` compilation at container spawn. User-facing outbound
-delivery, correlated by `in_reply_to`, closes the delivery step. Batched
-provider usage is stored once on a deterministic owner run and sibling runs
-record the shared attribution rather than duplicating token totals. One
-delivered response closes every run represented by that provider batch.
-
-Migration 028 adds the lifecycle substrate shared by future patterns.
-Dependency-ready attempts acquire bounded durable leases. The host sweep fails
-expired leases and wall-clock budgets idempotently. Cancellation marks every
-unfinished attempt, suppresses queued delivery and host actions, marks the
-session input failed, and requests runner cancellation only when that input is
-the container's sole processing claim.
-
-Runner host actions inherit the active inbound correlation. The host derives
-the run from the source session and input ID, requires the model lease to
-still be active, and checks known host actions against the exact compiled
-session capability snapshot. Capability audit rows carry the same
-source-derived run ID. User-facing output waits for a terminal model result;
-cancelled output is recorded as suppressed rather than delivered.
-
-Migration 029 adds the first Phase-H safety substrate without activating
-fallback. A versioned code-owned policy keeps fallback, plan-role workers,
-ensembles, and graph recovery independently default-off and requires a
-same-version evaluation identifier before any gate can be enabled. Model
-attempts persist runtime/protocol/continuation identity, capability and tool
-contract fingerprints, input reconstructability, result/artifact/delivery
-facts, and a tri-state side-effect boundary. Unknown boundary state fails
-closed. The generic protocol runner reports an explicit false boundary only
-when it can prove no tool call was entered; native harnesses never become
-fallback-eligible from missing metadata.
-
-Fallback decisions and every rejection reason are append-only facts. An
-approved decision may queue the next attempt only when the validated plan
-declares fallback, the source attempt is durably failed, cancellation is
-absent, and attempt budgets remain.
-
-Migration 030 associates each model attempt with its actual execution
-session. When an explicitly evaluated fallback policy names candidate
-provider profiles, the dispatcher resolves each profile through the normal
-runtime and capability compiler, verifies its credential/protocol path at
-dispatch time, and compares both capability IDs and concrete registered tool
-schema hashes with the failed attempt. Only a reconstructable attachment-free
-input from an eligible generic protocol-loop failure can proceed.
-
-An approved retry receives a deterministic dedicated session with a
-provider-profile override and its own session DB pair. The host stops the
-previous execution owner, clones the correlated input into that session,
-leases the existing plan step, and wakes it through the normal container
-path. Stale output from the primary session is suppressed; only the latest
-attempt's execution session can complete delivery. The host sweep recovers a
-persisted failure or queued retry idempotently, and cancellation remains
-monotonic during the failed-primary/pending-fallback transition. Attempt usage
-is aggregated on the run. The default active policy has no candidates and
-keeps fallback disabled, so production behavior is unchanged.
-
-Operators can inspect the default policy, bounded direct
-success/latency/usage baseline, and named safety fixtures with
-`ncl orchestration-runs eval --agent-group-id <id>`; the report never
-auto-enables a feature.
-
-This is still the direct execution cutover, not a general pattern dispatcher.
-Plan-role workers, isolated task workspaces, reference ensembles, and
-arbitrary graph adapters remain disabled.
-
-### Skill provenance and capability audit
-
-Container skills are resolved through one effective catalog:
-`container/skills/custom/<name>` overrides `container/skills/<name>`. A strict
-optional `skill.json` declares source identity, semantic version, required and
-optional canonical capabilities, named configuration/secret assignments, and
-compatible runtime IDs. Manifest-less skills remain instruction-only during
-the compatibility rollout.
-
-The same effective selection drives capability requirements, generated
-instructions, and runtime symlinks. A configured name that no longer exists is
-reported and removed from the per-session effective config; installed invalid,
-unapproved, drifted, incompatible, or unsatisfied manifested skills still fail
-closed before spawn.
-
-Every effective directory receives a deterministic SHA-256 over file names,
-mode class, sizes, and bytes. Symlinks, special files, and oversized files are
-rejected. Manifested content starts quarantined and must be approved through
-the CLI. Approval is for one hash; changed content becomes drifted on the next
-activation check and is excluded from generated instructions. Provenance
-records are evidence about reviewed bytes, not a claim that those bytes are
-safe.
-
-Canonical runner tools share one audit wrapper for native MCP and the generic
-protocol broker. It writes `requested`, `started`, and terminal events through
-the existing outbox. The host derives agent/session identity from the source
-session, validates capability version and entrypoint, enforces lifecycle
-transitions, and persists only hashes, classifications, timing, and normalized
-usage. Sensitive argument fields are removed before hashing; raw arguments,
-results, prompts, files, and credentials are not stored.
-
-### Routing
-
-**Default behavior:** Agent-runner copies routing fields (`kind`, `platform_id`, `channel_type`, `thread_id`) from the messages_in row to messages_out. Response goes back where it came from.
-
-**Host validation:** Before delivering, the host checks that this agent group is permitted to send to the destination. The agent-runner copies routing; the host validates.
-
-**Multi-destination pattern (customization):** An agent may need to send to a different channel than the origin (e.g., a webhook triggers a Slack notification). This is supported via custom code, not built into the core:
-
-1. Add a `destinations` table to the session DB mapping logical names to routing fields
-2. Populate it from the host when setting up the session
-3. Modify the agent's prompt to list available destinations
-4. Agent chooses a destination by name; agent-runner resolves to routing fields
-5. Host validates as usual
-
-This is documented as a pattern, not a built-in feature.
-
-## Core Properties
-
-- Container isolation via filesystem mounts
-- Credential proxy (OneCLI)
-- Per-agent-group workspace (folder, generated provider docs, skills, materialized container config)
-- Polling-based (not event-driven)
-- Per-agent-group agent-runner recompilation on container startup (agent can modify its own source, request rebuild/restart, changes persist across teardowns)
-- Host ↔ container IO through mounted session DBs (`messages_in` / `messages_out`) — no stdin piping, no IPC files
-- Agent commands are `messages_out` rows with `kind: 'system'`
-- Agent-to-agent supported via target-agent routing on `messages_out`
-- Scheduling uses `process_after` / `deliver_after` + `recurrence` on the same message tables
-- Media via signed URLs, downloaded in the container
-- Channel adapters use the Chat SDK bridge + a standard interface (trunk ships only the bridge/registry; platform adapters install via `/add-<channel>` skills)
-- Routing: channel adapter extracts IDs, host maps to entities
-- Concurrency: Chat SDK per-channel + container limits
-- Session scoping: per-session DB, multiple sessions per agent group
-
-## Design Decisions
-
-**Session DB location:** Not in the agent group folder. Each session gets its own folder under the session store containing `inbound.db`, `outbound.db`, heartbeat state, outbox files, and any provider-specific session state. The session identity is the folder plus central DB row. Provider continuation IDs are stored separately per provider.
-
-**Container mount structure:**
-
-```
-/workspace/                 ← mount: session folder (read-write)
-  inbound.db                ← host-owned session DB, read by agent-runner
-  outbound.db               ← agent-runner-owned session DB, read by host
-  .heartbeat                ← liveness heartbeat touched by container
-  outbox/                   ← agent-runner writes outbound files here
-  agent/                    ← mount: persistent agent workspace (nested, read-write)
-    container.json          ← materialized config + agentProfile (read-only nested mount)
-    CLAUDE.md               ← generated Claude project doc when used
-    AGENTS.md               ← generated Codex project doc when used
-    shared/                 ← compatibility links for selected shared resources
-    ... working files
-```
-
-Directory mounts: session folder at `/workspace`, agent group folder at `/workspace/agent/`, and the same agent group folder also mounted at legacy path `/workspace/group/` for skills and scheduled tasks that still use that durable-state path. The agent-runner CDs into `/workspace/agent/` to run the agent. Provider-specific state mounts are contributed by provider adapters.
-
-This works on both Docker (nested bind mounts) and Apple Container (directory mounts only — no file-level mounts, but nested directory mounts are supported).
-
-**Session DB concurrent access:** The host writes messages_in, the agent-runner writes messages_out. Both access the same SQLite file simultaneously. WAL mode handles this — SQLite allows concurrent readers, and the two sides write to different tables so writer contention is minimal. The host enables WAL mode when creating the session DB.
-
-**Session management:** Host-managed. The host creates session folders and mounts them. The container only sees its own session folder.
-
-**Session creation (no race condition):**
-
-1. Message arrives, host checks central DB for a session matching this group + thread
-2. No session exists → host atomically creates session row in central DB, creates the session folder, creates the session DB, writes the message
-3. More messages arrive before container starts → host finds the existing session, writes to the same session DB
-4. Container starts, mounts the folder, agent-runner finds messages waiting
-
-The central DB session row creation is the serialization point. No Claude SDK session ID to coordinate — the SDK discovers its own session data in `.claude/` when the agent runs.
-
-**System actions:** The agent uses MCP tools (register group, reset session, schedule task, etc.). The agent-runner handles these tool calls and writes a structured, deterministic messages_out row with `kind: 'system'`. This is not natural language — it's a programmatic, structured payload that the host processes deterministically. Host validates permissions, executes, and writes the result back as a `system` messages_in row.
-
-**Container lifecycle:** No warm pool. Containers are spawned on demand (wakeUpAgent) and torn down from the outside by the host when idle. Existing idle detection + teardown mechanism carries over.
-
-## Operational Behavior
-
-### Output Delivery
-
-NanoClaw does not stream tokens to users. The Claude Agent SDK's `query()` yields complete results. The agent-runner writes one complete message to messages_out per result. The host delivers complete messages to channels.
-
-Message editing is supported as an explicit operation (agent calls an `edit_message` tool), not as a streaming mechanism.
-
-Typing indicators: host sets typing immediately when a session is woken, refreshes while startup grace or a fresh heartbeat says the agent is active, and pauses after user-facing output so stale typing clears. For long waits, the host sends low-noise waiting status messages through the channel adapter.
-
-### Message Batching
-
-When multiple messages arrive while the container is down, they accumulate as `handled = 0` rows in messages_in. When the container wakes up, the agent-runner queries all unhandled messages and processes them as a batch — multiple messages are formatted into a single `<messages>` XML block.
-
-### Message Lifecycle
-
-```
-pending → processing → completed
-                    → failed (after max retries)
-```
-
-- **pending**: Written by host. Ready to be picked up (if `process_after` is null or past).
-- **processing**: Agent-runner sets this when it picks up the message. `status_changed` is set to now. Prevents other polls from re-picking the same message.
-- **completed**: Agent-runner sets this after successful processing.
-- **failed**: Set after max retries exhausted.
-
-**Stale detection**: If a message is `processing` but `status_changed` is too old (e.g., >10 minutes), the host assumes the container crashed. It resets the message to `pending`, increments `tries`, and sets `process_after` with exponential backoff.
-
-### Error Handling and Retries
-
-Retries use `process_after` with exponential backoff. Each retry increments `tries` and pushes `process_after` further out:
-
-- Try 1: immediate
-- Try 2: +5s
-- Try 3: +10s
-- Try 4: +20s
-- Try 5: +40s
-- After max retries: status set to `failed`
-
-The host computes this — not the agent-runner. When the host detects a stale `processing` message or the container exits with an error, it increments `tries`, computes the next `process_after`, and resets status to `pending`.
-
-**Output-sent protection**: If messages_out already has delivered rows for a batch, don't retry (prevents duplicate messages to user).
-
-### Host Polling
-
-Two tiers:
-
-- **Active containers (~1s)**: Poll session DBs for new messages_out rows to deliver
-- **All sessions (~60s)**: Sweep all session DBs for due `process_after` / `deliver_after` timestamps, handle recurrence
-
-## Flexibility Model
-
-The architecture is **flexible for code changes, not configurable for everything**. Advanced setups (like the PR Factory below) use custom routing logic and host-side hooks — not database config columns.
-
-### Code Structure for Skill Customization
-
-NanoClaw is customized via skills — branches that get merged into the user's installation. Different skills add different capabilities (channels, integrations, behaviors). The code must be structured so that:
-
-1. **Different customizations don't conflict.** Adding Slack and adding Telegram should not produce merge conflicts. Adding a new MCP tool should not conflict with adding a channel. Each type of customization should touch its own file(s).
-
-2. **Core blocks of functionality are in separate files.** Channel registration, message formatting, MCP tools, routing logic, container management — each in its own file. A skill that changes how messages are formatted doesn't touch the file that handles container spawning.
-
-3. **The index file is thin.** It wires things together (init DB, start adapters, start poll loops) but contains no business logic. All logic lives in purpose-specific modules that skills can modify independently.
-
-4. **Don't over-split.** A simple change (e.g., adding a new message kind) shouldn't require edits across 5 files. Group related logic together. The goal is that each skill touches 1-2 files for its core change.
-
-5. **Registration patterns over switch statements.** Channels, MCP tools, and providers should use registration/plugin patterns. A skill adds a channel by adding a file and a registration call — not by editing a central switch statement alongside every other channel.
-
-**Practical example:** Adding a new channel via skill should require:
-
-- One new file (the channel adapter or Chat SDK config)
-- One line in the barrel file (`channels/index.ts`) to import the self-registering module
-- Zero changes to routing, formatting, delivery, or container code
-
-### Conflict Hotspots and Solutions
-
-Analysis of 33 skill branches shows these files cause the most merge conflicts:
-
-| Hotspot                               | Why it conflicts                                         | Solution                                                                                                                                       |
-| ------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts` (2000 LOC)             | Every skill patches the main loop, imports, init logic   | Thin index that wires modules. Logic lives in purpose-specific files (router, delivery, session-manager, host-sweep).                          |
-| `src/config.ts`                       | Every skill adds env vars to a central file              | Config declared where it's used. Each module reads its own env vars. No central config registry that every skill edits.                        |
-| `src/container-runner.ts`             | Channel skills add mounts, env vars, credential setup    | Declarative mount registration. Channels declare their mounts in their own file. Container runner reads from a registry, not a hardcoded list. |
-| `src/db.ts` (750 LOC)                 | Schema, migrations, and all CRUD in one file             | Split by entity. Numbered migrations. Skills add a migration file + edit one entity file.                                                      |
-| `container/agent-runner/src/index.ts` | Agent protocol, IPC handling, formatting all in one file | Split into poll-loop, formatter, providers/, mcp-tools/. Session DB replaces IPC.                                                              |
-| `src/ipc.ts`                          | Every MCP tool addition patches one file                 | `mcp-tools/` directory with barrel. Skills add a tool file + barrel line.                                                                      |
-| `src/channels/index.ts`               | Every channel adds an import line at the same location   | Barrel file with comment slots per channel (current pattern works, keep it).                                                                   |
-
-**Mount registration pattern:** Instead of every channel skill editing `buildVolumeMounts()`, channels declare mounts that the container runner collects:
-
-```typescript
-// channels/gmail.ts
-registerChannel('gmail', {
-  factory: createGmailAdapter,
-  mounts: [{ hostPath: '~/.gmail-mcp', containerPath: '/home/node/.gmail-mcp', readonly: false }],
-  env: ['GMAIL_OAUTH_TOKEN'],
-});
-```
-
-The container runner reads registered mounts from the channel registry — no need to edit `container-runner.ts`.
-
-**Config pattern:** Skills don't patch `config.ts` or `.env.example`. Skill-specific env vars are documented in the skill's SKILL.md — the setup process reads those instructions. Each module reads its own env vars directly:
-
-```typescript
-// channels/discord.ts
-const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
-
-// channels/gmail.ts
-const GMAIL_CREDS = process.env.GMAIL_CREDENTIALS_PATH;
-```
-
-Shared config (DATA_DIR, TIMEZONE, MAX_CONCURRENT_CONTAINERS) stays in `config.ts`. Channel/skill-specific config stays in the module that uses it.
-
-### Code Style
-
-**Line width: 120 characters.** Most statements fit on one line without sacrificing readability.
-
-**Concise logging.** A thin wrapper keeps every log call on one line:
-
-```typescript
-log.info('IPC message sent', { chatJid, sourceGroup });
-log.warn('Unauthorized IPC attempt', { chatJid });
-log.error('Error processing', { file, err });
-```
-
-### DB File Structure
-
-The DB layer is split by entity rather than kept in one monolithic file:
-
-```
-src/db/
-  connection.ts              ← singleton, init, WAL mode
-  schema.ts                  ← CREATE TABLE statements (current state, for reference)
-  migrations/
-    index.ts                 ← runner: checks version, applies pending
-    001-initial.ts           ← initial schema
-    002-pending-questions.ts ← example: adds pending_questions table
-    ...                      ← skills append new numbered files
-  agent-groups.ts            ← CRUD for agent_groups
-  messaging-groups.ts        ← CRUD for messaging_groups + messaging_group_agents
-  sessions.ts                ← CRUD for sessions + pending_questions
-  index.ts                   ← barrel: re-exports everything
-```
-
-**Principles:**
-
-- **Split by entity, not by layer.** Each entity file has its own CRUD functions (~50-100 lines). A skill that adds a column to messaging_groups edits `messaging-groups.ts` — doesn't touch sessions or agent groups.
-- **Schema as current state + migrations as history.** `schema.ts` documents what the DB looks like now (read this to understand the schema). Migrations are append-only numbered files that describe how we got here.
-- **No inline ALTER TABLE.** A migration runner with a `schema_version` table replaces `try { ALTER TABLE } catch { /* exists */ }` blocks. On startup, it checks the current version and applies pending migrations in order. Each migration is a function: `(db: Database) => void`.
-- **Skills add migrations.** A skill that needs a new column adds a new numbered migration file. No conflicts with other skills' migrations as long as numbers don't collide (use timestamps or high-enough numbers for skill branches).
-
-**Agent-runner session DB** uses the same pattern but lighter — no migrations needed since session DBs are created fresh by the host:
-
-```
-container/agent-runner/src/db/
-  connection.ts          ← open inbound/outbound DBs at fixed paths
-  messages-in.ts         ← read pending, update status
-  messages-out.ts        ← write results, outbox queries
-  index.ts               ← barrel
-```
-
-### What the base architecture must support primitively
-
-These are the building blocks. None require special abstractions — they fall out of per-session DBs, host-managed routing, and messages_out with `kind: 'system'`:
-
-1. **Multiple agent groups on the same channel with content-based routing.** Different messages in the same thread can route to different agent groups based on content (e.g., @mention routes to supervisor, normal messages route to worker). The channel adapter's routing logic — custom code — decides.
-
-2. **Per-thread sessions from a shared agent group.** Multiple sessions share the same agent group workspace and tools but each gets its own session DBs. Standard for worker pools.
-
-3. **Session reset and replay.** Create a new session for the same thread. Mark old messages as unhandled so the poll picks them up again. Old output stays visible in the platform (e.g., Discord thread) for comparison. This is an action an agent can request — not automatic.
-
-4. **Cross-session read access.** Some agents can query other sessions' data. Different access levels: manager sees messages_in/messages_out (review content). Supervisor sees full internals (agent logs, tool calls, debug traces). This is just filesystem/DB access — mount or query the right paths.
-
-5. **Context duplication into new sessions.** When a supervisor is invoked in a worker's thread, a new session is created with relevant messages copied in. Custom host-side code handles this.
-
-6. **Agent-initiated host actions.** The agent uses MCP tools (reset session, update skills, etc.). The agent-runner handles the tool call and writes a structured `system` messages_out row. The host reads and executes with permission checks. The agent can request, but the host decides.
-
-### Example: PR Factory
-
-Three agent groups, one Discord channel (PR Factory), plus an admin channel:
-
-| Role           | Agent Group | Where                                     | Session model                                                                    |
-| -------------- | ----------- | ----------------------------------------- | -------------------------------------------------------------------------------- |
-| **Worker**     | pr-worker   | PR Factory threads                        | One session per thread (per PR)                                                  |
-| **Manager**    | pr-manager  | PR Factory channel                        | Single session, queries across worker sessions                                   |
-| **Supervisor** | pr-admin    | Admin channel + PR Factory (when @tagged) | Main session in admin channel; per-thread session when invoked in worker threads |
-
-**Worker flow:** GitHub PR → Discord thread → worker agent reviews (triage, review, test plan). Each thread gets a session from the shared pr-worker group.
-
-**Feedback flow:** User @tags supervisor in worker threads → custom routing sends to supervisor with a new session containing the thread's messages (duplicated). Supervisor collects feedback to filesystem. Worker doesn't see supervisor messages.
-
-**Iteration flow:** User discusses feedback with supervisor in admin channel → supervisor suggests skill changes (shown as rich card with diff) → user approves → supervisor applies changes via host action → supervisor requests session reset + replay → workers re-review same PRs with updated skills in same threads but fresh sessions → user compares reviews side by side.
-
-**Manager flow:** User talks to manager in PR Factory main channel (not in threads). Manager can search across all worker session DBs (messages_in/messages_out) to answer questions like "how many PRs today?" or "what topics are trending?" Can request actions (close PR, re-open).
-
-**What's custom code vs. base architecture:**
-
-| Capability                                  | Base architecture                          | Custom code (PR Factory)                  |
-| ------------------------------------------- | ------------------------------------------ | ----------------------------------------- |
-| Per-thread sessions                         | ✓ platformThreadId → session               |                                           |
-| Shared agent group across sessions          | ✓ Multiple sessions, one group             |                                           |
-| Writing messages to session DB              | ✓ Standard flow                            |                                           |
-| @mention routing to different agent         |                                            | ✓ Channel adapter routing logic           |
-| Context duplication into supervisor session |                                            | ✓ Host-side hook on supervisor invocation |
-| Session reset + replay                      | ✓ Primitives (new session, mark unhandled) | ✓ Supervisor action triggers it           |
-| Skill updates                               | ✓ Filesystem writes                        | ✓ Supervisor action applies changes       |
-| Cross-session queries                       | ✓ DB/filesystem access                     | ✓ Manager's tools know where to look      |
-| Rich card output                            | ✓ Structured output in messages_out        |                                           |
-
-## Central DB Schema
-
-The central DB handles routing and entity management. All content and execution state lives in per-session DBs.
-
-```sql
--- Agent workspaces: folder, skills, CLAUDE.md, container config
-CREATE TABLE agent_groups (
-  id               TEXT PRIMARY KEY,
-  name             TEXT NOT NULL,
-  folder           TEXT NOT NULL UNIQUE,
-  agent_provider   TEXT,              -- default for sessions (null = system default)
-  container_config TEXT,              -- JSON: { additionalMounts, timeout }
-  created_at       TEXT NOT NULL
-);
-
--- Platform groups/channels (WhatsApp group, Slack channel, Discord channel, email thread, etc.)
-CREATE TABLE messaging_groups (
-  id                     TEXT PRIMARY KEY,
-  channel_type           TEXT NOT NULL,     -- 'whatsapp', 'slack', 'discord', 'telegram', 'email'
-  platform_id            TEXT NOT NULL,     -- platform-specific ID (JID, channel ID, etc.)
-  name                   TEXT,
-  is_group               INTEGER DEFAULT 0,
-  unknown_sender_policy  TEXT NOT NULL DEFAULT 'strict',  -- 'strict' | 'request_approval' | 'public'
-  created_at             TEXT NOT NULL,
-  UNIQUE(channel_type, platform_id)
-);
-
--- Users (messaging platform identities, namespaced "<channel_type>:<handle>")
-CREATE TABLE users (
-  id           TEXT PRIMARY KEY,   -- e.g. 'telegram:123456', 'discord:1470...'
-  kind         TEXT NOT NULL,      -- mirrors the channel_type prefix
-  display_name TEXT,
-  created_at   TEXT NOT NULL
-);
-
--- Roles (owner is global only; admin can be global or scoped to an agent_group)
-CREATE TABLE user_roles (
-  user_id         TEXT NOT NULL REFERENCES users(id),
-  role            TEXT NOT NULL,   -- 'owner' | 'admin'
-  agent_group_id  TEXT REFERENCES agent_groups(id),  -- NULL for global
-  granted_by      TEXT,
-  granted_at      TEXT NOT NULL,
-  PRIMARY KEY (user_id, role, agent_group_id)
-);
--- owner rows must have agent_group_id = NULL (enforced in db/user-roles.ts)
-
--- Membership (explicit non-privileged access; admin/owner imply membership)
-CREATE TABLE agent_group_members (
-  user_id         TEXT NOT NULL REFERENCES users(id),
-  agent_group_id  TEXT NOT NULL REFERENCES agent_groups(id),
-  added_by        TEXT,
-  added_at        TEXT NOT NULL,
-  PRIMARY KEY (user_id, agent_group_id)
-);
-
--- DM resolution cache (so cold DMs aren't re-resolved every time)
-CREATE TABLE user_dms (
-  user_id            TEXT NOT NULL REFERENCES users(id),
-  channel_type       TEXT NOT NULL,
-  messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id),
-  resolved_at        TEXT NOT NULL,
-  PRIMARY KEY (user_id, channel_type)
-);
-
--- Which agent groups handle which messaging groups, with what rules
-CREATE TABLE messaging_group_agents (
-  id                 TEXT PRIMARY KEY,
-  messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id),
-  agent_group_id     TEXT NOT NULL REFERENCES agent_groups(id),
-  trigger_rules      TEXT,              -- JSON: { pattern, mentionOnly, excludeSenders, includeSenders }
-  response_scope     TEXT DEFAULT 'all',    -- 'all' | 'triggered' | 'allowlisted'
-  session_mode       TEXT DEFAULT 'shared', -- 'shared' | 'per-thread'
-  priority           INTEGER DEFAULT 0,     -- higher = checked first when multiple agents match
-  created_at         TEXT NOT NULL,
-  UNIQUE(messaging_group_id, agent_group_id)
-);
-
--- Sessions: one folder = one session = one container when running
--- Folder path is derived: sessions/{agent_group_id}/{session_id}/
-CREATE TABLE sessions (
-  id                 TEXT PRIMARY KEY,
-  agent_group_id     TEXT NOT NULL REFERENCES agent_groups(id),
-  messaging_group_id TEXT REFERENCES messaging_groups(id),  -- null for internal/spawned sessions
-  thread_id          TEXT,              -- platform thread ID (null for shared session mode)
-  agent_provider     TEXT,              -- override per session (null = inherit from agent_group)
-  status             TEXT DEFAULT 'active',    -- 'active' | 'closed'
-  container_status   TEXT DEFAULT 'stopped',   -- 'running' | 'idle' | 'stopped'
-  last_active        TEXT,              -- last message activity timestamp
-  created_at         TEXT NOT NULL
-);
-CREATE INDEX idx_sessions_agent_group ON sessions(agent_group_id);
-CREATE INDEX idx_sessions_lookup ON sessions(messaging_group_id, thread_id);
-
--- Pending interactive questions (cards waiting for user response)
--- Host writes when delivering a question card, deletes when response received
-CREATE TABLE pending_questions (
-  question_id    TEXT PRIMARY KEY,
-  session_id     TEXT NOT NULL REFERENCES sessions(id),
-  message_out_id TEXT NOT NULL,     -- the messages_out row that sent the card
-  platform_id    TEXT,              -- where the card was delivered
-  channel_type   TEXT,
-  thread_id      TEXT,
-  created_at     TEXT NOT NULL
-);
-```
-
-### Pending Question Flow
-
-When the host delivers a messages_out row with `operation: 'ask_question'`:
-
-1. Host delivers the card via the channel adapter
-2. Host writes a `pending_questions` row mapping `question_id` → `session_id`
-
-When a Chat SDK `ActionEvent` (button click) arrives:
-
-1. Bridge extracts `actionId` from the event
-2. Host looks up `pending_questions` by `question_id` (derived from actionId — the bridge maintains the mapping)
-3. Host finds the target session, writes a messages_in row with `questionId` + `selectedOption`
-4. Host deletes the `pending_questions` row
-5. Agent-runner picks up the messages_in row, matches to the pending tool call, returns the selection
-
-This avoids scanning session DBs. The central DB is the routing lookup — same pattern as message routing.
-
-Also used for host-generated approval cards: when the host sends an approval request to the admin's DM, it writes a `pending_questions` row. The admin's response is routed back to the originating session.
-
-### Container lifecycle states
-
-```
-stopped → running → idle → stopped
-                  ↗
-            idle → running (new message while warm)
-```
-
-- **stopped**: No container. Swept at 60s for due scheduled messages.
-- **running**: Actively processing. Polled at 1s for messages_out.
-- **idle**: Done processing, container still warm (up to 30 min timeout). Polled at 1s so new messages are picked up quickly.
-- After idle timeout → host kills container → stopped.
-
-## Agent-Runner Architecture
-
-The agent-runner is the process inside the container. It mediates between the session DBs and the selected provider — polling for work, formatting messages for the agent, translating tool calls into DB rows, and managing the agent lifecycle.
-
-### IO Model
-
-All IO goes through the session DB. No stdin, no stdout markers, no IPC files.
-
-- Initial input and follow-ups: poll `messages_in`
-- Output: write `messages_out` rows
-- MCP tools: write DB rows (no IPC files)
-- Shutdown: host kills the container on idle timeout, or the agent-runner exits when there's no pending work
-
-### Poll Loop
-
-1. Query `messages_in WHERE status = 'pending' AND (process_after IS NULL OR process_after <= now())`
-2. If rows found: write `processing_ack(status='processing')` rows in `outbound.db`
-3. Batch messages into a single prompt (strip routing fields, format by kind)
-4. Send the prompt to the selected provider adapter
-5. Process agent output → write `messages_out` rows
-6. Write `processing_ack(status='completed')` for processed rows; host sweep syncs those acknowledgements back to `messages_in.status`
-7. Back to step 1. If no messages found, sleep briefly and re-poll (container stays warm for idle timeout)
-
-While a provider query is active, the poll loop continues checking for new
-`messages_in` rows. Follow-ups are marked `processing` and pushed to the
-active provider query, but they are not marked `completed` merely because the
-push was accepted. The provider must acknowledge after the specific follow-up
-turn produces a result; that acknowledgement is what lets the poll loop write
-`processing_ack(status='completed')`.
-
-Every initial provider turn must end with a `result` or `error` event. The
-runner classifies terminal outcomes explicitly. If a provider stream closes
-without a terminal event, the runner sends a user-visible provider error and
-completes the batch rather than silently losing it. Host-stop and runner-command
-interruptions remain recovery events and do not emit that error.
-
-### Message Formatting by Kind
-
-Agent-runner strips routing fields (`platform_id`, `channel_type`, `thread_id`) before formatting. The agent never sees routing info — it only sees content.
-
-- **`chat`** — format into `<messages>` XML block
-- **`chat-sdk`** — extract text, author, attachments from serialized message; format into `<messages>` XML
-- **`task`** — format as `[SCHEDULED TASK]` prefix + prompt. Run pre-script if present.
-- **`webhook`** — format as `[WEBHOOK: source/event]` + JSON payload
-- **`system`** — host action results (e.g., "register_group succeeded"). Format as system context, not chat.
-
-Mixed batches (e.g., a chat message + a system result both pending) are combined into one prompt with clear delimiters.
-
-### MCP Tools
-
-MCP tools write directly to the session DB.
-
-**Core tools:**
-
-| Tool                                         | What it does                                                                                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `send_message`                               | Write `messages_out` row, `kind: 'chat'`                                                                                              |
-| `send_file`                                  | Move file to `outbox/{msg_id}/`, write `messages_out` with filenames                                                                  |
-| `schedule_task`                              | Write `messages_in` row (to self) with `process_after` + `recurrence`. Or `messages_out` with `deliver_after` for outbound reminders. |
-| `list_tasks`                                 | Query `messages_in WHERE recurrence IS NOT NULL`                                                                                      |
-| `pause_task` / `resume_task` / `cancel_task` | Modify `messages_in` rows (update status, clear/set recurrence)                                                                       |
-| `register_agent_group`                       | Write `messages_out`, `kind: 'system'`, `action: 'register_agent_group'`                                                              |
-
-**New tools:**
-
-| Tool                | What it does                                                                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ask_user_question` | Write `messages_out` with question card. Hold tool call open, poll `messages_in` for response matching `questionId`. Return selection as tool result. |
-| `edit_message`      | Write `messages_out` with `operation: 'edit'`                                                                                                         |
-| `add_reaction`      | Write `messages_out` with `operation: 'reaction'`                                                                                                     |
-| `send_to_agent`     | Write `messages_out` with `channel_type: 'agent'`, `platform_id: '{target}'`                                                                          |
-| `send_card`         | Write `messages_out` with card structure                                                                                                              |
-
-See [agent-runner-details.md](agent-runner-details.md) for full MCP tool parameter definitions.
-
-### Cards
-
-**Agent-initiated (outbound):** Tool-based. Agent calls `ask_user_question` (interactive card with options) or `send_card` (structured card). Agent-runner writes the card structure to messages_out. Host/adapter handles platform-specific rendering (Slack Block Kit, Discord embeds, Telegram inline keyboard, text fallback).
-
-**Host-initiated (approval cards):** When an action requires approval, the host generates a standardized approval card and sends it to the admin's DM. These are not agent-initiated — the agent doesn't know about the approval step. The card format is fixed (action description + approve/deny buttons).
-
-**Inbound (card responses):** Not a card — it's a messages_in row with `questionId` + `selectedOption` in the content. Agent-runner matches to the pending `ask_user_question` tool call and returns the selection as the tool result.
-
-### Commands
-
-Messages starting with `/` are checked against three lists:
-
-**Whitelisted commands (pass-through to agent):**
-
-- Standard slash commands that the agent provider handles natively (e.g., Claude's built-in commands)
-- Passed raw, no `<messages>` XML wrapping
-
-**Admin-only commands (require admin sender):**
-
-- `/remote-control` — remote control session
-- `/clear` — clear session context
-- `/compact` — force context compaction
-- If sent by a non-admin user, the command is rejected with an error message. Not forwarded to the agent.
-
-**Filtered commands (dropped entirely):**
-
-- Commands that don't make sense in the NanoClaw context or could cause issues
-- Silently dropped — no error, no forwarding
-
-The command lists are hardcoded in the agent-runner. Admin verification happens host-side before the message ever reaches the container: `src/command-gate.ts` queries `user_roles` (owner / global admin / scoped-admin-of-this-agent-group) and either passes the message through, drops it, or routes it elsewhere. The container has no notion of admin identity — no env var, no DB query, no per-message check.
-
-### Recurring Tasks
-
-The agent-runner processes recurring task messages like any other messages_in row. After the agent-runner marks a recurring message as `completed`, the **host** handles inserting the next occurrence (new messages_in row with `process_after` advanced to next cron time). The agent-runner doesn't manage recurrence — it just processes what it finds.
-
-Pre-scripts: if a task message has a `script` field, run it first. If `wakeAgent = false`, mark completed without invoking Claude.
-
-### Agent-to-Agent Messaging
-
-**Outbound:** Agent calls `send_to_agent` tool → agent-runner writes messages_out with `channel_type: 'agent'`, `platform_id` = target agent group ID. Host validates permissions and writes to target session's messages_in.
-
-**Inbound:** Messages from other agents arrive as normal `chat` messages_in rows. The content includes `sender` and `senderId` (e.g., `"senderId": "agent:pr-admin"`). No special formatting — the agent sees it as a chat message.
-
-### Agent-Runner Properties
-
-- AgentProvider interface wraps SDK-specific query logic (trunk ships the `claude` provider as the default plus `codex` in-tree; additional providers like OpenCode and Ollama install via `/add-<provider>` skills)
-- Session resume via provider-specific mechanisms
-- Provider-native project docs generated from shared instruction sections (`CLAUDE.md`, `AGENTS.md`, etc.)
-- Provider-specific hooks and transcript archival stay inside each provider adapter
-- Script execution for task-kind messages
-
-## Open Questions
-
-- **Approval routing** — how does the host find the admin's DM conversation? What if no DM channel exists? Is the approval list configurable per agent group or global?
-- **MCP server lifecycle** — does the MCP server process persist across multiple queries in the same container, or restart each time?
-- **Container startup config** — what config (if any) is passed to the container at launch beyond env vars? The session DB is at a fixed mount path. System prompt comes from CLAUDE.md. Provider name comes from env. What else?
-- **Idle detection with pending questions** — when `ask_user_question` is waiting for a response, the container should not be considered idle. Also need to detect when the agent is still working (active tool calls, subagents) and avoid killing the container even if no messages_out have been written recently.
-
-## Related Documents
-
-- **[api-details.md](api-details.md)** — Channel adapter interface (NanoClaw + Chat SDK bridge), message content examples, host delivery logic
-- **[agent-runner-details.md](agent-runner-details.md)** — AgentProvider interface, MCP tools, message formatting, media handling, provider implementations
+## Scheduling and durable jobs
+
+Simple scheduled session messages use `process_after` and optional
+`recurrence` on inbound rows. Host sweep wakes due trigger-bearing work and
+advances recurring occurrences without wall-clock drift.
+
+Long-running host work uses the central `jobs`/`job_events` lifecycle rather
+than pretending a container tool call is durable. Agent-task delegation uses
+its own central task/event lifecycle and dedicated assignee sessions.
+
+## Security invariants
+
+- One writer per SQLite file.
+- Session DBs use DELETE journaling across bind mounts.
+- API-key credentials normally use OneCLI and are not stored in prompts or
+  runtime configuration; explicit direct-secret/host-auth modes are exceptions.
+- Mount destinations are unique and additional mounts are validated.
+- The host is authoritative for permissions, destinations, capabilities, and
+  external delivery.
+- Provider output cannot self-assert orchestration identity or host authority.
+- Tool-less or unverified runtimes fail closed.
+- Different agent groups are filesystem and session-state boundaries.
+- Running containers are disposable; durable state lives in mounted
+  workspaces and databases.
+
+## Further reading
+
+- [architecture-diagram.md](architecture-diagram.md) — compact diagrams
+- [db.md](db.md) — DB map and cross-mount invariants
+- [db-central.md](db-central.md) — central schema
+- [db-session.md](db-session.md) — session schemas
+- [agent-profile.md](agent-profile.md) — identity/runtime materialization
+- [providers.md](providers.md) — descriptors, profiles, tool verification
+- [agent-runner-details.md](agent-runner-details.md) — runner/provider details
+- [isolation-model.md](isolation-model.md) — channel/session isolation choices
+- [OPERATIONS.md](OPERATIONS.md) — canonical build, test, and service commands

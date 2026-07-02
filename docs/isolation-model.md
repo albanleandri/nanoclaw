@@ -58,14 +58,14 @@ The key question: **Are you okay with any and every piece of information from on
 
 ### Rules of Thumb
 
-| Scenario | Recommended Level |
-|----------|------------------|
-| Just you, multiple platforms (Telegram + Discord + Slack) | Same agent, separate sessions |
+| Scenario                                                     | Recommended Level             |
+| ------------------------------------------------------------ | ----------------------------- |
+| Just you, multiple platforms (Telegram + Discord + Slack)    | Same agent, separate sessions |
 | Just you, multiple groups on one platform (3 Telegram chats) | Same agent, separate sessions |
-| Webhook channel + chat channel (GitHub + Slack) | Shared session |
-| Channel with friend A and channel with friend B | Separate agent groups |
-| Personal channel and work channel | Separate agent groups |
-| Team channel with different access levels | Separate agent groups |
+| Webhook channel + chat channel (GitHub + Slack)              | Shared session                |
+| Channel with friend A and channel with friend B              | Separate agent groups         |
+| Personal channel and work channel                            | Separate agent groups         |
+| Team channel with different access levels                    | Separate agent groups         |
 
 ### When in Doubt
 
@@ -80,7 +80,9 @@ agent_groups (workspace, memory, CLAUDE.md, personality)
     ↕ many-to-many
 messaging_groups (a specific channel/chat/group on a platform)
     via
-messaging_group_agents (session_mode, trigger_rules, priority)
+messaging_group_agents
+  (engage_mode, engage_pattern, sender_scope,
+   ignored_message_policy, session_mode, priority)
 ```
 
 - **Shared session:** multiple messaging_groups → same agent_group, `session_mode = 'agent-shared'`

@@ -10,7 +10,11 @@ Access layer: `src/db/`. Authoritative schema reference: `src/db/schema.ts` (com
 
 ### 1.1 `agent_groups`
 
-Agent workspaces. Each maps 1:1 to a `groups/<folder>/` directory containing provider-native generated docs, skills, memory/work files, and materialized runtime config. Container config lives in `container_configs` (see §1.x below); a `container.json` file with an embedded `agentProfile` is materialized at spawn time for the container runner to read.
+Agent workspaces. Each maps 1:1 to a `groups/<folder>/` directory containing
+provider-native generated docs, skills, and memory/work files. Container
+configuration lives in `container_configs` (see §1.15). The host writes a
+group-level `container.json` operator snapshot and a separate effective
+per-session `container.runtime.json`.
 
 ```sql
 CREATE TABLE agent_groups (
@@ -52,20 +56,26 @@ Wiring: which agent group handles which messaging group. Many-to-many — the sa
 
 ```sql
 CREATE TABLE messaging_group_agents (
-  id                 TEXT PRIMARY KEY,
-  messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id),
-  agent_group_id     TEXT NOT NULL REFERENCES agent_groups(id),
-  trigger_rules      TEXT,
-  response_scope     TEXT DEFAULT 'all',
-  session_mode       TEXT DEFAULT 'shared',
-  priority           INTEGER DEFAULT 0,
-  created_at         TEXT NOT NULL,
+  id                     TEXT PRIMARY KEY,
+  messaging_group_id     TEXT NOT NULL REFERENCES messaging_groups(id),
+  agent_group_id         TEXT NOT NULL REFERENCES agent_groups(id),
+  engage_mode            TEXT NOT NULL DEFAULT 'mention',
+  engage_pattern         TEXT,
+  sender_scope           TEXT NOT NULL DEFAULT 'all',
+  ignored_message_policy TEXT NOT NULL DEFAULT 'drop',
+  session_mode           TEXT DEFAULT 'shared',
+  priority               INTEGER DEFAULT 0,
+  created_at             TEXT NOT NULL,
   UNIQUE(messaging_group_id, agent_group_id)
 );
 ```
 
 - `session_mode`: `shared` (one session per channel), `per-thread` (one per thread), `agent-shared` (one per agent group across all channels).
-- `trigger_rules`: JSON; e.g. regex for native channels.
+- `engage_mode`: `pattern`, `mention`, or `mention-sticky`.
+- `engage_pattern`: required regex for `pattern`; `.` means match every
+  message.
+- `sender_scope`: `all` or `known`.
+- `ignored_message_policy`: `drop` or `accumulate` as trigger-0 context.
 - **Side effect:** creating a wiring must also populate `agent_destinations` — don't mutate one without the other (see §1.10).
 
 ### 1.4 `users`

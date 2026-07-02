@@ -31,15 +31,16 @@ flowchart TB
   subgraph Session["Per-Session Container (Docker / Apple Container)"]
     direction TB
     PollLoop["Poll Loop<br/>(container/agent-runner)"]
-    Provider["Agent providers<br/>(claude, codex, mock; opencode via skill)"]
+    Provider["Agent providers<br/>(Claude SDK, Codex app-server,<br/>verified OpenAI-compatible protocol loop)"]
     MCP["MCP Tools<br/>send_message, send_file, edit_message,<br/>add_reaction, send_card, ask_user_question,<br/>schedule_task, create_agent,<br/>install_packages, add_mcp_server"]
     Skills["Container Skills<br/>(container/skills/)"]
-    InDB[("inbound.db<br/>host writes<br/>even seq<br/>messages_in<br/>destinations<br/>processing_ack")]
-    OutDB[("outbound.db<br/>container writes<br/>odd seq<br/>messages_out<br/>heartbeat file")]
+    InDB[("inbound.db<br/>host writes<br/>messages_in (even seq)<br/>delivered + destinations<br/>session_routing")]
+    OutDB[("outbound.db<br/>container writes<br/>messages_out (odd seq)<br/>processing_ack + session_state<br/>container_state")]
+    Heartbeat[".heartbeat<br/>container touches<br/>host stats mtime"]
   end
 
   subgraph Groups["Agent Group Filesystem (groups/*)"]
-    Folder["CLAUDE.md<br/>memory<br/>per-group skills<br/>container_config"]
+    Folder["CLAUDE.md / AGENTS.md<br/>memory + work files<br/>container.json snapshot"]
   end
 
   P1 & P2 & P3 & P4 & P5 --> Bridge
@@ -51,6 +52,7 @@ flowchart TB
   Runner --> OneCLI
   Runner --> PollLoop
   PollLoop --> InDB
+  PollLoop --> Heartbeat
   PollLoop --> Provider
   Provider --> MCP
   Provider --> Skills
@@ -136,11 +138,10 @@ erDiagram
   agent_groups ||--o{ pending_approvals : requests
 
   agent_groups {
-    int id
+    string id
     string name
     string folder
     string agent_provider
-    json container_config
   }
   messaging_groups {
     int id
@@ -170,28 +171,32 @@ erDiagram
     string messaging_group_id FK
   }
   messaging_group_agents {
-    int messaging_group_id
-    int agent_group_id
+    string messaging_group_id
+    string agent_group_id
+    string engage_mode "pattern | mention | mention-sticky"
+    string engage_pattern
+    string ignored_message_policy "drop | accumulate"
     string session_mode "agent-shared | shared | per-thread"
-    json trigger_rules
     int priority
   }
   sessions {
-    int id
-    int agent_group_id
-    int messaging_group_id
-    string sdk_session_id
+    string id
+    string agent_group_id
+    string messaging_group_id
+    string thread_id
+    string agent_provider
     string status
+    string container_status
   }
 ```
 
 ### Isolation Level Cheatsheet
 
-| Level | `session_mode` | What's shared | Example |
-|---|---|---|---|
-| 1. Shared session | `agent-shared` | Workspace + memory + conversation | Slack + GitHub webhooks in one thread |
-| 2. Same agent, separate sessions | `shared` / `per-thread` | Workspace + memory only | One agent across 3 Telegram chats |
-| 3. Separate agent groups | (different `agent_group_id`) | Nothing | Personal vs work channels |
+| Level                            | `session_mode`               | What's shared                     | Example                               |
+| -------------------------------- | ---------------------------- | --------------------------------- | ------------------------------------- |
+| 1. Shared session                | `agent-shared`               | Workspace + memory + conversation | Slack + GitHub webhooks in one thread |
+| 2. Same agent, separate sessions | `shared` / `per-thread`      | Workspace + memory only           | One agent across 3 Telegram chats     |
+| 3. Separate agent groups         | (different `agent_group_id`) | Nothing                           | Personal vs work channels             |
 
 ## Two-DB Split (why)
 
@@ -209,7 +214,7 @@ flowchart LR
   Container -->|"writes only<br/>(odd seq)"| Out
   Container -->|touch every poll| HB
   HostSweep[Host sweep] -->|stat mtime| HB
-  HostSweep -->|reads processing_ack| In
+  HostSweep -->|reads processing_ack + container_state| Out
 
   note1["Each file has exactly ONE writer.<br/>Eliminates SQLite cross-process write contention.<br/>Collision-free seq numbering."]
 ```

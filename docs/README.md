@@ -1,14 +1,26 @@
 # NanoClaw Documentation
 
-The official documentation is at **[docs.nanoclaw.dev](https://docs.nanoclaw.dev)**.
+For this fork, the current implementation references in this directory are
+authoritative. The upstream public site at
+[docs.nanoclaw.dev](https://docs.nanoclaw.dev) may not describe fork-specific
+provider, Telegram, orchestration, or operator behavior.
 
-The files in this directory are original design documents and developer references. For the most current and accurate information, use the documentation site.
+Start here:
 
-| This directory | Documentation site |
-|---|---|
-| [SPEC.md](SPEC.md) | [Architecture](https://docs.nanoclaw.dev/concepts/architecture) |
-| [SECURITY.md](SECURITY.md) | [Security model](https://docs.nanoclaw.dev/concepts/security) |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | [Introduction](https://docs.nanoclaw.dev/introduction) |
-| [skills-as-branches.md](skills-as-branches.md) | [Skills system](https://docs.nanoclaw.dev/integrations/skills-system) |
-| [docker-sandboxes.md](docker-sandboxes.md) | [Docker Sandboxes](https://docs.nanoclaw.dev/advanced/docker-sandboxes) |
-| [APPLE-CONTAINER-NETWORKING.md](APPLE-CONTAINER-NETWORKING.md) | [Container runtime](https://docs.nanoclaw.dev/advanced/container-runtime) |
+| Topic                             | Document                                           |
+| --------------------------------- | -------------------------------------------------- |
+| Current architecture              | [architecture.md](architecture.md)                 |
+| Compact diagrams                  | [architecture-diagram.md](architecture-diagram.md) |
+| Database overview                 | [db.md](db.md)                                     |
+| Central DB schema                 | [db-central.md](db-central.md)                     |
+| Session DB schemas                | [db-session.md](db-session.md)                     |
+| Provider descriptors/profiles     | [providers.md](providers.md)                       |
+| Agent runtime profile             | [agent-profile.md](agent-profile.md)               |
+| Build, test, and service commands | [OPERATIONS.md](OPERATIONS.md)                     |
+| Debugging                         | [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)           |
+| Security                          | [SECURITY.md](SECURITY.md)                         |
+
+`SPEC.md`, `REQUIREMENTS.md`, `SDK_DEEP_DIVE.md`, and the model-neutral
+assessment/implementation plan are design history and planning material. They
+are useful context but are not substitutes for the current architecture,
+schema, provider, and operations references above.

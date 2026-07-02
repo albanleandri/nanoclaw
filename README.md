@@ -58,7 +58,10 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 
 **Small enough to understand.** One process, a few source files and no microservices. If you want to understand the full NanoClaw codebase, just ask Claude Code to walk you through it.
 
-**Secure by isolation.** Agents run in Linux containers and they can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
+**Secure by isolation.** Agents run in Linux containers and can only see
+what is explicitly mounted. Bash executes inside that boundary rather than
+directly on the host; it can still modify writable mounts and reach allowed
+external services, so least privilege still matters.
 
 **Built for the individual user.** NanoClaw isn't a monolithic framework; it's software that fits each user's exact needs. Instead of becoming bloatware, NanoClaw is designed to be bespoke. You make your own fork and have Claude Code modify it to match your needs.
 
@@ -74,7 +77,7 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 
 - **Multi-channel messaging** — channel adapters are installed on demand with `/add-<channel>` skills. Telegram support is present in this tree; other adapters such as Discord, Slack, WhatsApp, GitHub, Linear, Matrix, Google Chat, Webex, WeChat, Microsoft Teams, iMessage, and email belong to channel skills or forks.
 - **Flexible isolation** — connect each channel to its own agent for full privacy, share one agent across many channels for unified memory with separate conversations, or fold multiple channels into a single shared session so one conversation spans many surfaces. Pick per channel via `/manage-channels`. See [docs/isolation-model.md](docs/isolation-model.md).
-- **Per-agent workspace** — each agent group has a durable workspace, generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex), a materialized `container.json` with a neutral `agentProfile`, and only the mounts you allow. Nothing crosses the boundary unless you wire it to.
+- **Per-agent workspace** — each agent group has a durable workspace and generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex). The host keeps a group-level `container.json` snapshot and mounts an effective per-session `container.runtime.json`, including the neutral `agentProfile`, into the container. Nothing crosses the boundary unless you wire it to.
 - **Scheduled tasks** — one-shot or recurring jobs that wake the selected agent/provider and can message you back
 - **Durable agent delegation** — authorized agents can delegate correlated work to another agent, receive progress and files, and cancel it without sharing credentials or privileges
 - **Scoped session search** — agents can search normalized text from their own prior sessions through SQLite FTS5; results carry source IDs and never cross agent-group boundaries
@@ -83,7 +86,7 @@ See [docs/v1-to-v2-changes.md](docs/v1-to-v2-changes.md) for what's different an
 - **Durable direct orchestration seam** — normal engaged messages compile to a versioned `direct@1` model→delivery plan, with dependency-ready leases, timeout recovery, cancellation, source-derived host-action authorization, provider usage, and delivery completion; restricted pre-tool fallback can dispatch through an isolated provider-profile session, but its code-owned policy remains default-off
 - **Web access** — search and fetch content from the web
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional per-container CPU/memory caps, optional OneCLI-only egress lockdown, optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation, or Apple Container as a macOS-native opt-in
-- **Credential security** — agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
+- **Credential security** — provider API-key traffic routes through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits. Explicit opt-ins such as Codex host-file ChatGPT auth or `CONTAINER_SECRET_*` mount credentials inside the container and should be treated accordingly.
 
 ## This Fork vs Upstream
 
@@ -181,10 +184,13 @@ Key files:
 - `src/providers/` — host-side provider config and provider-contributed mounts/env
 - `src/capabilities/` — code-owned capability manifests, availability checks, runtime support resolution, and the pre-spawn compiler/gate
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
-- `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, materialized `container.json`)
+- `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, group-level `container.json` snapshot)
+- `data/v2-sessions/<agent-group-id>/<session-id>/` — per-session DBs, heartbeat, outbox, and effective `container.runtime.json`
 
 Coverage is part of CI. Run `pnpm run test:coverage` for the host and
 `cd container/agent-runner && bun run test:coverage` for the Bun runner.
+Canonical build, restart, and verification commands are listed in
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## FAQ
 
@@ -198,7 +204,7 @@ Yes. Docker is the default runtime and works on macOS, Linux, and Windows (via W
 
 **Is this secure?**
 
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Credentials never enter the container — outbound API requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects authentication at the proxy level and supports rate limits and access policies. You should still review what you're running, but the codebase is small enough that you actually can. See the [security documentation](https://docs.nanoclaw.dev/concepts/security) for the full security model.
+Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. Provider API keys normally stay behind [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects authentication at the proxy level and supports rate limits and access policies. Explicit direct-secret or host-auth modes are readable inside their container. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for this fork's security model.
 
 **Why no configuration files?**
 
