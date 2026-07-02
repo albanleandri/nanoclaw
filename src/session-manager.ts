@@ -35,14 +35,10 @@ import {
   insertMessage,
   migrateMessagesInTable,
 } from './db/session-db.js';
+import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
 import { log } from './log.js';
 import { tryIndexSessionMessage } from './session-search/indexer.js';
 import type { Session } from './types.js';
-
-function isPathInside(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
 
 /** Root directory for all session data. */
 export function sessionsBaseDir(): string {
@@ -329,6 +325,9 @@ function extractAttachmentFiles(
     return contentStr;
   }
 
+  const inboxRoot = path.join(sessionDir(agentGroupId, sessionId), 'inbox');
+  let inboxDir: string | null = null;
+  let inboxResolved = false;
   let changed = false;
   for (const att of attachments) {
     if (typeof att.data !== 'string') continue;
@@ -343,32 +342,11 @@ function extractAttachmentFiles(
       });
     }
 
-    const inboxDir = path.join(sessionDir(agentGroupId, sessionId), 'inbox', messageId);
-
-    // Refuse to mkdir through a symlink that the container may have pre placed
-    // at inboxDir. With recursive:true, mkdirSync would silently no op on a
-    // pre existing symlink and the subsequent writeFileSync would follow it.
-    if (fs.existsSync(inboxDir)) {
-      const stat = fs.lstatSync(inboxDir);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        log.warn('Rejecting unsafe inbox directory', { messageId, inboxDir });
-        continue;
-      }
+    if (!inboxResolved) {
+      inboxDir = ensureContainedInboxDir(inboxRoot, messageId, { agentGroupId, sessionId, messageId });
+      inboxResolved = true;
     }
-    fs.mkdirSync(inboxDir, { recursive: true });
-
-    let realInboxDir: string;
-    try {
-      realInboxDir = fs.realpathSync(inboxDir);
-    } catch (err) {
-      log.warn('Failed to resolve inbox directory', { messageId, err });
-      continue;
-    }
-    const inboxRoot = path.join(sessionDir(agentGroupId, sessionId), 'inbox');
-    if (!isPathInside(fs.realpathSync(inboxRoot), realInboxDir)) {
-      log.warn('Inbox directory escaped session inbox root', { messageId, inboxDir });
-      continue;
-    }
+    if (!inboxDir) break;
 
     const filePath = path.join(inboxDir, filename);
     try {

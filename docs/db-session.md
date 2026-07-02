@@ -21,6 +21,12 @@ One session = one folder = one pair of DBs. The `agent_group_id` parent director
 
 Path helpers in `src/session-manager.ts`: `sessionDir()`, `inboundDbPath()`, `outboundDbPath()`, `heartbeatPath()`.
 
+Although `inbox/` belongs to the session, it is writable by the container.
+Before the host stores channel or agent-to-agent attachment bytes, it rejects
+symlinks/non-directories at both the inbox root and per-message directory,
+checks resolved containment, and uses exclusive file creation/copy semantics.
+The shared guard lives in `src/inbox-safety.ts`.
+
 ---
 
 ## 2. Inbound DB (`inbound.db`)

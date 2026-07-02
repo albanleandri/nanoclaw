@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
-import { isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
+import { forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
 import { createDestination } from './db/agent-destinations.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
 import { createSession, updateSession } from '../../db/sessions.js';
@@ -466,5 +466,70 @@ describe('routeAgentMessage return-path', () => {
     expect(bRows).toHaveLength(1);
     const parsed = JSON.parse(bRows[0].content);
     expect(parsed.attachments).toHaveLength(0);
+  });
+
+  it('file forwarding: rejects a symlinked target inbox root', async () => {
+    const outboxDir = path.join(sessionDir(A, S1.id), 'outbox', 'msg-target-root');
+    fs.mkdirSync(outboxDir, { recursive: true });
+    fs.writeFileSync(path.join(outboxDir, 'report.pdf'), 'fake-pdf-bytes');
+
+    const inboxRoot = path.join(sessionDir(B, SB.id), 'inbox');
+    fs.mkdirSync(inboxRoot, { recursive: true });
+    fs.rmSync(inboxRoot, { recursive: true });
+    const evilTarget = path.join(TEST_DIR, 'evil-a2a-inbox-root');
+    fs.mkdirSync(evilTarget, { recursive: true });
+    fs.symlinkSync(evilTarget, inboxRoot);
+
+    await routeAgentMessage(
+      {
+        id: 'msg-target-root',
+        platform_id: B,
+        content: JSON.stringify({ text: 'see attached', files: ['report.pdf'] }),
+        in_reply_to: null,
+      },
+      S1,
+    );
+
+    expect(fs.readdirSync(evilTarget)).toEqual([]);
+    const bRows = readInbound(B, SB.id);
+    expect(JSON.parse(bRows[0].content).attachments).toHaveLength(0);
+  });
+
+  it('file forwarding: rejects a symlinked target message directory', async () => {
+    const outboxDir = path.join(sessionDir(A, S1.id), 'outbox', 'msg-target-dir');
+    fs.mkdirSync(outboxDir, { recursive: true });
+    fs.writeFileSync(path.join(outboxDir, 'report.pdf'), 'fake-pdf-bytes');
+
+    const inboxRoot = path.join(sessionDir(B, SB.id), 'inbox');
+    const evilTarget = path.join(TEST_DIR, 'evil-a2a-message-dir');
+    fs.mkdirSync(inboxRoot, { recursive: true });
+    fs.mkdirSync(evilTarget, { recursive: true });
+    fs.symlinkSync(evilTarget, path.join(inboxRoot, 'msg-target-dir'));
+
+    const attachments = forwardAttachedFiles(
+      { agentGroupId: A, sessionId: S1.id, messageId: 'msg-target-dir', filenames: ['report.pdf'] },
+      { agentGroupId: B, sessionId: SB.id, messageId: 'msg-target-dir' },
+    );
+
+    expect(fs.existsSync(path.join(evilTarget, 'report.pdf'))).toBe(false);
+    expect(attachments).toHaveLength(0);
+  });
+
+  it('file forwarding: refuses to overwrite a pre-existing target file', async () => {
+    const outboxDir = path.join(sessionDir(A, S1.id), 'outbox', 'msg-existing-target');
+    fs.mkdirSync(outboxDir, { recursive: true });
+    fs.writeFileSync(path.join(outboxDir, 'report.pdf'), 'new-bytes');
+
+    const targetDir = path.join(sessionDir(B, SB.id), 'inbox', 'msg-existing-target');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'report.pdf'), 'original-bytes');
+
+    const attachments = forwardAttachedFiles(
+      { agentGroupId: A, sessionId: S1.id, messageId: 'msg-existing-target', filenames: ['report.pdf'] },
+      { agentGroupId: B, sessionId: SB.id, messageId: 'msg-existing-target' },
+    );
+
+    expect(fs.readFileSync(path.join(targetDir, 'report.pdf'), 'utf-8')).toBe('original-bytes');
+    expect(attachments).toHaveLength(0);
   });
 });

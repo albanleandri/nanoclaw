@@ -72,6 +72,25 @@ change inbound status. Instead:
 The central DB is host-only. Container requests to modify central state are
 structured outbound system actions processed by registered host handlers.
 
+## Session attachment writes
+
+The session folder is writable by the container, but channel adapters and peer
+agents can cause the host to materialize attachment bytes under
+`inbox/<message-id>/`. Every such host write uses the shared
+`ensureContainedInboxDir()` guard:
+
+- the `inbox` root and per-message directory are rejected if either is a
+  symlink or non-directory;
+- their resolved paths must remain inside the session inbox;
+- filenames and message IDs are basename-validated;
+- channel writes use exclusive creation and peer-agent copies use
+  `COPYFILE_EXCL`, so an existing file or symlink is never followed or
+  overwritten.
+
+These checks are required even though the destination is under the session
+tree: a compromised runner can pre-place filesystem entries in that writable
+tree before the host receives a later attachment.
+
 ## Identity and permissions
 
 Messaging identities are normalized into namespaced users. Privilege is

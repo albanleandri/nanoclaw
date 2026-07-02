@@ -1,13 +1,13 @@
 # Claude Agent SDK Deep Dive
 
-> **STATUS — re-verify + version-stamp (as of 2026-06-20)**
+> **STATUS — re-verify + version-stamp (as of 2026-07-02)**
 >
 > - **Originally verified against:** `@anthropic-ai/claude-agent-sdk` **v0.2.29–0.2.34** (the version this doc was reverse-engineered from).
-> - **Currently pinned in the agent-runner:** **v0.3.154** (`container/agent-runner/package.json` → `^0.3.154`; resolved to exactly `0.3.154` in `container/agent-runner/bun.lock`).
+> - **Currently declared in the agent-runner:** `^0.3.197`, resolved to **v0.3.198** in `container/agent-runner/bun.lock`; `@anthropic-ai/sdk` is `^0.108.0`.
 > - **Version-stable conceptual sections** — the public `query()` API, the streaming-input (`AsyncIterable<SDKUserMessage>`) pattern, `MessageStream`, hooks, and resume/session behavior — have been re-confirmed against how `container/agent-runner/src/providers/claude.ts` actually uses the SDK today. The runner still uses the **V1 `query()` API** (not the `unstable_v2_*` session API) with streaming input + `resume`.
-> - **Version-volatile details** — minified symbol names (`EZ`, `QX`, `$X`, `XX`, etc.), specific `sdk.d.ts` line numbers, and internal class names — were derived from the **0.2.x** build and have **not** been re-derived for 0.3.154. They are minification-dependent and almost certainly differ now. Sections that depend on them are marked inline with a "⚠️ as-of 0.2.x — verify against current SDK" note. Do not rely on the exact symbols or line numbers without re-checking the installed `sdk.mjs` / `sdk.d.ts`.
+> - **Version-volatile details** — minified symbol names (`EZ`, `QX`, `$X`, `XX`, etc.), specific `sdk.d.ts` line numbers, and internal class names — were derived from the **0.2.x** build and have **not** been re-derived for 0.3.198. They are minification-dependent and almost certainly differ now. Sections that depend on them are marked inline with a "⚠️ as-of 0.2.x — verify against current SDK" note. Do not rely on the exact symbols or line numbers without re-checking the installed `sdk.mjs` / `sdk.d.ts`.
 
-Findings from reverse-engineering `@anthropic-ai/claude-agent-sdk` v0.2.29–0.2.34 (the agent-runner now pins **v0.3.154**) to understand how `query()` works, why agent teams subagents were being killed, and how to fix it. Supplemented with official SDK reference docs.
+Findings from reverse-engineering `@anthropic-ai/claude-agent-sdk` v0.2.29–0.2.34 (the agent-runner now resolves **v0.3.198**) to understand how `query()` works, why agent teams subagents were being killed, and how to fix it. Supplemented with official SDK reference docs.
 
 ## Architecture
 
@@ -45,7 +45,7 @@ $X Query      <------   stdout writer
 
 ## The Core Agent Loop (EZ)
 
-> ⚠️ as-of 0.2.x — the minified names in this section (`EZ`, `mW1`, etc.) are from the 0.2.x build and almost certainly differ in 0.3.154. The *behavior* described (a recursive per-turn loop) is stable; the symbols are not. Verify against current SDK before relying on a specific name.
+> ⚠️ as-of 0.2.x — the minified names in this section (`EZ`, `mW1`, etc.) are from the 0.2.x build and almost certainly differ in 0.3.198. The *behavior* described (a recursive per-turn loop) is stable; the symbols are not. Verify against current SDK before relying on a specific name.
 
 Inside the CLI, the agentic loop is a **recursive async generator called `EZ()`**, not an iterative while loop:
 
@@ -169,7 +169,7 @@ type PermissionResult =
 
 ## SDKMessage Types
 
-`query()` can yield 16 message types. The official docs show a simplified union of 7, but `sdk.d.ts` has the full set. (⚠️ as-of 0.2.x — the specific `sdk.d.ts:NNNN` line numbers cited in this section are from the 0.2.x type defs and will not match 0.3.154; re-grep the installed `sdk.d.ts` to locate these types.)
+`query()` can yield 16 message types. The official docs show a simplified union of 7, but `sdk.d.ts` has the full set. (⚠️ as-of 0.2.x — the specific `sdk.d.ts:NNNN` line numbers cited in this section are from the 0.2.x type defs and will not match 0.3.198; re-grep the installed `sdk.d.ts` to locate these types.)
 
 | Type | Subtype | Purpose |
 |------|---------|---------|
@@ -307,7 +307,7 @@ Claude responded with text only — it decided it has completed the task. The AP
 
 ## Subagent Execution Modes
 
-> ⚠️ as-of 0.2.x — the minified symbols in this section (`VR()`, `g01()`, `EZ()`) are from the 0.2.x build and may differ in 0.3.154. The execution-mode behavior is the durable part.
+> ⚠️ as-of 0.2.x — the minified symbols in this section (`VR()`, `g01()`, `EZ()`) are from the 0.2.x build and may differ in 0.3.198. The execution-mode behavior is the durable part.
 
 ### Case 1: Synchronous Subagents (`run_in_background: false`) — BLOCKS
 
@@ -339,7 +339,7 @@ From the SDK consumer's perspective: you receive the initial `type: "result"`, b
 
 ## The isSingleUserTurn Problem
 
-> ⚠️ as-of 0.2.x — the minified identifiers in this section (`QK`, `D`, `BGq`) and the exact shutdown-prompt text were lifted from the 0.2.x `sdk.mjs`/`cli.js` and may have changed in 0.3.154. The *mechanism* (string prompt ⇒ `isSingleUserTurn = true` ⇒ stdin auto-closes after the first result) is the stable, load-bearing fact, and is exactly why the runner passes a streaming `AsyncIterable` instead — see "The Fix" below. Verify the symbols/prompt text against the current SDK if you need them.
+> ⚠️ as-of 0.2.x — the minified identifiers in this section (`QK`, `D`, `BGq`) and the exact shutdown-prompt text were lifted from the 0.2.x `sdk.mjs`/`cli.js` and may have changed in 0.3.198. The *mechanism* (string prompt ⇒ `isSingleUserTurn = true` ⇒ stdin auto-closes after the first result) is the stable, load-bearing fact, and is exactly why the runner passes a streaming `AsyncIterable` instead — see "The Fix" below. Verify the symbols/prompt text against the current SDK if you need them.
 
 From sdk.mjs:
 
@@ -390,7 +390,7 @@ With V1 `query()` + string prompt + agent teams:
 
 ## The Fix: Streaming Input Mode
 
-> ✅ Confirmed current (v0.3.154). This is exactly what the runner does today: `container/agent-runner/src/providers/claude.ts` builds a push-based `MessageStream` (an `AsyncIterable<SDKUserMessage>`) and passes it as `prompt` to V1 `query()`, with `resume: input.continuation` for session continuity. The runner stays on V1 `query()` — it does **not** use the `unstable_v2_*` session API.
+> ✅ Confirmed current (v0.3.198) by the runner test and typecheck suite. This is exactly what the runner does today: `container/agent-runner/src/providers/claude.ts` builds a push-based `MessageStream` (an `AsyncIterable<SDKUserMessage>`) and passes it as `prompt` to V1 `query()`, with `resume: input.continuation` for session continuity. The runner stays on V1 `query()` — it does **not** use the `unstable_v2_*` session API.
 
 Instead of passing a string prompt (which sets `isSingleUserTurn = true`), pass an `AsyncIterable<SDKUserMessage>`:
 
@@ -433,7 +433,7 @@ All results are meaningful — capture every one, not just the first.
 
 ## V1 vs V2 API
 
-> **The agent-runner uses V1 (`query()`) today** — see `container/agent-runner/src/providers/claude.ts`. The V2 (`unstable_v2_*`) section below documents an alternative the runner does **not** use. The `QX` symbol reference in the V2 subsection is ⚠️ as-of 0.2.x and may differ in 0.3.154.
+> **The agent-runner uses V1 (`query()`) today** — see `container/agent-runner/src/providers/claude.ts`. The V2 (`unstable_v2_*`) section below documents an alternative the runner does **not** use. The `QX` symbol reference in the V2 subsection is ⚠️ as-of 0.2.x and may differ in 0.3.198.
 
 ### V1: `query()` — One-shot async generator
 
@@ -552,7 +552,7 @@ type SubagentStopHookInput = BaseHookInput & {
 
 ## Query Interface Methods
 
-The `Query` object (sdk.d.ts:931 — ⚠️ as-of 0.2.x, line number will differ in 0.3.154). Official docs list these public methods:
+The `Query` object (sdk.d.ts:931 — ⚠️ as-of 0.2.x, line number will differ in 0.3.198). Official docs list these public methods:
 
 ```typescript
 interface Query extends AsyncGenerator<SDKMessage, void> {
@@ -626,7 +626,7 @@ function createSdkMcpServer(options: {
 
 ## Internals Reference
 
-> ⚠️ as-of 0.2.x — every minified identifier in the tables below was derived from the 0.2.x `sdk.mjs`/`cli.js`. Minified names are regenerated on each build and will almost certainly be different in 0.3.154. Treat this table as an archaeological record of the 0.2.x build, not a lookup for the current one. Re-derive against the installed bundle if you need current symbols.
+> ⚠️ as-of 0.2.x — every minified identifier in the tables below was derived from the 0.2.x `sdk.mjs`/`cli.js`. Minified names are regenerated on each build and will almost certainly be different in 0.3.198. Treat this table as an archaeological record of the 0.2.x build, not a lookup for the current one. Re-derive against the installed bundle if you need current symbols.
 
 ### Key minified identifiers (sdk.mjs)
 
@@ -656,7 +656,7 @@ function createSdkMcpServer(options: {
 
 ## Key Files
 
-> ⚠️ as-of 0.2.x — the line counts and byte sizes below describe the 0.2.x bundle and will differ in 0.3.154.
+> ⚠️ as-of 0.2.x — the line counts and byte sizes below describe the 0.2.x bundle and will differ in 0.3.198.
 
 - `sdk.d.ts` — All type definitions (1777 lines)
 - `sdk-tools.d.ts` — Tool input schemas

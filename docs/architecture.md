@@ -168,6 +168,12 @@ Inside a running container:
 `container.runtime.json` is the effective session configuration and is the
 file mounted at the two in-container `container.json` paths.
 
+The container can write its session folder, so host-side attachment
+materialization treats `inbox/` as untrusted filesystem state. Channel and
+agent-to-agent attachment paths share a containment guard that rejects
+symlinked roots/subdirectories, verifies resolved containment, and writes files
+exclusively.
+
 ## Provider and runtime selection
 
 Agent identity is separate from model execution. Effective selection order is:

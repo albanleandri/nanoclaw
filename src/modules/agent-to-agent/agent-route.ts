@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { isSafeAttachmentName } from '../../attachment-safety.js';
+import { ensureContainedInboxDir, isPathInside } from '../../inbox-safety.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getInboundSourceSessionId, getMostRecentPeerSourceSessionId } from '../../db/session-db.js';
 import { getSession } from '../../db/sessions.js';
@@ -38,11 +39,6 @@ export interface ForwardedAttachment {
   filename: string;
   type: 'file';
   localPath: string;
-}
-
-function isPathInside(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 /**
@@ -96,8 +92,16 @@ export function forwardAttachedFiles(
     return [];
   }
 
-  const targetInboxDir = path.join(sessionDir(target.agentGroupId, target.sessionId), 'inbox', target.messageId);
-  fs.mkdirSync(targetInboxDir, { recursive: true });
+  const targetInboxDir = ensureContainedInboxDir(
+    path.join(sessionDir(target.agentGroupId, target.sessionId), 'inbox'),
+    target.messageId,
+    {
+      targetAgentGroupId: target.agentGroupId,
+      targetSessionId: target.sessionId,
+      targetMessageId: target.messageId,
+    },
+  );
+  if (!targetInboxDir) return [];
 
   const attachments: ForwardedAttachment[] = [];
   for (const filename of source.filenames) {
@@ -135,7 +139,17 @@ export function forwardAttachedFiles(
       continue;
     }
     const dst = path.join(targetInboxDir, filename);
-    fs.copyFileSync(realSrc, dst);
+    try {
+      fs.copyFileSync(realSrc, dst, fs.constants.COPYFILE_EXCL);
+    } catch (err) {
+      log.warn('agent-route: refusing to write target inbox file', {
+        sourceMsgId: source.messageId,
+        targetMsgId: target.messageId,
+        filename,
+        err,
+      });
+      continue;
+    }
     attachments.push({
       name: filename,
       filename,
