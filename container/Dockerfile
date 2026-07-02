@@ -116,10 +116,26 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
     sh /tmp/install-cli-tools.sh /tmp/cli-tools.json
 
 # ---- RTK (Rust Token Killer) --------------------------------------------------
-# Compresses Bash outputs 60-90% before they reach the LLM context window.
-RUN curl -Lo /tmp/rtk.tar.gz https://github.com/rtk-ai/rtk/releases/download/v0.40.0/rtk-x86_64-unknown-linux-musl.tar.gz \
-    && tar xzf /tmp/rtk.tar.gz -C /usr/local/bin/ \
-    && rm /tmp/rtk.tar.gz
+# Compresses shell output before it reaches the LLM context window. Release
+# checksums are pinned from the published GitHub release metadata.
+ARG RTK_VERSION=0.43.0
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+      amd64) \
+        RTK_ASSET="rtk-x86_64-unknown-linux-musl.tar.gz"; \
+        RTK_SHA256="ff8a1e7766496e175291a85aeca1dc97c9ff6df33e51e5893d1fbc78fea2a609" ;; \
+      arm64) \
+        RTK_ASSET="rtk-aarch64-unknown-linux-gnu.tar.gz"; \
+        RTK_SHA256="5519f7ca12e5c143a609f0d28a0a77b97413a8dce31c2681f1a41c24519a8731" ;; \
+      *) echo "Unsupported RTK architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLo /tmp/rtk.tar.gz \
+      "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${RTK_ASSET}" \
+    && echo "${RTK_SHA256}  /tmp/rtk.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/rtk.tar.gz -C /usr/local/bin/ rtk \
+    && rm /tmp/rtk.tar.gz \
+    && test "$(rtk --version)" = "rtk ${RTK_VERSION}" \
+    && rtk gain >/dev/null
 
 # ---- ncl CLI wrapper ----------------------------------------------------------
 # Actual script lives in the mounted source at /app/src/cli/ncl.ts.

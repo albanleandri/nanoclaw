@@ -28,8 +28,12 @@ export function deriveCapabilityProfile(config: ContainerConfig): AgentCapabilit
     'nanoclaw.fail-agent-task',
     'nanoclaw.publish-agent-task-artifact',
     'memory.session-search',
+    'runtime.shell',
   ];
-  const allowDegraded: string[] = [];
+  // The provider-neutral RTK shell is intentionally limited to the native,
+  // container-isolated runtimes. Generic protocol profiles retain their
+  // bounded canonical tool contract and record the shell as unavailable.
+  const allowDegraded: string[] = ['runtime.shell'];
   if (Object.keys(config.mcpServers ?? {}).includes('browser')) {
     requested.push('web.browse');
     allowDegraded.push('web.browse');

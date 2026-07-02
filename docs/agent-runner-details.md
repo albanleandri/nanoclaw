@@ -84,7 +84,9 @@ type ProviderEvent =
 ### What the interface does NOT include
 
 - **Message formatting** — the agent-runner formats messages before passing to the provider. The provider receives a ready-to-send prompt string.
-- **Hooks** — Claude-specific. The Claude provider registers hooks internally (PreCompact, PreToolUse, etc.). Other providers don't need them.
+- **Provider hooks** — Claude-specific lifecycle and compatibility behavior
+  remains inside the Claude provider. Provider-neutral shell execution is a
+  NanoClaw MCP capability, not a provider hook.
 - **Tool policy** — native providers translate the compiled runtime intent
   into their own policy. Generic profiles receive only verified, compiled
   protocol-tool bindings.
@@ -182,9 +184,24 @@ class ClaudeProvider implements AgentProvider {
 - `MessageStream` for async iterable input (push-based)
 - SDK continuation persisted immediately on init
 - PreCompact hook for transcript archiving
-- PreToolUse hook for sanitizing bash env vars
+- PreToolUse/PostToolUse hooks for tool-in-flight lifecycle and declared Bash
+  timeout tracking
 - Full tool allowlist
 - `additionalDirectories` for multi-directory access
+
+### Token-efficient shell
+
+The built-in `run_shell` MCP tool is shared by Claude and Codex. It invokes
+`rtk rewrite` without a shell, interprets RTK's allow/passthrough/deny/ask
+verdict, and only then executes the selected command through Bash in
+`/workspace/agent`. Execution defaults to a 120-second timeout, allows at most
+600 seconds, and captures at most 256 KiB by default. Timeout termination
+targets the command process group, and tool-in-flight state is always cleared
+in a `finally` path.
+
+RTK analytics and tee recovery files are persisted in the agent group's
+`.rtk/` directory. Claude's native Bash hook remains enabled as a compatibility
+fallback. Provider-native file tools do not pass through RTK.
 
 ### Codex Provider
 

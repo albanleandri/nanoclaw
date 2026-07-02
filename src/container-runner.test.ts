@@ -7,11 +7,13 @@ import { describe, expect, it } from 'vitest';
 import {
   assertUniqueMountDestinations,
   buildGroupWorkspaceMounts,
+  buildRtkStateMount,
   buildSessionRuntimeConfigMounts,
   resolveProviderName,
   syncSharedResourceSymlinks,
   syncSkillSymlinks,
 } from './container-runner.js';
+import { DATA_DIR } from './config.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -34,6 +36,16 @@ describe('resolveProviderName', () => {
   it('treats empty string as unset (falls through)', () => {
     expect(resolveProviderName('', 'opencode')).toBe('opencode');
     expect(resolveProviderName(null, '')).toBe('claude');
+  });
+});
+
+describe('buildRtkStateMount', () => {
+  it('persists provider-neutral RTK analytics and recovery output per agent group', () => {
+    expect(buildRtkStateMount('ag-rtk')).toEqual({
+      hostPath: path.join(DATA_DIR, 'v2-sessions', 'ag-rtk', '.rtk'),
+      containerPath: '/home/node/.local/share/rtk',
+      readonly: false,
+    });
   });
 });
 

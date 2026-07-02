@@ -130,6 +130,7 @@ data/
     <agent-group-id>/
       .claude-shared/
       .codex-shared/
+      .rtk/                    # provider-neutral RTK analytics + recovery output
       <session-id>/
         inbound.db
         outbound.db
@@ -213,6 +214,20 @@ The host materializes provider-native project documents (`CLAUDE.md` and
 mounts are contributed by provider adapters. API-key profiles normally remain
 behind OneCLI and are not stored in runtime JSON; explicitly enabled host-file
 or direct-secret modes are mounted into the container.
+
+Claude and Codex receive the `runtime.shell` capability through the built-in
+NanoClaw MCP server. Its `run_shell` tool asks RTK to rewrite the command,
+executes the resulting command with a bounded timeout and output capture, and
+records tool-in-flight state for host stuck detection. RTK deny/approval
+verdicts fail closed. Generic OpenAI-compatible profiles do not receive this
+arbitrary-shell capability; their tool surface remains the bounded compiled
+protocol contract.
+
+Claude's native `Bash` path retains `rtk hook claude` as compatibility. Hook
+registration preserves unrelated settings and refuses malformed settings
+without overwriting them. RTK state is mounted from the agent-group `.rtk/`
+directory at `/home/node/.local/share/rtk`, so gain analytics and full-output
+recovery files survive container replacement and provider switches.
 
 ## Container lifecycle
 

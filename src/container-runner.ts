@@ -48,6 +48,7 @@ import { discoverSkillCatalog, selectSkillCatalog } from './skills/catalog.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { readEnvFileByPrefix } from './env.js';
+import { ensureRtkClaudeHook } from './rtk.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
@@ -411,6 +412,14 @@ export function buildSessionRuntimeConfigMounts(runtimeConfigPath: string): Volu
   ];
 }
 
+export function buildRtkStateMount(agentGroupId: string): VolumeMount {
+  return {
+    hostPath: path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.rtk'),
+    containerPath: '/home/node/.local/share/rtk',
+    readonly: false,
+  };
+}
+
 export { assertUniqueMountDestinations };
 
 function buildMounts(
@@ -433,7 +442,7 @@ function buildMounts(
 
   // Idempotently inject RTK PreToolUse hook into settings.json so all container
   // Bash calls are compressed before reaching the LLM context window.
-  injectRtkHook(claudeDir);
+  ensureRtkClaudeHook(path.join(claudeDir, 'settings.json'));
 
   // Compose CLAUDE.md fresh every spawn from the shared base, enabled skill
   // fragments, and MCP server instructions. See `claude-md-compose.ts`.
@@ -477,6 +486,12 @@ function buildMounts(
   // skill symlinks)
   mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
 
+  // RTK analytics and failure-recovery output must survive container
+  // replacement and remain shared when an agent group switches providers.
+  const rtkStateMount = buildRtkStateMount(agentGroup.id);
+  fs.mkdirSync(rtkStateMount.hostPath, { recursive: true });
+  mounts.push(rtkStateMount);
+
   // Shared agent-runner source — read-only, same code for all groups.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
   mounts.push({ hostPath: agentRunnerSrc, containerPath: '/app/src', readonly: true });
@@ -509,43 +524,6 @@ function buildMounts(
   assertUniqueMountDestinations(mounts);
 
   return mounts;
-}
-
-/**
- * Idempotently ensure the RTK PreToolUse hook is present in .claude-shared/settings.json
- * so all container Bash calls are compressed before reaching the LLM context window.
- */
-function injectRtkHook(claudeDir: string): void {
-  fs.mkdirSync(claudeDir, { recursive: true });
-  const settingsFile = path.join(claudeDir, 'settings.json');
-  let containerSettings: Record<string, unknown>;
-  let settingsIsNew = false;
-  try {
-    containerSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as Record<string, unknown>;
-  } catch {
-    settingsIsNew = true;
-    containerSettings = {};
-  }
-  const rtkCommand = 'rtk hook claude';
-  const hooks = (containerSettings.hooks as Record<string, unknown[]> | undefined) ?? {};
-  const preToolUse = (hooks.PreToolUse ?? []) as Array<{
-    matcher?: string;
-    hooks?: Array<{ command?: string }>;
-  }>;
-  const hasRtkHook = preToolUse.some((h) => h.hooks?.some((cmd) => cmd.command === rtkCommand));
-  if (settingsIsNew || !hasRtkHook) {
-    containerSettings.hooks = {
-      ...hooks,
-      PreToolUse: [
-        ...preToolUse,
-        {
-          matcher: 'Bash',
-          hooks: [{ type: 'command', command: rtkCommand }],
-        },
-      ],
-    };
-    fs.writeFileSync(settingsFile, JSON.stringify(containerSettings, null, 2) + '\n');
-  }
 }
 
 /**

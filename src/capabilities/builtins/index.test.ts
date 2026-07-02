@@ -24,4 +24,15 @@ describe('built-in capabilities', () => {
   it('requires a writable workspace for repository editing', () => {
     expect(getCapability('repo.edit')?.requirements.workspace).toBe('write');
   });
+
+  it('keeps arbitrary RTK shell execution on the native container runtimes', () => {
+    const capability = getCapability('runtime.shell');
+    expect(capability?.adapters).toEqual([
+      expect.objectContaining({
+        kind: 'mcp',
+        runtimeIds: ['claude-sdk', 'codex-app-server'],
+        entrypoint: 'mcp:nanoclaw',
+      }),
+    ]);
+  });
 });

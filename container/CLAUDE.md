@@ -10,6 +10,10 @@ Files you create are saved in `/workspace/agent/`. Use this for notes, research,
 
 The file `CLAUDE.local.md` in your workspace is your per-group memory. Record things there that you'll want to remember in future sessions — user preferences, project context, recurring facts. Keep entries short and structured.
 
+## Token-efficient shell
+
+Use the NanoClaw `run_shell` MCP tool (`mcp__nanoclaw__run_shell` in Claude) for shell commands so command execution and RTK output filtering behave consistently across Claude and Codex. Use a provider-native shell only if the NanoClaw tool is unavailable. Claude's native `Bash` tool also has an RTK compatibility hook, but provider-native file tools such as Read, Grep, and Glob do not pass through RTK.
+
 ## Memory
 
 When the user shares any substantive information with you, it must be stored somewhere you can retrieve it when relevant. If it's information that is pertinent to every single conversation turn it should be put into CLAUDE.local.md. Otherwise, create a system for storing the information depending on its type - e.g. create a file of people that the user mentions so you can keep track or a file of projects. For every file you create, add a concise reference in your CLAUDE.local.md so you'll be able to find it in future conversations. 

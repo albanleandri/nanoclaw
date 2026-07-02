@@ -85,6 +85,10 @@ external services, so least privilege still matters.
 - **Skill provenance and capability audit** — optional strict container-skill manifests bind reviewed content hashes to capability/runtime requirements, while canonical tool calls emit redacted, correlated lifecycle events
 - **Durable direct orchestration seam** — normal engaged messages compile to a versioned `direct@1` model→delivery plan, with dependency-ready leases, timeout recovery, cancellation, source-derived host-action authorization, provider usage, and delivery completion; restricted pre-tool fallback can dispatch through an isolated provider-profile session, but its code-owned policy remains default-off
 - **Web access** — search and fetch content from the web
+- **Provider-neutral token-efficient shell** — Claude and Codex can execute
+  bounded shell commands through the same audited NanoClaw MCP tool, with RTK
+  rewriting/output filtering and persistent per-agent-group recovery output;
+  Claude's native Bash hook remains as a compatibility path
 - **Container isolation** — agents are sandboxed in Docker (macOS/Linux/WSL2), with optional per-container CPU/memory caps, optional OneCLI-only egress lockdown, optional [Docker Sandboxes](docs/docker-sandboxes.md) micro-VM isolation, or Apple Container as a macOS-native opt-in
 - **Credential security** — provider API-key traffic routes through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits. Explicit opt-ins such as Codex host-file ChatGPT auth or `CONTAINER_SECRET_*` mount credentials inside the container and should be treated accordingly.
 
@@ -183,6 +187,7 @@ Key files:
 - `src/channels/` — channel adapter infra (adapters installed via `/add-<channel>` skills)
 - `src/providers/` — host-side provider config and provider-contributed mounts/env
 - `src/capabilities/` — code-owned capability manifests, availability checks, runtime support resolution, and the pre-spawn compiler/gate
+- `src/rtk.ts` — non-destructive Claude hook registration for the RTK compatibility path
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
 - `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, group-level `container.json` snapshot)
 - `data/v2-sessions/<agent-group-id>/<session-id>/` — per-session DBs, heartbeat, outbox, and effective `container.runtime.json`

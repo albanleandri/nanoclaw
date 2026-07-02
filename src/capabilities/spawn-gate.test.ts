@@ -40,6 +40,7 @@ describe('spawn capability gate', () => {
       expect.arrayContaining(['nanoclaw.send-message', 'nanoclaw.schedule-task', 'web.browse']),
     );
     expect(profile.allowDegraded).toContain('web.browse');
+    expect(profile.allowDegraded).toContain('runtime.shell');
     expect(buildAvailabilityContext(config({ browser: { command: 'x' } })).configuredMcpServers).toEqual(
       new Set(['browser']),
     );

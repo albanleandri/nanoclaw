@@ -5,6 +5,10 @@ import { closeSessionDb, getInboundDb, initTestSessionDb } from '../db/connectio
 import './catalog.js';
 
 describe('in-process MCP tool catalog', () => {
+  it('registers the provider-neutral RTK shell tool', () => {
+    expect(listRegisteredToolDefinitions().map((definition) => definition.tool.name)).toContain('run_shell');
+  });
+
   it('lists and invokes registered definitions without starting stdio', async () => {
     const name = 'catalog_test_tool';
     registerTools([

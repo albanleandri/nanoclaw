@@ -44,6 +44,22 @@ containers; recycle running agent containers to load it. Rebuild the image
 only when the Dockerfile, dependencies, global CLIs, or other image contents
 change.
 
+RTK changes require both an image rebuild and recycling running agent
+containers:
+
+```bash
+./container/build.sh
+docker run --rm --entrypoint rtk <nanoclaw-image>:latest --version
+ncl groups restart --id <group-id>
+```
+
+The image build selects the RTK asset from Docker's target architecture,
+verifies its pinned SHA-256 digest, and runs `rtk --version` plus `rtk gain`.
+Runtime analytics and full-output recovery files persist per agent group under
+`data/v2-sessions/<agent-group-id>/.rtk/`. Use `rtk gain` inside an active
+agent container when diagnosing adoption; do not treat vendor savings
+estimates as measured NanoClaw results.
+
 ## Verification
 
 ```bash

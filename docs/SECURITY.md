@@ -235,7 +235,17 @@ The host uses pnpm with:
 
 The runner has a separate committed Bun lockfile. Bun has no equivalent
 release-age policy, so runtime dependency updates require deliberate review.
-The container image pins Bun and global CLI versions in the Dockerfile.
+The container image pins Bun and global CLI versions in the Dockerfile. RTK
+uses architecture-specific release assets with repository-pinned SHA-256
+digests and an image-build version check.
+
+The `runtime.shell` capability does not expand the container boundary: Claude
+and Codex already have unrestricted native shell execution inside their
+container. It provides a common audited and bounded execution path. RTK
+rewriting is invoked without a shell, deny/ask verdicts fail closed, command
+output and duration are bounded, and timeout termination targets the command
+process group. Generic protocol profiles are deliberately excluded because
+granting them this tool would widen their bounded canonical contract.
 
 CI installs both trees with frozen lockfiles, typechecks host and runner, runs
 host and runner tests plus coverage, and checks formatting.

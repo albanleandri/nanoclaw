@@ -100,3 +100,19 @@ registerCapability({
     },
   ],
 });
+
+registerCapability({
+  id: 'runtime.shell',
+  version: 1,
+  description: 'Execute a bounded shell command through NanoClaw RTK output filtering.',
+  requirements: { toolCalling: 'native-or-bridged', mcp: true, workspace: 'write' },
+  sideEffects: 'credentialed',
+  approval: 'policy',
+  adapters: [
+    {
+      kind: 'mcp',
+      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      entrypoint: 'mcp:nanoclaw',
+    },
+  ],
+});

@@ -69,9 +69,15 @@ policy has no candidate profiles and keeps fallback disabled.
 
 ## Capability compilation
 
-Before spawn, the host compiles a session runtime plan from code-owned capability manifests, the selected runtime descriptor, policy, and deterministic local availability checks. The initial built-ins cover message delivery, task scheduling, browser MCP access, and workspace editing.
+Before spawn, the host compiles a session runtime plan from code-owned capability manifests, the selected runtime descriptor, policy, and deterministic local availability checks. The initial built-ins cover message delivery, task scheduling, browser MCP access, workspace editing, and the bounded RTK-backed `runtime.shell` capability.
 
 Required capability loss throws before container materialization. Explicitly optional loss is recorded as rejected instead. Claude and Codex retain their existing MCP configuration byte-for-byte. The `openai-protocol-loop` runtime always receives an empty `mcpServers` map; verified tools are supplied only through compiled `protocol-tool` bindings.
+
+`runtime.shell` resolves through the built-in NanoClaw MCP server only for
+`claude-sdk` and `codex-app-server`. It is explicitly optional in the default
+profile so generic protocol profiles record it as unavailable instead of
+failing startup. It has no `protocol-tool` adapter: verifying generic function
+calling must never grant arbitrary shell execution.
 
 For a verified generic profile, the compiled `SessionRuntimePlan` is embedded in the existing per-session runtime JSON. The runner exposes only code-owned NanoClaw tools named by that plan. Selected manifested skills contribute required capabilities before compilation; unapproved, drifted, incompatible, or unsatisfied skills fail before spawn. Manifest-less skills remain instruction-only during rollout.
 

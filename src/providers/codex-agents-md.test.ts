@@ -32,6 +32,10 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     fs.writeFileSync(
       path.join(projectRoot, 'container', 'CLAUDE.md'),
       [
+        '## Token-efficient shell',
+        '',
+        'Use the NanoClaw `run_shell` MCP tool for shell commands so RTK filtering is provider-neutral.',
+        '',
         '## Shared knowledge',
         '',
         '/workspace/agent/shared/knowledge/MEMORY.md',
@@ -59,6 +63,7 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     expect(doc).toContain('/workspace/agent/shared/knowledge/knowledge/preferences/communication.md');
     expect(doc).toContain('/workspace/agent/shared/knowledge/knowledge/people/alban.md');
     expect(doc).toContain('Do not duplicate shared user preferences into provider-specific memory files.');
+    expect(doc).toContain('Use the NanoClaw `run_shell` MCP tool for shell commands');
   });
 
   it('renders enabled module and MCP instructions through the shared profile boundary', () => {
