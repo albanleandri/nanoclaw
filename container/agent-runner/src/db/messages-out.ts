@@ -47,34 +47,48 @@ export function writeMessageOut(msg: WriteMessageOut): number {
   const outbound = getOutboundDb();
   const inbound = getInboundDb();
 
-  // Read max seq from both DBs to maintain global ordering.
-  // Safe: each side only reads the other DB, never writes to it.
-  const maxOut = (outbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
-  const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
-  const max = Math.max(maxOut, maxIn);
-  const nextSeq = max % 2 === 0 ? max + 1 : max + 2; // next odd
+  // Serialize seq allocation against every other outbound.db writer. The MCP
+  // tool server runs in a SEPARATE process from the poll loop, and the host's
+  // writeOutboundDirect() also writes messages_out — so read-then-insert is a
+  // cross-process race on the UNIQUE(seq) column. BEGIN IMMEDIATE takes the
+  // write lock BEFORE we read MAX(seq), making read-compute-insert atomic so
+  // two writers can't compute the same seq. Mirrors cli/ncl.ts:writeRequest,
+  // which already guards this exact hot path.
+  outbound.exec('BEGIN IMMEDIATE');
+  try {
+    // Read max seq from both DBs to maintain global ordering.
+    // Safe: each side only reads the other DB, never writes to it.
+    const maxOut = (outbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
+    const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
+    const max = Math.max(maxOut, maxIn);
+    const nextSeq = max % 2 === 0 ? max + 1 : max + 2; // next odd
 
-  // bun:sqlite requires named parameters to be passed with the prefix character
-  // in the JS object keys (better-sqlite3 auto-stripped it, bun:sqlite does not).
-  outbound
-    .prepare(
-      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, thread_id, content)
+    // bun:sqlite requires named parameters to be passed with the prefix character
+    // in the JS object keys (better-sqlite3 auto-stripped it, bun:sqlite does not).
+    outbound
+      .prepare(
+        `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, thread_id, content)
      VALUES ($id, $seq, $in_reply_to, datetime('now'), $deliver_after, $recurrence, $kind, $platform_id, $channel_type, $thread_id, $content)`,
-    )
-    .run({
-      $id: msg.id,
-      $seq: nextSeq,
-      $in_reply_to: msg.in_reply_to === undefined ? getCurrentInReplyTo() : msg.in_reply_to,
-      $deliver_after: msg.deliver_after ?? null,
-      $recurrence: msg.recurrence ?? null,
-      $kind: msg.kind,
-      $platform_id: msg.platform_id ?? null,
-      $channel_type: msg.channel_type ?? null,
-      $thread_id: msg.thread_id ?? null,
-      $content: msg.content,
-    });
+      )
+      .run({
+        $id: msg.id,
+        $seq: nextSeq,
+        $in_reply_to: msg.in_reply_to === undefined ? getCurrentInReplyTo() : msg.in_reply_to,
+        $deliver_after: msg.deliver_after ?? null,
+        $recurrence: msg.recurrence ?? null,
+        $kind: msg.kind,
+        $platform_id: msg.platform_id ?? null,
+        $channel_type: msg.channel_type ?? null,
+        $thread_id: msg.thread_id ?? null,
+        $content: msg.content,
+      });
 
-  return nextSeq;
+    outbound.exec('COMMIT');
+    return nextSeq;
+  } catch (e) {
+    outbound.exec('ROLLBACK');
+    throw e;
+  }
 }
 
 /**
