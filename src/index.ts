@@ -85,9 +85,12 @@ async function main(): Promise<void> {
   log.info('Central DB ready', { path: dbPath });
 
   // 1a. Fail closed on a half-installed permissions state (see the helper's
-  // doc comment). Zero roles = intended single-user allow-all.
-  const roleCount = (db.prepare('SELECT COUNT(*) AS n FROM user_roles').get() as { n: number }).n;
-  assertAccessEnforcementWired(roleCount);
+  // doc comment). Count both roles and membership rows; zero of both is the
+  // intended single-user allow-all.
+  const privilegedRows =
+    (db.prepare('SELECT COUNT(*) AS n FROM user_roles').get() as { n: number }).n +
+    (db.prepare('SELECT COUNT(*) AS n FROM agent_group_members').get() as { n: number }).n;
+  assertAccessEnforcementWired(privilegedRows);
 
   // 1b. Backfill container_configs from legacy container.json files.
   // Idempotent — skips groups that already have a config row.

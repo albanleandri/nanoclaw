@@ -97,18 +97,34 @@ export function isAccessGateRegistered(): boolean {
 }
 
 /**
+ * Pure (side-effect-free) counterpart of the access gate. The `accessGate`
+ * above records dropped-message rows and DMs approvers on refusal, so it may
+ * only be evaluated when a sender actively engages. The accumulate path needs
+ * the same allow/deny decision WITHOUT those side effects, and uses this.
+ * Registered by the permissions module alongside `setAccessGate`.
+ */
+let accessCheck: AccessGateFn | null = null;
+
+export function setAccessCheck(fn: AccessGateFn): void {
+  accessCheck = fn;
+}
+
+/**
  * Fail closed on a half-installed permissions state. Modules register the
- * access gate as an import side effect (src/modules/index.js). If privilege
- * rows exist but no access gate is registered, the permissions module didn't
- * load and sender access would silently default to allow-all, ignoring every
- * owner/admin/member decision. Throw rather than run wide open. Zero roles is
+ * access gate as an import side effect (src/modules/index.js). If any privilege
+ * or membership rows exist but no access gate is registered, the permissions
+ * module didn't load and sender access would silently default to allow-all,
+ * ignoring every owner/admin/member decision. Throw rather than run wide open.
+ *
+ * `privilegedRowCount` must count BOTH user_roles AND agent_group_members — a
+ * members-only allowlist (0 roles) still expects enforcement. Zero of both is
  * the intended single-user allow-all case and passes.
  */
-export function assertAccessEnforcementWired(roleCount: number): void {
-  if (roleCount > 0 && !isAccessGateRegistered()) {
+export function assertAccessEnforcementWired(privilegedRowCount: number): void {
+  if (privilegedRowCount > 0 && !isAccessGateRegistered()) {
     throw new Error(
-      `Refusing to start: ${roleCount} user_roles row(s) exist but no access gate is registered ` +
-        '(permissions module not loaded). This would silently allow all senders. ' +
+      `Refusing to start: ${privilegedRowCount} user_roles/agent_group_members row(s) exist but no access ` +
+        'gate is registered (permissions module not loaded). This would silently allow all senders. ' +
         'Ensure src/modules/index.js imports the permissions module.',
     );
   }
@@ -343,18 +359,17 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
 
     const engages = evaluateEngage(agent, messageText, isMention, mg, event.threadId);
 
-    // Evaluate the access + sender-scope gates independent of engagement.
-    // These are security decisions about whether this sender may interact with
-    // the agent at all — not just whether they can trigger it. A non-engaging
-    // message from an unpermitted sender must NOT be accumulated: doing so
-    // stages their attachments to disk and feeds their text into the agent's
-    // context on the next engagement, which is exactly what a group's
-    // unknown_sender_policy='strict' (and sender_scope) are meant to prevent.
-    const accessAllowed = !accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed;
-    const scopeAllowed = !senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed;
-    const senderPermitted = accessAllowed && scopeAllowed;
+    // Engage path uses the SIDE-EFFECTING access gate: the permissions module
+    // records a dropped-message row and may DM an approver on refusal. That
+    // must fire only when a sender actively tries to ENGAGE (the pre-existing
+    // behavior), so it is evaluated only when `engages` — never for ambient
+    // non-engaging chatter.
+    const engageAllowed =
+      engages &&
+      (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed) &&
+      (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
 
-    if (engages && senderPermitted) {
+    if (engageAllowed) {
       await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, true);
       engagedCount++;
 
@@ -378,20 +393,29 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
           log.warn('adapter.subscribe failed', { channelType: event.channelType, threadId: event.threadId, err });
         });
       }
-    } else if (agent.ignored_message_policy === 'accumulate' && senderPermitted) {
-      // Accumulate stores the message as silent context so it's available when
-      // the agent does engage later. Only permitted senders reach here — an
-      // unknown/blocked sender (access gate) or a sender outside the wiring's
-      // sender_scope is dropped, not stored, whether or not they engaged.
-      await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, false);
-      accumulatedCount++;
+    } else if (agent.ignored_message_policy === 'accumulate') {
+      // Accumulate stores the message as silent context for a later engagement.
+      // Gate it on a PURE permission check (accessCheck) so an unknown/blocked
+      // sender's message is dropped, not stored (which would stage their
+      // attachments to disk and feed their text into the agent's context) —
+      // WITHOUT firing the engage-time side effects for ambient chatter.
+      const accumulateAllowed =
+        (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed) &&
+        (!accessCheck || accessCheck(event, userId, mg, agent.agent_group_id).allowed);
+      if (accumulateAllowed) {
+        await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, false);
+        accumulatedCount++;
+      } else {
+        log.debug('Accumulate skipped — sender not permitted', {
+          agentGroupId: agent.agent_group_id,
+          engage_mode: agent.engage_mode,
+        });
+      }
     } else {
       log.debug('Message not engaged for agent (drop policy)', {
         agentGroupId: agent.agent_group_id,
         engage_mode: agent.engage_mode,
         engages,
-        accessAllowed,
-        scopeAllowed,
       });
     }
   }

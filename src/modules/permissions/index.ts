@@ -20,6 +20,7 @@ import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { createMessagingGroupAgent, setMessagingGroupDeniedAt } from '../../db/messaging-groups.js';
 import {
   routeInbound,
+  setAccessCheck,
   setAccessGate,
   setChannelRequestGate,
   setMessageInterceptor,
@@ -170,25 +171,31 @@ function handleUnknownSender(
 
 setSenderResolver(extractAndUpsertUser);
 
-setAccessGate((event, userId, mg, agentGroupId): AccessGateResult => {
+/**
+ * Pure allow/deny decision — no side effects. Shared by the side-effecting
+ * access gate and the side-effect-free access check.
+ */
+function accessDecision(userId: string | null, mg: MessagingGroup, agentGroupId: string): AccessGateResult {
   // Public channels skip the access check entirely.
-  if (mg.unknown_sender_policy === 'public') {
-    return { allowed: true };
-  }
-
-  if (!userId) {
-    handleUnknownSender(mg, null, agentGroupId, 'unknown_user', event);
-    return { allowed: false, reason: 'unknown_user' };
-  }
-
+  if (mg.unknown_sender_policy === 'public') return { allowed: true };
+  if (!userId) return { allowed: false, reason: 'unknown_user' };
   const decision = canAccessAgentGroup(userId, agentGroupId);
-  if (decision.allowed) {
-    return { allowed: true };
-  }
+  return decision.allowed ? { allowed: true } : { allowed: false, reason: decision.reason };
+}
 
-  handleUnknownSender(mg, userId, agentGroupId, decision.reason, event);
-  return { allowed: false, reason: decision.reason };
+setAccessGate((event, userId, mg, agentGroupId): AccessGateResult => {
+  const decision = accessDecision(userId, mg, agentGroupId);
+  // Side effect on refusal: record the dropped message and (for
+  // request_approval policy) DM an approver. Fires only for engaging messages
+  // because the router only evaluates this gate when the sender engages.
+  if (!decision.allowed) {
+    handleUnknownSender(mg, userId, agentGroupId, decision.reason ?? 'unknown_user', event);
+  }
+  return decision;
 });
+
+// Side-effect-free decision for the accumulate path (see setAccessCheck).
+setAccessCheck((_event, userId, mg, agentGroupId): AccessGateResult => accessDecision(userId, mg, agentGroupId));
 
 /**
  * Per-wiring sender-scope enforcement. Stricter than the messaging-group

@@ -600,8 +600,8 @@ describe('router', () => {
     expect(rows[0].trigger).toBe(0);
   });
 
-  it('does NOT accumulate a non-engaging message when the access gate denies the sender', async () => {
-    const { routeInbound, setAccessGate } = await import('./router.js');
+  it('does NOT accumulate a non-engaging message when the sender is not permitted', async () => {
+    const { routeInbound, setAccessGate, setAccessCheck } = await import('./router.js');
     const { wakeContainer } = await import('./container-runner.js');
     (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
 
@@ -612,10 +612,12 @@ describe('router', () => {
     });
 
     // Deny every sender — models an unknown sender under a group whose
-    // unknown_sender_policy='strict'. Their non-mention message must be
-    // dropped, not stored as silent context (which would also stage any
-    // attachments to disk).
+    // unknown_sender_policy='strict'. The accumulate path consults the PURE
+    // access CHECK (not the side-effecting gate), so drive that. Their
+    // non-mention message must be dropped, not stored as silent context (which
+    // would also stage any attachments to disk).
     setAccessGate(() => ({ allowed: false, reason: 'unknown sender' }));
+    setAccessCheck(() => ({ allowed: false, reason: 'unknown sender' }));
     try {
       await routeInbound({
         channelType: 'discord',
@@ -633,9 +635,41 @@ describe('router', () => {
       // No session — and therefore no accumulated row — for the denied sender.
       expect(findSession('mg-1', null)).toBeUndefined();
     } finally {
-      // Restore permissive routing (default gate is null = allow) so the rest
+      // Restore permissive routing (default hooks are null = allow) so the rest
       // of this file's router tests are unaffected.
       setAccessGate(() => ({ allowed: true }));
+      setAccessCheck(() => ({ allowed: true }));
+    }
+  });
+
+  it('does not invoke the side-effecting access gate for a non-engaging message', async () => {
+    // The access gate has side effects (dropped-message rows, approval DMs), so
+    // it must fire only when a sender actively engages — never for ambient
+    // non-mention chatter, even when the wiring accumulates.
+    const { routeInbound, setAccessGate, setAccessCheck } = await import('./router.js');
+    const { wakeContainer } = await import('./container-runner.js');
+    (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
+    updateMessagingGroupAgent('mga-1', { engage_mode: 'mention', ignored_message_policy: 'accumulate' });
+
+    let gateCalls = 0;
+    setAccessGate(() => {
+      gateCalls++;
+      return { allowed: true };
+    });
+    setAccessCheck(() => ({ allowed: true }));
+    try {
+      await routeInbound({
+        channelType: 'discord',
+        platformId: 'chan-123',
+        threadId: null,
+        message: { id: 'msg-ambient', kind: 'chat', content: JSON.stringify({ text: 'ambient' }), timestamp: now() },
+      });
+      expect(gateCalls).toBe(0);
+    } finally {
+      setAccessGate(() => ({ allowed: true }));
+      setAccessCheck(() => ({ allowed: true }));
     }
   });
 
