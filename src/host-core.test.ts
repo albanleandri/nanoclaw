@@ -615,7 +615,7 @@ describe('router', () => {
     // unknown_sender_policy='strict'. Their non-mention message must be
     // dropped, not stored as silent context (which would also stage any
     // attachments to disk).
-    setAccessGate(() => ({ allowed: false }));
+    setAccessGate(() => ({ allowed: false, reason: 'unknown sender' }));
     try {
       await routeInbound({
         channelType: 'discord',

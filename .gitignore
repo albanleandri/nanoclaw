@@ -20,6 +20,8 @@ groups/*
 # Local handoff notes (may contain personal context)
 docs/HANDOFF.local.md
 docs/UPSTREAM_UPDATE_GUIDE.local.md
+# Audit reports enumerate live weaknesses — never commit to the public repo
+docs/AUDIT-*.local.md
 # Work artifacts (plans, specs, etc.) generated during sessions — ephemeral, not tracked
 docs/superpowers/
 **/.claude-shared.md
