@@ -6,11 +6,14 @@
  * correlate replies back to the originating session.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from '../db/connection.js';
 import { getUndeliveredMessages } from '../db/messages-out.js';
 import { setCurrentInReplyTo, clearCurrentInReplyTo } from '../current-batch.js';
-import { sendMessage } from './core.js';
+import { sendFile, sendMessage } from './core.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -46,5 +49,20 @@ describe('send_message MCP tool — in_reply_to plumbing', () => {
     const out = getUndeliveredMessages();
     expect(out).toHaveLength(1);
     expect(out[0].in_reply_to).toBeNull();
+  });
+});
+
+describe('send_file MCP tool — filename safety', () => {
+  it('rejects a traversal filename and writes nothing', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'send-file-'));
+    const src = path.join(tmp, 'real.txt');
+    fs.writeFileSync(src, 'data');
+
+    const result = await sendFile.handler({ to: 'peer', path: src, filename: '../escape.txt' });
+
+    expect(result.isError).toBe(true);
+    expect(getUndeliveredMessages()).toHaveLength(0);
+
+    fs.rmSync(tmp, { recursive: true });
   });
 });

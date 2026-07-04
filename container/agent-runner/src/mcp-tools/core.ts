@@ -170,6 +170,13 @@ export const sendFile: McpToolDefinition = {
 
     const id = generateId();
     const filename = (args.filename as string) || path.basename(resolvedPath);
+    // The filename is copied into the per-message outbox and recorded in the
+    // outbound files[] the host reads back by joining outboxRoot/<id>/<name>.
+    // Reject anything that isn't a bare basename so it can't escape the outbox
+    // dir (matches publish_agent_task_artifact's guard).
+    if (!filename || filename !== path.basename(filename) || filename === '.' || filename === '..') {
+      return err('filename is unsafe');
+    }
 
     const outboxDir = path.join('/workspace/outbox', id);
     fs.mkdirSync(outboxDir, { recursive: true });
