@@ -16,7 +16,14 @@ import type { Migration } from './index.js';
  * the append path is updated in tandem to filter the chain lookup by
  * agent_group_id.
  *
- * SQLite can't alter a table-level UNIQUE constraint in place, so rebuild the
+ * event_id was also a GLOBAL primary key, and it is derived from the
+ * container-controlled invocation_id (`capability-audit:<invocation_id>:<seq>`),
+ * so a reused event_id was a second cross-tenant collision vector (group B
+ * pre-inserting group A's event_id would block A on the PK). Re-key event_id
+ * per tenant too — UNIQUE(agent_group_id, event_id) on a rowid table — and the
+ * append idempotency check is scoped by agent_group_id in tandem.
+ *
+ * SQLite can't alter a table-level PRIMARY KEY / UNIQUE in place, so rebuild the
  * table (create → copy → drop → rename). No other table references
  * capability_audit_events, so the rebuild is FK-safe.
  */
@@ -26,7 +33,7 @@ export const migration031: Migration = {
   up(db: Database.Database) {
     db.exec(`
       CREATE TABLE capability_audit_events_new (
-        event_id        TEXT PRIMARY KEY,
+        event_id        TEXT NOT NULL,
         invocation_id   TEXT NOT NULL,
         seq             INTEGER NOT NULL,
         event_type      TEXT NOT NULL CHECK (event_type IN (
@@ -47,6 +54,7 @@ export const migration031: Migration = {
         usage_json      TEXT,
         created_at      TEXT NOT NULL,
         orchestration_run_id TEXT REFERENCES orchestration_runs(run_id) ON DELETE SET NULL,
+        UNIQUE(agent_group_id, event_id),
         UNIQUE(agent_group_id, invocation_id, seq)
       );
 

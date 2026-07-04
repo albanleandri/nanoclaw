@@ -48,9 +48,13 @@ export function appendCapabilityAuditEvent(event: CapabilityAuditEvent): void {
   if (event.durationMs !== undefined && (!Number.isInteger(event.durationMs) || event.durationMs < 0)) {
     throw new Error('Invalid capability audit duration');
   }
-  const existing = getDb().prepare('SELECT * FROM capability_audit_events WHERE event_id = ?').get(event.eventId) as
-    | Record<string, unknown>
-    | undefined;
+  // Scope the idempotency lookup to the owning agent group: event_id is
+  // derived from the container-controlled invocation_id, and uniqueness is now
+  // keyed per tenant (migration 031), so a global lookup would let one group's
+  // event_id block or shadow another group's append.
+  const existing = getDb()
+    .prepare('SELECT * FROM capability_audit_events WHERE agent_group_id = ? AND event_id = ?')
+    .get(event.agentGroupId, event.eventId) as Record<string, unknown> | undefined;
   if (existing) {
     if (
       existing.invocation_id !== event.invocationId ||
