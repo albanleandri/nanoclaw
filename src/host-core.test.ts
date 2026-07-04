@@ -164,6 +164,53 @@ describe('session manager', () => {
     expect(fs.existsSync(msgOutbox)).toBe(false);
   });
 
+  it('should reject an outbox declaration above the attachment count limit', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const msgOutbox = path.join(sessionDir('ag-1', 'sess-test'), 'outbox', 'msg-1');
+    fs.mkdirSync(msgOutbox, { recursive: true });
+    fs.writeFileSync(path.join(msgOutbox, 'a.txt'), 'a');
+    fs.writeFileSync(path.join(msgOutbox, 'b.txt'), 'b');
+
+    expect(() =>
+      readOutboxFiles('ag-1', 'sess-test', 'msg-1', ['a.txt', 'b.txt'], {
+        maxFiles: 1,
+        maxFileBytes: 10,
+        maxTotalBytes: 10,
+      }),
+    ).toThrow(/too many outbox attachments/i);
+  });
+
+  it('should reject an outbox file before reading when it exceeds the per-file limit', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const msgOutbox = path.join(sessionDir('ag-1', 'sess-test'), 'outbox', 'msg-1');
+    fs.mkdirSync(msgOutbox, { recursive: true });
+    fs.writeFileSync(path.join(msgOutbox, 'large.txt'), '12345');
+
+    expect(() =>
+      readOutboxFiles('ag-1', 'sess-test', 'msg-1', ['large.txt'], {
+        maxFiles: 2,
+        maxFileBytes: 4,
+        maxTotalBytes: 10,
+      }),
+    ).toThrow(/exceeds per-file limit/i);
+  });
+
+  it('should reject outbox files before aggregate allocation exceeds the total limit', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const msgOutbox = path.join(sessionDir('ag-1', 'sess-test'), 'outbox', 'msg-1');
+    fs.mkdirSync(msgOutbox, { recursive: true });
+    fs.writeFileSync(path.join(msgOutbox, 'a.txt'), '1234');
+    fs.writeFileSync(path.join(msgOutbox, 'b.txt'), '5678');
+
+    expect(() =>
+      readOutboxFiles('ag-1', 'sess-test', 'msg-1', ['a.txt', 'b.txt'], {
+        maxFiles: 2,
+        maxFileBytes: 4,
+        maxTotalBytes: 7,
+      }),
+    ).toThrow(/exceeds aggregate limit/i);
+  });
+
   it('should reject inbound attachment writes through a pre-placed symlinked inbox dir', () => {
     initSessionFolder('ag-1', 'sess-test');
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');

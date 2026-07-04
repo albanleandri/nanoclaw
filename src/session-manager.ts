@@ -486,15 +486,63 @@ export function writeSystemResponse(
  * its `messages_out` row, and the host reads them back at delivery time.
  *
  * Returns undefined when the outbox dir is missing or no declared file was
- * actually on disk — delivery continues without attachments rather than
- * failing the whole message.
+ * actually on disk. Limit and consistency violations throw so delivery does
+ * not silently omit an attachment the container declared.
  */
+export interface OutboxReadLimits {
+  readonly maxFiles: number;
+  readonly maxFileBytes: number;
+  readonly maxTotalBytes: number;
+}
+
+export const DEFAULT_OUTBOX_READ_LIMITS: Readonly<OutboxReadLimits> = Object.freeze({
+  maxFiles: 16,
+  maxFileBytes: 25 * 1024 * 1024,
+  maxTotalBytes: 50 * 1024 * 1024,
+});
+
+class OutboxReadRejectedError extends Error {}
+
+function validateOutboxReadLimits(limits: OutboxReadLimits): void {
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new TypeError(`Invalid outbox read limit ${name}: ${value}`);
+    }
+  }
+}
+
+function readOpenedOutboxFile(fd: number, size: number): Buffer {
+  const data = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const bytesRead = fs.readSync(fd, data, offset, size - offset, null);
+    if (bytesRead === 0) {
+      throw new OutboxReadRejectedError('Outbox attachment changed while being read');
+    }
+    offset += bytesRead;
+  }
+
+  const extra = Buffer.allocUnsafe(1);
+  if (fs.readSync(fd, extra, 0, 1, null) !== 0) {
+    throw new OutboxReadRejectedError('Outbox attachment changed while being read');
+  }
+  return data;
+}
+
 export function readOutboxFiles(
   agentGroupId: string,
   sessionId: string,
   messageId: string,
   filenames: string[],
+  limits: OutboxReadLimits = DEFAULT_OUTBOX_READ_LIMITS,
 ): OutboundFile[] | undefined {
+  validateOutboxReadLimits(limits);
+  if (filenames.length > limits.maxFiles) {
+    throw new OutboxReadRejectedError(
+      `Too many outbox attachments: ${filenames.length} exceeds limit ${limits.maxFiles}`,
+    );
+  }
+
   if (!isSafeAttachmentName(messageId)) {
     log.warn('Rejecting unsafe outbox message id', { messageId });
     return undefined;
@@ -517,6 +565,7 @@ export function readOutboxFiles(
   }
 
   const files: OutboundFile[] = [];
+  let totalBytes = 0;
   for (const filename of filenames) {
     if (!isSafeAttachmentName(filename)) {
       log.warn('Refused unsafe outbox filename, would escape outbox', { messageId, filename });
@@ -525,8 +574,8 @@ export function readOutboxFiles(
 
     const filePath = path.join(outboxDir, filename);
     try {
-      const stat = fs.lstatSync(filePath);
-      if (!stat.isFile() || stat.isSymbolicLink()) {
+      const pathStat = fs.lstatSync(filePath);
+      if (!pathStat.isFile() || pathStat.isSymbolicLink()) {
         log.warn('Rejecting unsafe outbox file', { messageId, filename });
         continue;
       }
@@ -535,8 +584,30 @@ export function readOutboxFiles(
         log.warn('Rejecting outbox file outside message directory', { messageId, filename });
         continue;
       }
-      files.push({ filename, data: fs.readFileSync(realFilePath) });
-    } catch {
+
+      const fd = fs.openSync(realFilePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const openedStat = fs.fstatSync(fd);
+        if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+          throw new OutboxReadRejectedError('Outbox attachment changed before it could be read');
+        }
+        if (openedStat.size > limits.maxFileBytes) {
+          throw new OutboxReadRejectedError(
+            `Outbox attachment exceeds per-file limit: ${filename} is ${openedStat.size} bytes`,
+          );
+        }
+        if (totalBytes + openedStat.size > limits.maxTotalBytes) {
+          throw new OutboxReadRejectedError(`Outbox attachment exceeds aggregate limit ${limits.maxTotalBytes} bytes`);
+        }
+
+        const data = readOpenedOutboxFile(fd, openedStat.size);
+        totalBytes += data.length;
+        files.push({ filename, data });
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch (err) {
+      if (err instanceof OutboxReadRejectedError) throw err;
       log.warn('Outbox file not found', { messageId, filename });
     }
   }

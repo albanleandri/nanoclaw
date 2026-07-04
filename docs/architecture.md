@@ -316,7 +316,8 @@ drains of the same session.
 Files produced by an agent live under `outbox/<message-id>/`. Outbound DB
 content contains filenames, not host paths. The host validates and reads those
 files, passes buffers to the adapter, and removes the outbox directory after
-successful delivery.
+successful delivery. Reads are anchored to an opened regular-file descriptor
+and bounded to 16 files, 25 MiB per file, and 50 MiB total per message.
 
 ## Host actions and tools
 
