@@ -32,12 +32,35 @@ export async function startCliServer(socketPath: string = DEFAULT_SOCKET_PATH): 
   const s = net.createServer((conn) => handleConnection(conn));
   server = s;
   await new Promise<void>((resolve, reject) => {
-    s.once('error', reject);
+    // Restrict permissions at socket CREATION time, not after listen()
+    // returns. Binding creates the socket file using the process umask, so a
+    // post-hoc chmod leaves a window where another local user could connect
+    // to a world-accessible socket — and a host-caller frame bypasses every
+    // scope/approval check in dispatch. 0o666 & ~0o177 = 0o600 (owner-only).
+    const prevMask = process.umask(0o177);
+    let maskRestored = false;
+    const restoreMask = (): void => {
+      if (maskRestored) return;
+      maskRestored = true;
+      process.umask(prevMask);
+    };
+    s.once('error', (err) => {
+      restoreMask();
+      reject(err);
+    });
     s.listen(socketPath, () => {
+      restoreMask();
+      // Belt-and-suspenders: tighten explicitly and fail CLOSED if we cannot
+      // guarantee owner-only permissions, rather than serving an unprotected
+      // privileged socket.
       try {
         fs.chmodSync(socketPath, 0o600);
       } catch (err) {
-        log.warn('Failed to chmod ncl socket (continuing)', { socketPath, err });
+        log.error('Failed to secure ncl socket permissions; refusing to serve', { socketPath, err });
+        s.close();
+        server = null;
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
       }
       log.info('ncl CLI server listening', { socketPath });
       resolve();
