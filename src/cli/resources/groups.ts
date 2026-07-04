@@ -1,5 +1,6 @@
 import type { McpServerConfig } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
+import { validatePackageName } from '../../package-names.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getSession } from '../../db/sessions.js';
@@ -383,6 +384,8 @@ registerResource({
         const apt = args.apt as string | undefined;
         const npm = args.npm as string | undefined;
         if (!apt && !npm) throw new Error('Provide --apt <pkg> or --npm <pkg>');
+        if (apt) validatePackageName('apt', apt);
+        if (npm) validatePackageName('npm', npm);
 
         if (apt) {
           const existing = JSON.parse(row.packages_apt) as string[];

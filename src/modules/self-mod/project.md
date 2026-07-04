@@ -21,6 +21,11 @@ the approval handler itself — there is no separate "request rebuild" step.
     No image rebuild — bun runs TS directly, so the new MCP wiring is
     picked up on the next container start.
 
+Package names are revalidated when the request arrives, when approval is
+applied, on direct CLI configuration changes, and immediately before rendering
+the build Dockerfile. The Docker build itself uses an argument-vector process
+call rather than a shell command.
+
 ## Dependency
 
 Self-mod depends on the approvals default module for:

@@ -218,3 +218,48 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
     expect((resp as { ok: false; error: { code: string; message: string } }).error.message).toMatch(/not found/i);
   });
 });
+
+describe('groups CLI package validation', () => {
+  beforeEach(() => {
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+    const db = initTestDb();
+    runMigrations(db);
+    createAgentGroup({
+      id: 'ag-packages',
+      name: 'packages',
+      folder: 'packages',
+      agent_provider: null,
+      created_at: now(),
+    });
+    db.prepare(
+      `INSERT INTO container_configs
+         (agent_group_id, skills, mcp_servers, packages_apt, packages_npm,
+          additional_mounts, shared_resources, cli_scope, updated_at)
+       VALUES (?, '"all"', '{}', '[]', '[]', '[]', '[]', 'group', ?)`,
+    ).run('ag-packages', now());
+  });
+
+  afterEach(() => {
+    closeDb();
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('rejects shell-active package names before storing them', async () => {
+    const response = await dispatch(
+      {
+        id: 'req-package',
+        command: 'groups-config-add-package',
+        args: { id: 'ag-packages', npm: 'left-pad; touch /tmp/pwned' },
+      },
+      { caller: 'host' },
+    );
+
+    expect(response.ok).toBe(false);
+    expect(
+      getDb().prepare('SELECT packages_npm FROM container_configs WHERE agent_group_id = ?').get('ag-packages'),
+    ).toEqual({
+      packages_npm: '[]',
+    });
+  });
+});

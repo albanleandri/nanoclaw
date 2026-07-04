@@ -14,6 +14,7 @@
  */
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
+import { MAX_PACKAGES_PER_REQUEST, validatePackageLists } from '../../package-names.js';
 import type { Session } from '../../types.js';
 import { notifyAgent, requestApproval } from '../approvals/index.js';
 
@@ -24,33 +25,20 @@ export async function handleInstallPackages(content: Record<string, unknown>, se
     return;
   }
 
-  const apt = (content.apt as string[]) || [];
-  const npm = (content.npm as string[]) || [];
+  let apt: string[];
+  let npm: string[];
+  try {
+    ({ apt, npm } = validatePackageLists(content.apt ?? [], content.npm ?? [], {
+      requireOne: true,
+      maxCount: MAX_PACKAGES_PER_REQUEST,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid package request';
+    notifyAgent(session, `install_packages failed: ${message}.`);
+    log.warn('install_packages: invalid package request rejected', { error: message });
+    return;
+  }
   const reason = (content.reason as string) || '';
-
-  const APT_RE = /^[a-z0-9][a-z0-9._+-]*$/;
-  const NPM_RE = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
-  const MAX_PACKAGES = 20;
-  if (apt.length + npm.length === 0) {
-    notifyAgent(session, 'install_packages failed: at least one apt or npm package is required.');
-    return;
-  }
-  if (apt.length + npm.length > MAX_PACKAGES) {
-    notifyAgent(session, `install_packages failed: max ${MAX_PACKAGES} packages per request.`);
-    return;
-  }
-  const invalidApt = apt.find((p) => !APT_RE.test(p));
-  if (invalidApt !== undefined) {
-    notifyAgent(session, `install_packages failed: invalid apt package name "${invalidApt}".`);
-    log.warn('install_packages: invalid apt package rejected', { pkg: invalidApt });
-    return;
-  }
-  const invalidNpm = npm.find((p) => !NPM_RE.test(p));
-  if (invalidNpm !== undefined) {
-    notifyAgent(session, `install_packages failed: invalid npm package name "${invalidNpm}".`);
-    log.warn('install_packages: invalid npm package rejected', { pkg: invalidNpm });
-    return;
-  }
 
   const packageList = [...apt.map((p) => `apt: ${p}`), ...npm.map((p) => `npm: ${p}`)].join(', ');
   await requestApproval({

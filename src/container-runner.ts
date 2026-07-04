@@ -3,7 +3,7 @@
  * Spawns agent containers with session folder + agent group folder mounts.
  * The container runs the v2 agent-runner which polls the session DB.
  */
-import { ChildProcess, execSync, spawn } from 'child_process';
+import { ChildProcess, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -51,6 +51,7 @@ import { log } from './log.js';
 import { readEnvFileByPrefix } from './env.js';
 import { ensureRtkClaudeHook } from './rtk.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
+import { validatePackageLists } from './package-names.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
 import './providers/index.js';
@@ -720,8 +721,10 @@ export async function buildAgentGroupImage(agentGroupId: string): Promise<void> 
 
   const configRow = getContainerConfig(agentGroup.id);
   if (!configRow) throw new Error('Container config not found');
-  const aptPackages = JSON.parse(configRow.packages_apt) as string[];
-  const npmPackages = JSON.parse(configRow.packages_npm) as string[];
+  const { apt: aptPackages, npm: npmPackages } = validatePackageLists(
+    JSON.parse(configRow.packages_apt),
+    JSON.parse(configRow.packages_npm),
+  );
   if (aptPackages.length === 0 && npmPackages.length === 0) {
     throw new Error('No packages to install. Use install_packages first.');
   }
@@ -748,7 +751,7 @@ export async function buildAgentGroupImage(agentGroupId: string): Promise<void> 
   const tmpDockerfile = path.join(DATA_DIR, `Dockerfile.${agentGroupId}`);
   fs.writeFileSync(tmpDockerfile, dockerfile);
   try {
-    execSync(`${CONTAINER_RUNTIME_BIN} build -t ${imageTag} -f ${tmpDockerfile} .`, {
+    execFileSync(CONTAINER_RUNTIME_BIN, ['build', '-t', imageTag, '-f', tmpDockerfile, '.'], {
       cwd: DATA_DIR,
       stdio: 'pipe',
       timeout: 900_000,

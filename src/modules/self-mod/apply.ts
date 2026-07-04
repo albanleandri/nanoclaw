@@ -16,6 +16,7 @@ import { getContainerConfig, updateContainerConfigJson } from '../../db/containe
 import { getSession } from '../../db/sessions.js';
 import type { McpServerConfig } from '../../container-config.js';
 import { log } from '../../log.js';
+import { MAX_PACKAGES_PER_REQUEST, validatePackageLists } from '../../package-names.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { ApprovalHandler } from '../approvals/index.js';
 
@@ -32,26 +33,17 @@ export const applyInstallPackages: ApprovalHandler = async ({ session, payload, 
     return;
   }
 
-  // Append new packages to existing lists in the DB (deduplicated)
-  if (payload.apt) {
-    const existing = JSON.parse(configRow.packages_apt) as string[];
-    for (const pkg of payload.apt as string[]) {
-      if (!existing.includes(pkg)) existing.push(pkg);
-    }
-    updateContainerConfigJson(agentGroup.id, 'packages_apt', existing);
-  }
-  if (payload.npm) {
-    const existing = JSON.parse(configRow.packages_npm) as string[];
-    for (const pkg of payload.npm as string[]) {
-      if (!existing.includes(pkg)) existing.push(pkg);
-    }
-    updateContainerConfigJson(agentGroup.id, 'packages_npm', existing);
-  }
+  const requested = validatePackageLists(payload.apt ?? [], payload.npm ?? [], {
+    requireOne: true,
+    maxCount: MAX_PACKAGES_PER_REQUEST,
+  });
+  const existing = validatePackageLists(JSON.parse(configRow.packages_apt), JSON.parse(configRow.packages_npm));
+  const apt = [...new Set([...existing.apt, ...requested.apt])];
+  const npm = [...new Set([...existing.npm, ...requested.npm])];
+  updateContainerConfigJson(agentGroup.id, 'packages_apt', apt);
+  updateContainerConfigJson(agentGroup.id, 'packages_npm', npm);
 
-  const pkgs = [
-    ...((payload.apt as string[] | undefined) || []),
-    ...((payload.npm as string[] | undefined) || []),
-  ].join(', ');
+  const pkgs = [...requested.apt, ...requested.npm].join(', ');
   log.info('Package install approved', { agentGroupId: session.agent_group_id, userId });
   try {
     await buildAgentGroupImage(session.agent_group_id);
