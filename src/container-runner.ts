@@ -25,6 +25,7 @@ import {
   CONTAINER_MEMORY_LIMIT,
   DATA_DIR,
   GROUPS_DIR,
+  MAX_CONCURRENT_CONTAINERS,
   ONECLI_API_KEY,
   ONECLI_URL,
   TIMEZONE,
@@ -84,9 +85,27 @@ const activeContainers = new Map<string, { process: ChildProcess; containerName:
  * a duplicate container against the same session directory, producing
  * racy double-replies.
  */
-export type WakeContainerResult = { status: 'already-running' | 'started' } | { status: 'failed'; error: string };
+export type WakeContainerResult =
+  | { status: 'already-running' | 'started' }
+  | { status: 'capacity' }
+  | { status: 'failed'; error: string };
 
 const wakePromises = new Map<string, Promise<WakeContainerResult>>();
+const wakeReservations = new Set<string>();
+
+export function tryReserveContainerSlot(
+  sessionId: string,
+  activeSessionIds: Iterable<string>,
+  reservations: Set<string>,
+  limit: number,
+): boolean {
+  if (reservations.has(sessionId)) return true;
+  const admitted = new Set(activeSessionIds);
+  for (const reserved of reservations) admitted.add(reserved);
+  if (admitted.size >= limit) return false;
+  reservations.add(sessionId);
+  return true;
+}
 
 export function getActiveContainerCount(): number {
   return activeContainers.size;
@@ -134,15 +153,15 @@ export function computeRuntimeShadow(
  *
  * The container runs the v2 agent-runner which polls the session DB.
  *
- * Contract: never throws. Returns `true` on successful spawn, `false` on
- * transient spawn failure (e.g. OneCLI gateway unreachable). Callers don't
- * need to wrap — the inbound row stays pending and host-sweep retries on
- * its next tick. Callers that care (e.g. the router's typing indicator)
- * can branch on the boolean.
+ * Contract: never throws. Returns `true` when running/started, `false` on a
+ * transient spawn failure or capacity deferral. Callers don't need to wrap —
+ * the inbound row stays pending and host-sweep retries on its next tick.
+ * Callers that care (e.g. the router's typing indicator) can branch on the
+ * boolean.
  */
 export async function wakeContainer(session: Session): Promise<boolean> {
   const result = await wakeContainerWithResult(session);
-  return result.status !== 'failed';
+  return result.status === 'already-running' || result.status === 'started';
 }
 
 export function wakeContainerWithResult(session: Session): Promise<WakeContainerResult> {
@@ -155,6 +174,15 @@ export function wakeContainerWithResult(session: Session): Promise<WakeContainer
     log.debug('Container wake already in-flight — joining existing promise', { sessionId: session.id });
     return existing;
   }
+  if (!tryReserveContainerSlot(session.id, activeContainers.keys(), wakeReservations, MAX_CONCURRENT_CONTAINERS)) {
+    log.info('Container wake deferred at concurrency limit', {
+      sessionId: session.id,
+      limit: MAX_CONCURRENT_CONTAINERS,
+      active: activeContainers.size,
+      reserved: wakeReservations.size,
+    });
+    return Promise.resolve({ status: 'capacity' });
+  }
   const promise = spawnContainer(session)
     .then((): WakeContainerResult => ({ status: 'started' }))
     .catch((err): WakeContainerResult => {
@@ -163,6 +191,7 @@ export function wakeContainerWithResult(session: Session): Promise<WakeContainer
     })
     .finally(() => {
       wakePromises.delete(session.id);
+      wakeReservations.delete(session.id);
     });
   wakePromises.set(session.id, promise);
   return promise;

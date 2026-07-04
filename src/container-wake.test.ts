@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDb, initTestDb, runMigrations } from './db/index.js';
-import { wakeContainerWithResult } from './container-runner.js';
+import { tryReserveContainerSlot, wakeContainerWithResult } from './container-runner.js';
 import type { Session } from './types.js';
 
 beforeEach(() => {
@@ -29,5 +29,22 @@ describe('wakeContainerWithResult', () => {
       status: 'failed',
       error: 'Agent group not found: missing-agent-group',
     });
+  });
+});
+
+describe('container admission reservations', () => {
+  it('atomically reserves distinct sessions up to the configured limit', () => {
+    const reservations = new Set<string>();
+
+    expect(tryReserveContainerSlot('session-b', ['session-a'], reservations, 2)).toBe(true);
+    expect(tryReserveContainerSlot('session-c', ['session-a'], reservations, 2)).toBe(false);
+    expect(reservations).toEqual(new Set(['session-b']));
+  });
+
+  it('counts the union of active and reserved sessions without double-counting a started reservation', () => {
+    const reservations = new Set(['session-a']);
+
+    expect(tryReserveContainerSlot('session-b', ['session-a'], reservations, 2)).toBe(true);
+    expect(reservations).toEqual(new Set(['session-a', 'session-b']));
   });
 });

@@ -259,9 +259,12 @@ whether work is stale. It does not rely on an in-process idle timer. A fresh
 container receives a full processing window even when it picks up old
 backlog.
 
-`MAX_CONCURRENT_CONTAINERS` limits active sessions. Optional CPU/memory limits
-become Docker `--cpus`/`--memory` arguments. Optional egress lockdown places
-containers on an internal network whose permitted gateway is OneCLI.
+`MAX_CONCURRENT_CONTAINERS` limits the union of active sessions and in-flight
+spawn reservations. Admission is reserved synchronously before asynchronous
+container setup; work deferred at capacity stays pending for a later sweep.
+Optional CPU/memory limits become Docker `--cpus`/`--memory` arguments.
+Optional egress lockdown places containers on an internal network whose
+permitted gateway is OneCLI.
 
 ## Runner poll loop
 
