@@ -27,6 +27,7 @@ import { migration027 } from './027-orchestration-runs.js';
 import { migration028 } from './028-orchestration-lifecycle.js';
 import { migration029 } from './029-orchestration-fallback.js';
 import { migration030 } from './030-orchestration-execution-sessions.js';
+import { migration031 } from './031-capability-audit-tenant-scope.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 
@@ -65,6 +66,7 @@ export const migrations: readonly Migration[] = [
   migration028,
   migration029,
   migration030,
+  migration031,
 ];
 
 export function runMigrations(db: Database.Database, plan: readonly Migration[] = migrations): void {

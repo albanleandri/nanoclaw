@@ -63,12 +63,17 @@ export function appendCapabilityAuditEvent(event: CapabilityAuditEvent): void {
     }
     return;
   }
+  // Scope the chain lookup to the owning agent group. invocation_id is chosen
+  // by the caller while agent_group_id is stamped from the trusted session, so
+  // an unscoped lookup would let one group's events chain onto (or block)
+  // another group's invocation timeline. Uniqueness is likewise keyed on
+  // (agent_group_id, invocation_id, seq) — see migration 031.
   const previous = getDb()
     .prepare(
       `SELECT seq, event_type FROM capability_audit_events
-       WHERE invocation_id = ? ORDER BY seq DESC LIMIT 1`,
+       WHERE agent_group_id = ? AND invocation_id = ? ORDER BY seq DESC LIMIT 1`,
     )
-    .get(event.invocationId) as { seq: number; event_type: CapabilityAuditEventType } | undefined;
+    .get(event.agentGroupId, event.invocationId) as { seq: number; event_type: CapabilityAuditEventType } | undefined;
   if (!previous && (event.seq !== 1 || event.eventType !== 'requested')) {
     throw new Error('Capability audit invocation must begin with requested sequence 1');
   }
