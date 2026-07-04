@@ -15,6 +15,21 @@ export type AuxiliaryExecutor = (
   signal: AbortSignal,
 ) => Promise<Omit<AuxiliaryResult, 'invocationId'>>;
 
+/**
+ * Durable auxiliary-invocation executor.
+ *
+ * STATUS: staged scaffolding — NOT yet wired to any production caller. The
+ * `ncl auxiliary-routes` config surface (migration 023, src/db/auxiliary-routes)
+ * is live, but nothing dispatches an invocation through this function outside
+ * tests. See docs/db-central.md §1.19.
+ *
+ * ⚠ SECURITY PRECONDITION before exposing this to a container-facing delivery
+ * action or MCP tool: `request.sourceAgentGroupId` / `sourceSessionId` and the
+ * `target` override are trusted verbatim here (validateAuxiliaryRequest only
+ * checks they are non-empty). A container could otherwise impersonate another
+ * group or override its configured route. Stamp source from the trusted session
+ * and drop the caller-supplied `target` at the wiring boundary first.
+ */
 export async function executeAuxiliaryInvocation(input: {
   request: AuxiliaryRequest;
   currentRuntime: EffectiveRuntimeSelection;

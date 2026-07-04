@@ -383,7 +383,11 @@ Migration 023 adds `auxiliary_routes` and `auxiliary_invocations`.
 nullable columns for `main`, `endpoint-profile`, `agent`, and `disabled`
 targets. `auxiliary_invocations` relates a `jobs.type='auxiliary_invocation'`
 row to its resolved target/runtime, optional isolated session, and normalized
-usage.
+usage. Note: the route **config** surface (`ncl auxiliary-routes`) is live, but
+the invocation **execution** path (`executeAuxiliaryInvocation` in
+`src/auxiliary/service.ts`) is staged scaffolding with no production caller yet —
+see the security precondition documented on that function before wiring it to a
+container-facing path.
 
 Migration 024 adds `session_search_documents` plus the external-content
 `session_search_fts` FTS5 table and synchronization triggers. Documents are
