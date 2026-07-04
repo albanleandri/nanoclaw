@@ -458,17 +458,17 @@ the source session.
 
 Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMigrations()` in `src/db/migrations/index.ts`. It:
 
-1. Creates `schema_version` if absent.
-2. Reads `MAX(version)` — call it `current`.
-3. For each migration with `version > current`, executes `up(db)` inside a transaction and appends a `schema_version` row.
+1. Creates `schema_version` if absent (with a unique index on `name`).
+2. Reads the set of already-applied migration **`name`s** from `schema_version`.
+3. For each migration in the barrel array whose `name` is not yet applied, executes `up(db)` inside a transaction and appends a `schema_version` row. The stored `version` column is an auto-assigned applied-order counter (`MAX(version)+1`), **not** the `version` field on the migration object — uniqueness is keyed on `name`, so module migrations added by install skills can pick arbitrary version numbers without coordinating.
 
 | #   | File                                      | Introduces                                                                                                                                                           |
 | --- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 001 | `001-initial.ts`                          | Core tables: `agent_groups`, `messaging_groups`, `messaging_group_agents`, `users`, `user_roles`, `agent_group_members`, `user_dms`, `sessions`, `pending_questions` |
 | 002 | `002-chat-sdk-state.ts`                   | `chat_sdk_kv`, `chat_sdk_subscriptions`, `chat_sdk_locks`, `chat_sdk_lists`                                                                                          |
-| 003 | `003-pending-approvals.ts`                | `pending_approvals` (session-bound + OneCLI fields)                                                                                                                  |
-| 004 | `004-agent-destinations.ts`               | `agent_destinations` + backfill from existing `messaging_group_agents` wirings                                                                                       |
-| 007 | `007-pending-approvals-title-options.ts`  | `ALTER TABLE pending_approvals` add `title`, `options_json` (retrofits DBs created between 003 and 007)                                                              |
+| mod | `module-approvals-pending-approvals.ts`   | `pending_approvals` (session-bound + OneCLI fields). Name-keyed module migration (`name: pending-approvals`), applied after 002.                                     |
+| mod | `module-agent-to-agent-destinations.ts`   | `agent_destinations` + backfill from existing `messaging_group_agents` wirings (`name: agent-destinations`)                                                          |
+| mod | `module-approvals-title-options.ts`       | `ALTER TABLE pending_approvals` add `title`, `options_json` (`name: pending-approvals-title-options`)                                                                |
 | 008 | `008-dropped-messages.ts`                 | `unregistered_senders`                                                                                                                                               |
 | 009 | `009-drop-pending-credentials.ts`         | Drop the defunct `pending_credentials` table                                                                                                                         |
 | 014 | `014-container-configs.ts`                | `container_configs` — per-agent-group container runtime config                                                                                                       |
@@ -484,7 +484,8 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 028 | `028-orchestration-lifecycle.ts`          | Attempt leases, cancellation, session authorization snapshots, and capability-audit correlation                                                                      |
 | 029 | `029-orchestration-fallback.ts`           | Durable fallback compatibility/side-effect facts and append-only candidate decisions                                                                                 |
 | 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
+| 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                 |
 
-Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
+Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 
 Session DB schemas (`INBOUND_SCHEMA`, `OUTBOUND_SCHEMA`) are **not** versioned here. They're `CREATE TABLE IF NOT EXISTS` so new columns land via the session-DB lazy migration helpers (`migrateDeliveredTable()` etc.) when a session file from an older build is reopened. See [db-session.md](db-session.md).
