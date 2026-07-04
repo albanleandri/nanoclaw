@@ -335,6 +335,10 @@ async function deliverMessage(
     return;
   }
 
+  if (!msg.channel_type || !msg.platform_id) {
+    throw new Error(`Message ${msg.id} is missing channel delivery routing`);
+  }
+
   // Permission check: the source agent must be allowed to deliver to this
   // channel destination. Two ways it passes:
   //
@@ -351,9 +355,7 @@ async function deliverMessage(
   // path in deliverSessionMessages and eventually marks the message as failed
   // (instead of marking it delivered when nothing was actually delivered,
   // which was the pre-refactor bug).
-  if (msg.channel_type && msg.platform_id) {
-    authorizeChannelDestination(session, msg.channel_type, msg.platform_id);
-  }
+  authorizeChannelDestination(session, msg.channel_type, msg.platform_id);
 
   // Track pending questions for ask_user_question flow.
   // Guarded: without the interactive module, `pending_questions` doesn't
@@ -382,12 +384,6 @@ async function deliverMessage(
         log.info('Pending question created', { questionId: content.questionId, sessionId: session.id });
       }
     }
-  }
-
-  // Channel delivery
-  if (!msg.channel_type || !msg.platform_id) {
-    log.warn('Message missing routing fields', { id: msg.id });
-    return;
   }
 
   // Read file attachments from outbox if the content declares files.

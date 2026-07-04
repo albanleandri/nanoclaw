@@ -309,6 +309,10 @@ Outbound rows are immutable. The host:
 5. records `delivered` or `failed` in the inbound delivery ledger;
 6. records orchestration delivery completion where applicable.
 
+Missing channel routing and inactive channel adapters are delivery failures:
+they retry and eventually enter the failed ledger instead of being
+acknowledged as delivered.
+
 Host-generated control responses, including command denials, go directly
 through the destination adapter instead of being inserted into the
 container-owned outbound database.

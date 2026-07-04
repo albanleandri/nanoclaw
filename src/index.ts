@@ -7,6 +7,7 @@
 import path from 'path';
 
 import { backfillContainerConfigs } from './backfill-container-configs.js';
+import { createChannelDeliveryBridge } from './channel-delivery-bridge.js';
 import { DATA_DIR } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
@@ -161,32 +162,7 @@ async function main(): Promise<void> {
   });
 
   // 4. Delivery adapter bridge — dispatches to channel adapters
-  const deliveryAdapter = {
-    async deliver(
-      channelType: string,
-      platformId: string,
-      threadId: string | null,
-      kind: string,
-      content: string,
-      files?: import('./channels/adapter.js').OutboundFile[],
-    ): Promise<string | undefined> {
-      const adapter = getChannelAdapter(channelType);
-      if (!adapter) {
-        log.warn('No adapter for channel type', { channelType });
-        return;
-      }
-      return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
-    },
-    async setTyping(channelType: string, platformId: string, threadId: string | null): Promise<void> {
-      const adapter = getChannelAdapter(channelType);
-      await adapter?.setTyping?.(platformId, threadId);
-    },
-    async sendStatus(channelType: string, platformId: string, threadId: string | null, text: string): Promise<void> {
-      const adapter = getChannelAdapter(channelType);
-      await adapter?.deliver(platformId, threadId, { kind: 'chat', content: { text } });
-    },
-  };
-  setDeliveryAdapter(deliveryAdapter);
+  setDeliveryAdapter(createChannelDeliveryBridge());
 
   // 5. Start delivery polls
   startActiveDeliveryPoll();

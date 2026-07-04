@@ -157,6 +157,34 @@ describe('deliverSessionMessages — concurrent invocations', () => {
 });
 
 describe('deliverSessionMessages — retry and permanent failure', () => {
+  it('retries missing routing data and records failure instead of false delivery', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    const outDb = new Database(outboundDbPath('ag-1', session.id));
+    outDb
+      .prepare(
+        `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
+         VALUES ('out-no-route', datetime('now'), 'chat', NULL, NULL, '{"text":"hello"}')`,
+      )
+      .run();
+    outDb.close();
+
+    const deliver = vi.fn();
+    setDeliveryAdapter({ deliver });
+
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+    await deliverSessionMessages(session);
+
+    expect(deliver).not.toHaveBeenCalled();
+    const inDb = openInboundDb('ag-1', session.id);
+    const result = inDb.prepare("SELECT status FROM delivered WHERE message_out_id = 'out-no-route'").get() as {
+      status: string;
+    };
+    inDb.close();
+    expect(result.status).toBe('failed');
+  });
+
   it('retries on adapter failure and marks failed after MAX_DELIVERY_ATTEMPTS (3)', async () => {
     seedAgentAndChannel();
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
