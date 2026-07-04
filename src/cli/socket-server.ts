@@ -36,8 +36,12 @@ export async function startCliServer(socketPath: string = DEFAULT_SOCKET_PATH): 
     // returns. Binding creates the socket file using the process umask, so a
     // post-hoc chmod leaves a window where another local user could connect
     // to a world-accessible socket — and a host-caller frame bypasses every
-    // scope/approval check in dispatch. 0o666 & ~0o177 = 0o600 (owner-only).
-    const prevMask = process.umask(0o177);
+    // scope/approval check in dispatch. Use 0o077 (owner-only): the socket
+    // becomes 0o600, and — since umask is process-global for the brief async
+    // gap until the listen callback — any file/dir a concurrent poll timer
+    // creates in that window stays owner-usable (dirs keep the execute bit,
+    // unlike 0o177), just owner-only, which is harmless for our own data.
+    const prevMask = process.umask(0o077);
     let maskRestored = false;
     const restoreMask = (): void => {
       if (maskRestored) return;

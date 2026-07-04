@@ -418,8 +418,10 @@ export function writeOutboundDirect(
   },
 ): void {
   const db = openOutboundDbRw(agentGroupId, sessionId);
-  const inbound = openInboundDb(agentGroupId, sessionId);
+  // Open inbound inside the try so an open failure here still closes `db`.
+  let inbound: Database.Database | undefined;
   try {
+    inbound = openInboundDb(agentGroupId, sessionId);
     // Serialize seq allocation against the container's writeMessageOut (which
     // also uses BEGIN IMMEDIATE). Take the outbound write lock BEFORE reading
     // MAX(seq) so the read-compute-insert is atomic across processes.
@@ -443,7 +445,7 @@ export function writeOutboundDirect(
       throw e;
     }
   } finally {
-    inbound.close();
+    inbound?.close();
     db.close();
   }
 }

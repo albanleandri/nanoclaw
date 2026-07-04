@@ -125,24 +125,28 @@ async function terminalAction(
   // never written), so it threw "Task is terminal" forever and the requester
   // never received the result. With both in one transaction, either the task
   // stays 'running' (retryable) or the event exists as the recovery anchor.
-  const applied = getDb().transaction(() => {
+  const persisted = getDb().transaction(() => {
     if (!transitionAgentTask(taskId, ['running'], type === 'completed' ? 'succeeded' : 'failed', terminalValue)) {
-      return false;
+      return null;
     }
-    appendAgentTaskEvent(taskId, actionId, event);
-    return true;
+    return appendAgentTaskEvent(taskId, actionId, event);
   })();
 
-  if (!applied && !actionWasApplied(taskId, actionId)) {
+  // Recovery path: the CAS failed because the task is already terminal. If the
+  // event was persisted (by this action previously, before delivery), re-fetch
+  // it and re-deliver; otherwise this is a genuine late/duplicate action.
+  const finalEvent =
+    persisted ??
+    (actionWasApplied(taskId, actionId)
+      ? appendAgentTaskEvent(taskId, actionId, event) // idempotent — returns the existing row
+      : null);
+  if (!finalEvent) {
     throw new Error(`Task is terminal: ${getAgentTask(taskId)!.job.status}`);
   }
 
   // Deliver from the persisted event (idempotent — keyed by
-  // agent-task-event:<taskId>:<seq>). appendAgentTaskEvent is idempotent, so
-  // this returns the row committed above (fresh path) or the one left by a
-  // prior attempt that crashed before delivery (recovery path).
-  const persisted = appendAgentTaskEvent(taskId, actionId, event);
-  await deliverAgentTaskEvent(getAgentTask(taskId)!, persisted.data as AgentTaskEvent, persisted.seq);
+  // agent-task-event:<taskId>:<seq>).
+  await deliverAgentTaskEvent(getAgentTask(taskId)!, finalEvent.data as AgentTaskEvent, finalEvent.seq);
 }
 
 registerDeliveryAction('complete_agent_task', async (content, session) =>
