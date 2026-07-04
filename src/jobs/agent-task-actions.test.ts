@@ -108,6 +108,25 @@ describe('agent task host actions', () => {
     );
   });
 
+  it('re-delivers the terminal event on retry when a prior delivery was lost', async () => {
+    await invoke('complete_agent_task', { result: { summary: 'done' } }, sessions.assignee);
+
+    // Simulate a crash around delivery: the terminal event is committed but
+    // the requester's inbound copy is gone. A redelivery of the same outbound
+    // action must re-deliver it rather than silently returning.
+    const wdb = new Database(inboundDbPath('requester', sessions.requester.id));
+    wdb.prepare("DELETE FROM messages_in WHERE kind='agent-task-event'").run();
+    wdb.close();
+
+    await invoke('complete_agent_task', { result: { summary: 'done' } }, sessions.assignee);
+
+    expect(getAgentTask('task-1')?.job.status).toBe('succeeded');
+    expect(getJobEvents('task-1').filter((e) => e.event_type === 'completed')).toHaveLength(1);
+    const rdb = new Database(inboundDbPath('requester', sessions.requester.id), { readonly: true });
+    expect(rdb.prepare("SELECT COUNT(*) AS n FROM messages_in WHERE kind='agent-task-event'").get()).toEqual({ n: 1 });
+    rdb.close();
+  });
+
   it('cancels once, notifies the assignee, and cannot be revived', async () => {
     await invoke('cancel_agent_task', {}, sessions.requester);
     await invoke('cancel_agent_task', {}, sessions.requester);

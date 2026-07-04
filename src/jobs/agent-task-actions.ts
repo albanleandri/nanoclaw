@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 
 import { registerDeliveryAction } from '../delivery.js';
 import { appendAgentTaskEvent, getAgentTask, transitionAgentTask, type AgentTaskRecord } from '../db/agent-tasks.js';
+import { getDb } from '../db/connection.js';
 import { getJobEvent } from '../db/jobs.js';
 import { getSession } from '../db/sessions.js';
 import { forwardAttachedFiles } from '../modules/agent-to-agent/agent-route.js';
@@ -114,15 +115,34 @@ async function terminalAction(
   const task = taskForActor(taskId, session);
   actorIs(task, session, 'assignee');
   const terminalValue = type === 'completed' ? (content.result ?? null) : requiredString(content, 'error');
-  if (!transitionAgentTask(taskId, ['running'], type === 'completed' ? 'succeeded' : 'failed', terminalValue)) {
-    if (actionWasApplied(taskId, actionId)) return;
+  const event: AgentTaskEvent =
+    type === 'completed' ? { type, result: content.result ?? null } : { type, error: terminalValue as string };
+
+  // Flip the status and persist the terminal event ATOMICALLY. Previously the
+  // transition happened first and the event was appended after, leaving a
+  // crash window where the job was terminal with no event row: on retry the
+  // CAS failed (no longer 'running') and actionWasApplied was false (event
+  // never written), so it threw "Task is terminal" forever and the requester
+  // never received the result. With both in one transaction, either the task
+  // stays 'running' (retryable) or the event exists as the recovery anchor.
+  const applied = getDb().transaction(() => {
+    if (!transitionAgentTask(taskId, ['running'], type === 'completed' ? 'succeeded' : 'failed', terminalValue)) {
+      return false;
+    }
+    appendAgentTaskEvent(taskId, actionId, event);
+    return true;
+  })();
+
+  if (!applied && !actionWasApplied(taskId, actionId)) {
     throw new Error(`Task is terminal: ${getAgentTask(taskId)!.job.status}`);
   }
-  await appendAndDeliver(
-    getAgentTask(taskId)!,
-    actionId,
-    type === 'completed' ? { type, result: content.result ?? null } : { type, error: terminalValue as string },
-  );
+
+  // Deliver from the persisted event (idempotent — keyed by
+  // agent-task-event:<taskId>:<seq>). appendAgentTaskEvent is idempotent, so
+  // this returns the row committed above (fresh path) or the one left by a
+  // prior attempt that crashed before delivery (recovery path).
+  const persisted = appendAgentTaskEvent(taskId, actionId, event);
+  await deliverAgentTaskEvent(getAgentTask(taskId)!, persisted.data as AgentTaskEvent, persisted.seq);
 }
 
 registerDeliveryAction('complete_agent_task', async (content, session) =>
