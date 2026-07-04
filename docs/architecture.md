@@ -309,6 +309,10 @@ Outbound rows are immutable. The host:
 5. records `delivered` or `failed` in the inbound delivery ledger;
 6. records orchestration delivery completion where applicable.
 
+Host-generated control responses, including command denials, go directly
+through the destination adapter instead of being inserted into the
+container-owned outbound database.
+
 Running sessions are polled at approximately one second; all active sessions
 are swept at approximately 60 seconds. Delivery is guarded against concurrent
 drains of the same session.

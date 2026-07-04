@@ -518,7 +518,8 @@ async function deliverToAgent(
 
   // Command gate: classify slash commands before they reach the container.
   // Filtered commands are dropped silently. Denied admin commands get a
-  // permission-denied response written directly to messages_out.
+  // host-owned direct response; the host must not write outbound.db while
+  // its container owner may be running.
   if (event.message.kind === 'chat' || event.message.kind === 'chat-sdk') {
     const gate = gateCommand(event.message.content, userId, agent.agent_group_id);
     if (gate.action === 'filter') {
@@ -526,13 +527,13 @@ async function deliverToAgent(
       return;
     }
     if (gate.action === 'deny') {
-      writeOutboundDirect(session.agent_group_id, session.id, {
-        id: `deny-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      const deliveryAdapter = getChannelAdapter(deliveryAddr.channelType);
+      if (!deliveryAdapter) {
+        throw new Error(`No active adapter for denied command response: ${deliveryAddr.channelType}`);
+      }
+      await deliveryAdapter.deliver(deliveryAddr.platformId, deliveryAddr.threadId, {
         kind: 'chat',
-        platformId: deliveryAddr.platformId,
-        channelType: deliveryAddr.channelType,
-        threadId: deliveryAddr.threadId,
-        content: JSON.stringify({ text: `Permission denied: ${gate.command} requires admin access.` }),
+        content: { text: `Permission denied: ${gate.command} requires admin access.` },
       });
       log.info('Admin command denied by gate', { command: gate.command, userId, agentGroupId: agent.agent_group_id });
       return;

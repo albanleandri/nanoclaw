@@ -4,8 +4,8 @@
  * Drives the real `writeOutboundDirect` entry against a real session folder
  * on disk. A previous implementation opened the outbound DB through
  * `openOutboundDb` (readonly: true), so every INSERT threw SQLITE_READONLY
- * and the command-gate denial path silently never delivered. Goes red if the
- * open call reverts to the readonly form.
+ * and stopped-container host acknowledgements silently never delivered. Goes
+ * red if the open call reverts to the readonly form.
  */
 import fs from 'fs';
 import Database from 'better-sqlite3';
