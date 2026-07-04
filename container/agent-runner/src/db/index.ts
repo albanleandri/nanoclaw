@@ -1,7 +1,6 @@
 export {
   getInboundDb,
   getOutboundDb,
-  getSessionDb,
   initTestSessionDb,
   closeSessionDb,
   touchHeartbeat,
@@ -11,7 +10,6 @@ export {
   getPendingMessages,
   markProcessing,
   markCompleted,
-  markFailed,
   getMessageIn,
   findQuestionResponse,
 } from './messages-in.js';

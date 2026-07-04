@@ -120,7 +120,8 @@ Invariants:
   primary key.
 - Admin @ A implies membership in A — no `agent_group_members` row required.
 
-Access layer: `src/db/user-roles.ts`, `src/access.ts`.
+Access layer: `src/modules/permissions/db/user-roles.ts`,
+`src/modules/permissions/access.ts`.
 
 ### 1.6 `agent_group_members`
 
@@ -246,7 +247,8 @@ CREATE INDEX idx_pending_approvals_action_status ON pending_approvals(action, st
 - Approval state is persisted before the card is delivered. Delivery failure removes
   the row, and resolution atomically changes `pending` to a terminal status before
   invoking an action handler, so concurrent responses cannot apply an action twice.
-- Access layer: `src/db/sessions.ts`; sweep + delivery: `src/onecli-approvals.ts`.
+- Access layer: `src/db/sessions.ts`; sweep + delivery:
+  `src/modules/approvals/onecli-approvals.ts`.
 
 ### 1.12 `unregistered_senders`
 

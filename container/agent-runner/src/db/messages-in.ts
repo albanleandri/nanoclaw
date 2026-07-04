@@ -121,15 +121,6 @@ export function markCompleted(ids: string[]): void {
   })();
 }
 
-/** Mark a single message as failed — writes to processing_ack in outbound.db. */
-export function markFailed(id: string): void {
-  getOutboundDb()
-    .prepare(
-      "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'failed', datetime('now'))",
-    )
-    .run(id);
-}
-
 /** Get a message by ID (read from inbound.db). */
 export function getMessageIn(id: string): MessageInRow | undefined {
   const inbound = openInboundDb();
