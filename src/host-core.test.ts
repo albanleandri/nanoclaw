@@ -600,6 +600,45 @@ describe('router', () => {
     expect(rows[0].trigger).toBe(0);
   });
 
+  it('does NOT accumulate a non-engaging message when the access gate denies the sender', async () => {
+    const { routeInbound, setAccessGate } = await import('./router.js');
+    const { wakeContainer } = await import('./container-runner.js');
+    (wakeContainer as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    const { updateMessagingGroupAgent } = await import('./db/messaging-groups.js');
+    updateMessagingGroupAgent('mga-1', {
+      engage_mode: 'mention',
+      ignored_message_policy: 'accumulate',
+    });
+
+    // Deny every sender — models an unknown sender under a group whose
+    // unknown_sender_policy='strict'. Their non-mention message must be
+    // dropped, not stored as silent context (which would also stage any
+    // attachments to disk).
+    setAccessGate(() => ({ allowed: false }));
+    try {
+      await routeInbound({
+        channelType: 'discord',
+        platformId: 'chan-123',
+        threadId: null,
+        message: {
+          id: 'msg-unknown',
+          kind: 'chat',
+          content: JSON.stringify({ text: 'no mention here' }),
+          timestamp: now(),
+        },
+      });
+
+      expect(wakeContainer).not.toHaveBeenCalled();
+      // No session — and therefore no accumulated row — for the denied sender.
+      expect(findSession('mg-1', null)).toBeUndefined();
+    } finally {
+      // Restore permissive routing (default gate is null = allow) so the rest
+      // of this file's router tests are unaffected.
+      setAccessGate(() => ({ allowed: true }));
+    }
+  });
+
   it('drops silently when engage fails + ignored_message_policy=drop', async () => {
     const { routeInbound } = await import('./router.js');
     const { wakeContainer } = await import('./container-runner.js');

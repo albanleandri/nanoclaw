@@ -316,10 +316,18 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
 
     const engages = evaluateEngage(agent, messageText, isMention, mg, event.threadId);
 
-    const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
-    const scopeOk = engages && (!senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed);
+    // Evaluate the access + sender-scope gates independent of engagement.
+    // These are security decisions about whether this sender may interact with
+    // the agent at all — not just whether they can trigger it. A non-engaging
+    // message from an unpermitted sender must NOT be accumulated: doing so
+    // stages their attachments to disk and feeds their text into the agent's
+    // context on the next engagement, which is exactly what a group's
+    // unknown_sender_policy='strict' (and sender_scope) are meant to prevent.
+    const accessAllowed = !accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed;
+    const scopeAllowed = !senderScopeGate || senderScopeGate(event, userId, mg, agent).allowed;
+    const senderPermitted = accessAllowed && scopeAllowed;
 
-    if (engages && accessOk && scopeOk) {
+    if (engages && senderPermitted) {
       await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, true);
       engagedCount++;
 
@@ -343,14 +351,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
           log.warn('adapter.subscribe failed', { channelType: event.channelType, threadId: event.threadId, err });
         });
       }
-    } else if (agent.ignored_message_policy === 'accumulate' && !(engages && (!accessOk || !scopeOk))) {
-      // Accumulate stores the message as silent context. We allow it when
-      // engagement simply didn't fire, but NOT when engagement fired and
-      // the access/scope gate refused — those refusals are security
-      // decisions about an untrusted sender, and silently storing their
-      // message (which also stages their attachments to disk via
-      // writeSessionMessage → extractAttachmentFiles) is exactly what the
-      // gate is meant to prevent.
+    } else if (agent.ignored_message_policy === 'accumulate' && senderPermitted) {
+      // Accumulate stores the message as silent context so it's available when
+      // the agent does engage later. Only permitted senders reach here — an
+      // unknown/blocked sender (access gate) or a sender outside the wiring's
+      // sender_scope is dropped, not stored, whether or not they engaged.
       await deliverToAgent(agent, agentGroup, mg, event, userId, adapter?.supportsThreads === true, false);
       accumulatedCount++;
     } else {
@@ -358,8 +363,8 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
         agentGroupId: agent.agent_group_id,
         engage_mode: agent.engage_mode,
         engages,
-        accessOk,
-        scopeOk,
+        accessAllowed,
+        scopeAllowed,
       });
     }
   }
