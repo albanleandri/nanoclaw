@@ -16,7 +16,7 @@ import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runti
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
-import { routeInbound } from './router.js';
+import { assertAccessEnforcementWired, routeInbound } from './router.js';
 import { installProcessErrorHandlers, log } from './log.js';
 
 installProcessErrorHandlers();
@@ -83,6 +83,11 @@ async function main(): Promise<void> {
   const db = initDb(dbPath);
   runMigrations(db);
   log.info('Central DB ready', { path: dbPath });
+
+  // 1a. Fail closed on a half-installed permissions state (see the helper's
+  // doc comment). Zero roles = intended single-user allow-all.
+  const roleCount = (db.prepare('SELECT COUNT(*) AS n FROM user_roles').get() as { n: number }).n;
+  assertAccessEnforcementWired(roleCount);
 
   // 1b. Backfill container_configs from legacy container.json files.
   // Idempotent — skips groups that already have a config row.

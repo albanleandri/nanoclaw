@@ -88,6 +88,33 @@ export function setAccessGate(fn: AccessGateFn): void {
 }
 
 /**
+ * Whether an access gate has been registered. When false, sender access
+ * defaults to allow-all (intended only for a single-user install with no
+ * permissions module).
+ */
+export function isAccessGateRegistered(): boolean {
+  return accessGate !== null;
+}
+
+/**
+ * Fail closed on a half-installed permissions state. Modules register the
+ * access gate as an import side effect (src/modules/index.js). If privilege
+ * rows exist but no access gate is registered, the permissions module didn't
+ * load and sender access would silently default to allow-all, ignoring every
+ * owner/admin/member decision. Throw rather than run wide open. Zero roles is
+ * the intended single-user allow-all case and passes.
+ */
+export function assertAccessEnforcementWired(roleCount: number): void {
+  if (roleCount > 0 && !isAccessGateRegistered()) {
+    throw new Error(
+      `Refusing to start: ${roleCount} user_roles row(s) exist but no access gate is registered ` +
+        '(permissions module not loaded). This would silently allow all senders. ' +
+        'Ensure src/modules/index.js imports the permissions module.',
+    );
+  }
+}
+
+/**
  * Per-wiring sender-scope hook. Runs alongside the access gate for each
  * agent that would otherwise engage — lets the permissions module enforce
  * `sender_scope='known'` on wirings that are stricter than the messaging
