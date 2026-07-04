@@ -206,7 +206,7 @@ TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
 ASSISTANT_NAME=nanoclaw
 ANTHROPIC_API_KEY=proxy-managed
 EOF
-mkdir -p data/env && cp .env data/env/env
+chmod 600 .env
 
 # Register your chat
 pnpm exec tsx setup/index.ts --step register \
@@ -245,7 +245,7 @@ cat > .env << EOF
 ASSISTANT_NAME=nanoclaw
 ANTHROPIC_API_KEY=proxy-managed
 EOF
-mkdir -p data/env && cp .env data/env/env
+chmod 600 .env
 
 # Authenticate (choose one):
 

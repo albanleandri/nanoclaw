@@ -36,6 +36,7 @@ import * as setupLog from '../logs.js';
 import { BACK_TO_CHANNEL_SELECTION, type ChannelFlowResult } from '../lib/back-nav.js';
 import { brightSelect } from '../lib/bright-select.js';
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
+import { writePrivateFileSync } from '../../src/private-files.js';
 import {
   type Block,
   type StepResult,
@@ -433,7 +434,7 @@ async function askChatPhone(authedPhone: string): Promise<string> {
   return phone;
 }
 
-/** Persist ASSISTANT_HAS_OWN_NUMBER=true to .env and data/env/env. */
+/** Persist ASSISTANT_HAS_OWN_NUMBER=true to the host environment file. */
 function writeAssistantHasOwnNumber(): void {
   const envPath = path.join(process.cwd(), '.env');
   let contents = '';
@@ -451,12 +452,7 @@ function writeAssistantHasOwnNumber(): void {
     if (contents.length > 0 && !contents.endsWith('\n')) contents += '\n';
     contents += 'ASSISTANT_HAS_OWN_NUMBER=true\n';
   }
-  fs.writeFileSync(envPath, contents);
-
-  // Container reads from data/env/env.
-  const containerEnvDir = path.join(process.cwd(), 'data', 'env');
-  fs.mkdirSync(containerEnvDir, { recursive: true });
-  fs.copyFileSync(envPath, path.join(containerEnvDir, 'env'));
+  writePrivateFileSync(envPath, contents);
 }
 
 async function resolveAgentName(): Promise<string> {

@@ -18,6 +18,7 @@ import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { assertAccessEnforcementWired, routeInbound } from './router.js';
 import { installProcessErrorHandlers, log } from './log.js';
+import { hardenProjectSecretFiles } from './private-files.js';
 
 installProcessErrorHandlers();
 
@@ -73,6 +74,7 @@ import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
 import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
 
 async function main(): Promise<void> {
+  hardenProjectSecretFiles(process.cwd());
   log.info('NanoClaw starting');
 
   // 0. Circuit breaker — backoff on rapid restarts

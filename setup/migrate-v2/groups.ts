@@ -16,6 +16,8 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
+import { writePrivateFileSync } from '../../src/private-files.js';
+
 const SKIP_NAMES = new Set(['CLAUDE.md', 'logs', '.git', '.DS_Store', 'node_modules']);
 
 /**
@@ -73,9 +75,10 @@ function main(): void {
   const registeredFolders = new Set<string>();
   if (fs.existsSync(v1DbPath)) {
     const v1Db = new Database(v1DbPath, { readonly: true, fileMustExist: true });
-    const rows = v1Db
-      .prepare('SELECT folder, container_config FROM registered_groups')
-      .all() as Array<{ folder: string; container_config: string | null }>;
+    const rows = v1Db.prepare('SELECT folder, container_config FROM registered_groups').all() as Array<{
+      folder: string;
+      container_config: string | null;
+    }>;
     const containerConfigs = new Map<string, string | null>();
     for (const r of rows) {
       registeredFolders.add(r.folder);
@@ -93,10 +96,10 @@ function main(): void {
       fs.mkdirSync(v2Folder, { recursive: true });
       try {
         const parsed = JSON.parse(config) as Record<string, unknown>;
-        fs.writeFileSync(containerJson, JSON.stringify(parsed, null, 2));
+        writePrivateFileSync(containerJson, JSON.stringify(parsed, null, 2));
       } catch {
         // Unparseable config — write as sidecar for the skill to handle
-        fs.writeFileSync(path.join(v2Folder, '.v1-container-config.json'), config);
+        writePrivateFileSync(path.join(v2Folder, '.v1-container-config.json'), config);
       }
     }
   }

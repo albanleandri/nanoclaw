@@ -20,6 +20,7 @@ import type { AgentGroup, ContainerConfigRow } from './types.js';
 import type { EffectiveProviderConfig, EffectiveProviderProfile } from './providers/effective-provider.js';
 import type { ProviderCapabilities } from './providers/provider-descriptor.js';
 import type { SessionRuntimePlan } from './capabilities/session-runtime-plan.js';
+import { writePrivateFileSync } from './private-files.js';
 
 export interface McpServerConfig {
   command: string;
@@ -179,7 +180,7 @@ export function materializeContainerJson(agentGroupId: string): ContainerConfig 
   const p = path.join(GROUPS_DIR, group.folder, 'container.json');
   const dir = path.dirname(p);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(config, null, 2) + '\n');
+  writePrivateFileSync(p, JSON.stringify(config, null, 2) + '\n');
 
   return config;
 }

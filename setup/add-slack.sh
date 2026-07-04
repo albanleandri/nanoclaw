@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install the Slack adapter, persist SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET to
-# .env + data/env/env, and restart the service. Non-interactive — the
+# the host .env, and restart the service. Non-interactive — the
 # operator-facing app creation walkthrough + credential paste live in
 # setup/channels/slack.ts. Credentials come in via env vars:
 # SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET.
@@ -10,6 +10,7 @@
 # progress messages go to stderr so setup:auto's raw-log capture sees the full
 # story without cluttering the final block for the parser.
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -87,6 +88,7 @@ fi
 # Persist credentials. auto.ts validates via auth.test before this point, so
 # bad values here would be an internal bug rather than operator input.
 touch .env
+chmod 600 .env
 upsert_env() {
   local key=$1 value=$2
   if grep -q "^${key}=" .env; then
@@ -100,9 +102,7 @@ upsert_env() {
 upsert_env SLACK_BOT_TOKEN "$SLACK_BOT_TOKEN"
 upsert_env SLACK_SIGNING_SECRET "$SLACK_SIGNING_SECRET"
 
-# Container reads from data/env/env (the host mounts it).
-mkdir -p data/env
-cp .env data/env/env
+chmod 600 .env
 
 log "Restarting service so the new adapter picks up the credentials…"
 # shellcheck source=setup/lib/install-slug.sh

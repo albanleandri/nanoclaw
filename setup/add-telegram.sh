@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the Telegram adapter, persist the bot token to .env + data/env/env,
+# Install the Telegram adapter, persist the bot token to the host .env,
 # restart the service, and open the bot's chat page in the local Telegram
 # client. Non-interactive — the operator-facing "Create a bot" instructions
 # and token paste live in setup/auto.ts. The token comes in via the
@@ -10,6 +10,7 @@
 # chatty progress messages go to stderr so setup:auto's raw-log capture
 # sees the full story without cluttering the final block for the parser.
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -116,6 +117,7 @@ fi
 # Persist token. auto.ts validates before this point, so a bad token here
 # would be an internal bug rather than operator input.
 touch .env
+chmod 600 .env
 if grep -q '^TELEGRAM_BOT_TOKEN=' .env; then
   awk -v tok="$TELEGRAM_BOT_TOKEN" \
       '/^TELEGRAM_BOT_TOKEN=/{print "TELEGRAM_BOT_TOKEN=" tok; next} {print}' \
@@ -134,9 +136,7 @@ if echo "$INFO" | grep -q '"ok":true'; then
   BOT_USERNAME=$(echo "$INFO" | sed -nE 's/.*"username":"([^"]+)".*/\1/p')
 fi
 
-# Container reads from data/env/env (the host mounts it).
-mkdir -p data/env
-cp .env data/env/env
+chmod 600 .env
 
 # Browser/app deep-link is done by the parent driver (setup/channels/telegram.ts)
 # BEFORE this script runs — gated on a clack confirm so focus-stealing doesn't

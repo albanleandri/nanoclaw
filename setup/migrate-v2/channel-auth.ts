@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import { writePrivateFileSync } from '../../src/private-files.js';
 import { CHANNEL_AUTH_REGISTRY } from './shared.js';
 
 function parseEnv(filePath: string): Map<string, string> {
@@ -32,7 +33,7 @@ function appendEnvKey(envPath: string, key: string, value: string): boolean {
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
   if (content && !content.endsWith('\n')) content += '\n';
   content += `${key}=${value}\n`;
-  fs.writeFileSync(envPath, content);
+  writePrivateFileSync(envPath, content);
   return true;
 }
 
@@ -114,15 +115,6 @@ function main(): void {
     }
 
     channelsProcessed++;
-  }
-
-  // Sync to data/env/env
-  if (fs.existsSync(v2EnvPath)) {
-    const containerEnvDir = path.join(process.cwd(), 'data', 'env');
-    try {
-      fs.mkdirSync(containerEnvDir, { recursive: true });
-      fs.copyFileSync(v2EnvPath, path.join(containerEnvDir, 'env'));
-    } catch { /* non-fatal */ }
   }
 
   console.log(`OK:channels=${channelsProcessed},env_keys=${envKeysCopied},files=${filesCopied}`);

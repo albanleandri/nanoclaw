@@ -8,6 +8,7 @@ import path from 'path';
 
 import { isValidTimezone } from '../src/timezone.js';
 import { log } from '../src/log.js';
+import { writePrivateFileSync } from '../src/private-files.js';
 import { emitStatus } from './status.js';
 
 export async function run(args: string[]): Promise<void> {
@@ -49,9 +50,9 @@ export async function run(args: string[]): Promise<void> {
       } else {
         content = content.trimEnd() + `\nTZ=${resolvedTz}\n`;
       }
-      fs.writeFileSync(envFile, content);
+      writePrivateFileSync(envFile, content);
     } else {
-      fs.writeFileSync(envFile, `TZ=${resolvedTz}\n`);
+      writePrivateFileSync(envFile, `TZ=${resolvedTz}\n`);
     }
     log.info('Set TZ in .env', { timezone: resolvedTz });
   }

@@ -14,6 +14,7 @@ import path from 'path';
 import * as p from '@clack/prompts';
 
 import { log } from '../src/log.js';
+import { writePrivateFileSync } from '../src/private-files.js';
 import { emitStatus } from './status.js';
 
 const LOCAL_BIN = path.join(os.homedir(), '.local', 'bin');
@@ -70,7 +71,7 @@ function upsertEnvValue(key: string, value: string): boolean {
     const sep = content && !content.endsWith('\n') ? '\n' : '';
     content = content + sep + newLine + '\n';
   }
-  fs.writeFileSync(envFile, content);
+  writePrivateFileSync(envFile, content);
   return existed;
 }
 

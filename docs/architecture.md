@@ -165,7 +165,7 @@ Inside a running container:
 /app/docs/                     repository docs
 ```
 
-`groups/<folder>/container.json` is a generated operator snapshot.
+`groups/<folder>/container.json` is a generated owner-only operator snapshot.
 `container.runtime.json` is the effective session configuration and is the
 file mounted at the two in-container `container.json` paths.
 

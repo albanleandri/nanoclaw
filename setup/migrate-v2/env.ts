@@ -9,6 +9,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { writePrivateFileSync } from '../../src/private-files.js';
+
 function parseEnv(text: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const raw of text.split('\n')) {
@@ -62,16 +64,7 @@ function main(): void {
     if (result && !result.endsWith('\n')) result += '\n';
     if (!alreadyMigrated) result += `\n${BLOCK_START}\n`;
     result += appended.join('\n') + '\n';
-    fs.writeFileSync(v2EnvPath, result);
-  }
-
-  // Sync to data/env/env (container reads from here)
-  const containerEnvDir = path.join(process.cwd(), 'data', 'env');
-  try {
-    fs.mkdirSync(containerEnvDir, { recursive: true });
-    fs.copyFileSync(v2EnvPath, path.join(containerEnvDir, 'env'));
-  } catch {
-    // Non-fatal
+    writePrivateFileSync(v2EnvPath, result);
   }
 
   console.log(`OK:copied=${copied.length},skipped=${skipped.length}`);

@@ -51,6 +51,7 @@ import { runWindowedStep } from './lib/windowed-runner.js';
 import { detectRegisteredGroups, detectExistingDisplayName } from './environment.js';
 import { pollHealth } from './onecli.js';
 import { getLaunchdLabel, getSystemdUnit } from '../src/install-slug.js';
+import { writePrivateFileSync } from '../src/private-files.js';
 import { claudeCliAvailable, resolveTimezoneViaClaude } from './lib/tz-from-claude.js';
 import * as setupLog from './logs.js';
 import { ensureAnswer, fail, runQuietChild, runQuietStep, spawnQuiet } from './lib/runner.js';
@@ -937,7 +938,7 @@ function writeEnvLine(key: string, value: string): void {
   const next = re.test(content)
     ? content.replace(re, `${key}=${value}`)
     : content.trimEnd() + (content ? '\n' : '') + `${key}=${value}\n`;
-  fs.writeFileSync(envFile, next);
+  writePrivateFileSync(envFile, next);
 }
 
 function appendProviderImport(modulePath: string): void {

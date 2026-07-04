@@ -53,7 +53,7 @@ adding a new persistent group database or state file, add it to
 **What is intentionally not backed up:**
 
 - **Per-session databases.** Each session has an `inbound.db` and `outbound.db` under `data/v2-sessions/<agent-group>/<session>/`. These are an ephemeral IO surface between the host and a running container — the central DB is the source of truth for persistent state, so the session DBs are not snapshotted.
-- **Credentials.** `.env` and the container environment file contain API keys and bot tokens — these are managed by OneCLI Agent Vault and should be recovered from there after a restore, not from a backup file.
+- **Credentials.** The owner-only `.env` may contain channel tokens and legacy provider credentials. It is not copied into containers or backups; recover credentials from OneCLI Agent Vault after a restore.
 
 The databases are backed up using the [better-sqlite3 online backup API](https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#backupdestination-options---promise), which is safe to run while the service is live.
 

@@ -10,7 +10,7 @@
  *   2. Install the adapter + qrcode via setup/add-signal.sh (idempotent).
  *   3. Run the signal-auth step, rendering each SIGNAL_AUTH_QR block as
  *      a terminal QR the operator scans from Signal → Linked Devices.
- *   4. Persist SIGNAL_ACCOUNT to .env (+ data/env/env).
+ *   4. Persist SIGNAL_ACCOUNT to the host .env.
  *   5. Kick the service so the adapter picks up the new credentials.
  *   6. Ask operator role + agent name.
  *   7. Wire the agent via scripts/init-first-agent.ts; the existing welcome
@@ -33,6 +33,7 @@ import k from 'kleur';
 
 import * as setupLog from '../logs.js';
 import { getLaunchdLabel, getSystemdUnit } from '../../src/install-slug.js';
+import { writePrivateFileSync } from '../../src/private-files.js';
 import { BACK_TO_CHANNEL_SELECTION, type ChannelFlowResult } from '../lib/back-nav.js';
 import { brightSelect } from '../lib/bright-select.js';
 import {
@@ -333,7 +334,7 @@ async function renderQr(url: string): Promise<string[]> {
   }
 }
 
-/** Persist SIGNAL_ACCOUNT to .env and mirror to data/env/env for the container. */
+/** Persist SIGNAL_ACCOUNT to the host environment file. */
 function writeSignalAccount(account: string): void {
   const envPath = path.join(process.cwd(), '.env');
   let contents = '';
@@ -351,11 +352,7 @@ function writeSignalAccount(account: string): void {
     if (contents.length > 0 && !contents.endsWith('\n')) contents += '\n';
     contents += `SIGNAL_ACCOUNT=${account}\n`;
   }
-  fs.writeFileSync(envPath, contents);
-
-  const containerEnvDir = path.join(process.cwd(), 'data', 'env');
-  fs.mkdirSync(containerEnvDir, { recursive: true });
-  fs.copyFileSync(envPath, path.join(containerEnvDir, 'env'));
+  writePrivateFileSync(envPath, contents);
 
   setupLog.userInput('signal_account', account);
 }

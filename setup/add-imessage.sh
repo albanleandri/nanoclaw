@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the iMessage adapter, persist mode/creds to .env + data/env/env,
+# Install the iMessage adapter, persist mode/creds to the host .env,
 # and restart the service. Non-interactive — the Full Disk Access walkthrough
 # (local mode) and Photon URL/key prompts (remote mode) live in
 # setup/channels/imessage.ts. Creds come in via env vars:
@@ -11,6 +11,7 @@
 #
 # Emits exactly one status block on stdout (ADD_IMESSAGE) at the end.
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -104,6 +105,7 @@ else
 fi
 
 touch .env
+chmod 600 .env
 upsert_env() {
   local key=$1 value=$2
   if grep -q "^${key}=" .env; then
@@ -135,9 +137,7 @@ else
   remove_env IMESSAGE_ENABLED
 fi
 
-# Container reads from data/env/env (the host mounts it).
-mkdir -p data/env
-cp .env data/env/env
+chmod 600 .env
 
 log "Restarting service so the new adapter picks up the creds…"
 # shellcheck source=setup/lib/install-slug.sh

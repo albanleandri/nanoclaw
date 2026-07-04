@@ -81,6 +81,7 @@ describe('materializeContainerJson agent profile', () => {
       },
     });
     expect(written.agentProfile).toEqual(config.agentProfile);
+    expect(fs.statSync(path.join(GROUPS_DIR, group.folder, 'container.json')).mode & 0o777).toBe(0o600);
   });
 
   it('keeps the neutral profile consistent with the top-level config fields it mirrors', () => {

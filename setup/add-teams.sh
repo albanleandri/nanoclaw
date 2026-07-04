@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install the Teams adapter, persist TEAMS_APP_ID / _PASSWORD / _TENANT_ID /
-# _TYPE to .env + data/env/env, and restart the service. Non-interactive —
+# _TYPE to the host .env, and restart the service. Non-interactive —
 # the operator-facing Azure portal walkthroughs live in
 # setup/channels/teams.ts. Credentials come in via env vars:
 #   TEAMS_APP_ID            (required)
@@ -13,6 +13,7 @@
 # progress messages go to stderr so setup:auto's raw-log capture sees the
 # full story without cluttering the final block for the parser.
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -97,6 +98,7 @@ fi
 
 # Persist credentials.
 touch .env
+chmod 600 .env
 upsert_env() {
   local key=$1 value=$2
   if grep -q "^${key}=" .env; then
@@ -114,9 +116,7 @@ if [ -n "${TEAMS_APP_TENANT_ID:-}" ]; then
   upsert_env TEAMS_APP_TENANT_ID "$TEAMS_APP_TENANT_ID"
 fi
 
-# Container reads from data/env/env (the host mounts it).
-mkdir -p data/env
-cp .env data/env/env
+chmod 600 .env
 
 log "Restarting service so the new adapter picks up the credentials…"
 # shellcheck source=setup/lib/install-slug.sh

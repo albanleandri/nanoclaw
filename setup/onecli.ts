@@ -17,6 +17,7 @@ import os from 'os';
 import path from 'path';
 
 import { log } from '../src/log.js';
+import { writePrivateFileSync } from '../src/private-files.js';
 import { readVersionPin } from './lib/version-pins.js';
 import { emitStatus } from './status.js';
 
@@ -96,7 +97,7 @@ function writeEnvVar(name: string, value: string): void {
   } else {
     content = content.trimEnd() + (content ? '\n' : '') + `${name}=${value}\n`;
   }
-  fs.writeFileSync(envFile, content);
+  writePrivateFileSync(envFile, content);
 }
 
 function writeEnvOnecliUrl(url: string): void {

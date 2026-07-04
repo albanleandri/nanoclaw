@@ -262,6 +262,10 @@ host and runner tests plus coverage, and checks formatting.
 
 ## Operational guidance
 
+- Keep `.env` and generated `groups/*/container.json` files owner-only
+  (`0600`). Startup repairs older installations and removes the obsolete
+  `data/env/env` secret mirror; no host environment file is mounted into an
+  agent container.
 - Keep `.env`, OneCLI state, local handoffs, DB backups, and private skills
   out of the public repository.
 - Use `pnpm run backup` before writable maintenance.

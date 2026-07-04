@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Install the Discord adapter, persist DISCORD_BOT_TOKEN / APPLICATION_ID /
-# PUBLIC_KEY to .env + data/env/env, and restart the service. Non-interactive —
+# PUBLIC_KEY to the host .env, and restart the service. Non-interactive —
 # the operator-facing "Create a bot" walkthrough, owner confirmation, and
 # server-invite step live in setup/channels/discord.ts. Credentials come in via
 # env vars: DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, DISCORD_PUBLIC_KEY.
@@ -10,6 +10,7 @@
 # progress messages go to stderr so setup:auto's raw-log capture sees the full
 # story without cluttering the final block for the parser.
 set -euo pipefail
+umask 077
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -91,6 +92,7 @@ fi
 # Persist credentials. auto.ts validates before this point, so bad values here
 # would be an internal bug rather than operator input.
 touch .env
+chmod 600 .env
 upsert_env() {
   local key=$1 value=$2
   if grep -q "^${key}=" .env; then
@@ -105,9 +107,7 @@ upsert_env DISCORD_BOT_TOKEN "$DISCORD_BOT_TOKEN"
 upsert_env DISCORD_APPLICATION_ID "$DISCORD_APPLICATION_ID"
 upsert_env DISCORD_PUBLIC_KEY "$DISCORD_PUBLIC_KEY"
 
-# Container reads from data/env/env (the host mounts it).
-mkdir -p data/env
-cp .env data/env/env
+chmod 600 .env
 
 log "Restarting service so the new adapter picks up the credentials…"
 # shellcheck source=setup/lib/install-slug.sh
