@@ -52,7 +52,11 @@ Consequences:
 2. `data/v2-sessions/<session_id>/inbound.db` — **host writes, container reads**. `messages_in`, routing, destinations, pending questions, processing_ack. This is where scheduled tasks live (see "Scheduling" below).
 3. `data/v2-sessions/<session_id>/outbound.db` — **container writes, host reads**. `messages_out`, session_state.
 
-Exactly one writer per file. No cross-mount lock contention. Heartbeat is a file touch at `/workspace/.heartbeat`, not a DB update. Host uses even `seq` numbers, container uses odd.
+One normal writer side per file avoids cross-mount lock contention. Current v2
+also has a stopped-container-only host control-write exception for
+`outbound.db`. Heartbeat is a file touch at `/workspace/.heartbeat`, not a DB
+update. Host uses even `seq` numbers and the runner uses odd; parity prevents
+cross-table ID collisions but is not a global clock.
 
 Message history (v1 `messages` table, v1 `chats` table) is **not migrated**. The migration copies operationally important state forward (agents, channels, wirings, scheduled tasks, group folders) and leaves chat logs behind.
 

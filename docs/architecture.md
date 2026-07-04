@@ -97,10 +97,13 @@ NanoClaw uses one central DB and two SQLite files per session:
 | `inbound.db`  | host      | host and container | Host-to-runner messages, delivery ledger, routing projections        |
 | `outbound.db` | container | host and container | Runner-to-host messages, processing acknowledgements, provider state |
 
-Each SQLite file has exactly one writer. Session DBs use
-`journal_mode=DELETE`, not WAL, because WAL shared-memory visibility is not
-reliable across container bind mounts. Host inbound writes use
-open-write-close semantics for the same reason.
+Each SQLite file has one normal writer side: the host owns `inbound.db`, while
+runner processes own `outbound.db`. A narrow exception lets the host write an
+immediate control acknowledgement to `outbound.db` only while the container is
+confirmed stopped. Writers serialize allocation with `BEGIN IMMEDIATE`.
+Session DBs use `journal_mode=DELETE`, not WAL, because WAL shared-memory
+visibility is not reliable across container bind mounts. Host inbound writes
+use open-write-close semantics for the same reason.
 
 The container mounts `inbound.db` read-only and `outbound.db` read-write. The
 host writes delivery outcomes to `inbound.db.delivered`; it never marks an
@@ -108,13 +111,16 @@ outbound row in place. The container reports inbound processing state through
 `outbound.db.processing_ack`; host sweep reconciles those acknowledgements
 back into `messages_in.status`.
 
-Message sequence numbers share a session-wide namespace:
+Message sequence numbers use disjoint lanes across the session:
 
-- host-created inbound rows use even `seq` values;
-- container-created outbound rows use odd `seq` values.
+- host-created rows use even `seq` values;
+- runner-created rows use odd `seq` values.
 
 That parity allows tools such as edit/reaction to reference either direction
-without ambiguous IDs.
+without ambiguous IDs. It does not establish global chronology across the two
+SQLite files: inbound allocation reads `messages_in`, while runner outbound
+allocation observes both tables. Use each row's timestamp and direction when
+reconstructing a cross-direction timeline.
 
 See [db.md](db.md) for invariants and
 [db-session.md](db-session.md) for complete session schemas.

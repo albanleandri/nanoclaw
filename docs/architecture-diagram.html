@@ -184,7 +184,7 @@ flowchart TB
     Provider["Claude Agent SDK<br/>(codex / opencode planned)"]
     MCP["MCP Tools<br/>send_message · send_file · edit_message<br/>send_card · ask_user_question · schedule_task<br/>create_agent · install_packages · add_mcp_server<br/>request_rebuild"]
     InDB[("inbound.db<br/>host writes · even seq")]
-    OutDB[("outbound.db<br/>container writes · odd seq")]
+    OutDB[("outbound.db<br/>runner writes normally<br/>odd runner / even stopped-host seq")]
   end
 
   Folder["Agent Group FS<br/>groups/*<br/>CLAUDE.md · memory · skills"]
@@ -371,10 +371,11 @@ erDiagram
       <section id="twodb">
         <h2><span class="num">5</span>Two-DB Split</h2>
         <p class="desc">
-          Each SQLite file has exactly one writer. The container touches a
-          heartbeat file instead of <code>UPDATE</code>-ing a liveness row, so host
-          sweep can detect staleness via <code>stat(mtime)</code> without opening the
-          DB. Host uses even seq numbers, container uses odd — collision-free.
+          Each SQLite file has one normal writer side; the host has a narrow
+          stopped-container control-write exception for <code>outbound.db</code>.
+          The container touches a heartbeat file instead of <code>UPDATE</code>-ing
+          a liveness row. Host uses even seq numbers and the runner uses odd;
+          parity is collision-free, not a global cross-DB clock.
         </p>
         <div class="diagram">
 <pre class="mermaid">
@@ -386,12 +387,12 @@ flowchart LR
   end
 
   Host[Host process] -->|writes · even seq| In
-  Host -->|reads| Out
+  Host -->|reads · stopped-only control write| Out
   Container[agent-runner] -->|reads| In
-  Container -->|writes · odd seq| Out
+  Container -->|normal writes · odd seq| Out
   Container -->|touch every poll| HB
   HostSweep[Host sweep] -->|stat mtime| HB
-  HostSweep -->|reads processing_ack| In
+  HostSweep -->|reads processing_ack| Out
 </pre>
         </div>
       </section>

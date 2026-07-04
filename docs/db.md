@@ -17,9 +17,13 @@ NanoClaw uses **three kinds of SQLite database**, all on the host filesystem:
 | -------------------- | ------------------------------------------------------------ | --------- | ---------------------------------- | -------------------------------------------------------- |
 | **Central**          | `data/v2.db`                                                 | host      | host                               | Identity, permissions, routing, wiring — the admin plane |
 | **Session inbound**  | `data/v2-sessions/<agent_group_id>/<session_id>/inbound.db`  | host      | host (sync), container (read-only) | Host → container messages + routing projections          |
-| **Session outbound** | `data/v2-sessions/<agent_group_id>/<session_id>/outbound.db` | container | host (poll), container             | Container → host messages + processing status            |
+| **Session outbound** | `data/v2-sessions/<agent_group_id>/<session_id>/outbound.db` | runner normally; stopped host for control acks | host (poll), runner | Runner → host messages + processing status |
 
-**Single-writer rule.** Every SQLite file has exactly one writer. Host writes the central DB and every `inbound.db`; container writes only its own `outbound.db`. This eliminates write contention across the Docker/Apple Container mount boundary — SQLite locking across that boundary is unreliable.
+**Writer-side rule.** The host writes the central DB and every `inbound.db`;
+runner processes normally write `outbound.db`. This removes normal
+host/container write contention across the mount boundary. The one exception,
+`writeOutboundDirect()`, is restricted to a confirmed-stopped container and
+uses the host's even sequence lane.
 
 **Everything is a message.** There is no IPC, stdin piping, or file watcher between host and container. The two session DBs are the sole IO surface. Heartbeat is a file `touch(2)` on `.heartbeat`, not a DB write.
 
@@ -98,8 +102,8 @@ These rules are enforced by convention in `src/session-manager.ts` and `containe
 
 ## 5. Design patterns at a glance
 
-1. **Two-DB session split.** `inbound.db` and `outbound.db` each have one writer, one direction of flow — no cross-mount lock contention.
-2. **Seq parity.** Even = host, odd = container. Disjoint namespace across both tables lets the agent reference any message by `seq` alone. Details in [db-session.md §3](db-session.md#3-sequence-numbering-invariant).
+1. **Two-DB session split.** `inbound.db` is host-owned and `outbound.db` is runner-owned, avoiding normal cross-mount write contention. The host may write an immediate control acknowledgement to `outbound.db` only while its container is confirmed stopped.
+2. **Seq parity.** Even = host, odd = runner. The disjoint lanes let the agent reference any message by `seq` alone, but are not a global chronological counter across both DB files. Details in [db-session.md §3](db-session.md#3-sequence-numbering-invariant).
 3. **Projection pattern.** `agent_destinations` and `session_routing` are projected from the central DB into each session's `inbound.db` on container wake — the container gets a fast, local read path without querying across the mount.
 4. **Ack via reverse channel.** Container never writes to `inbound.db`. Status sync happens through `processing_ack` in `outbound.db`, which the host polls and reconciles.
 5. **Heartbeat out of band.** File `touch` on `.heartbeat`, not a DB write, so liveness doesn't serialize behind other writers.

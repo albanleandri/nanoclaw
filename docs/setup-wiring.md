@@ -7,8 +7,9 @@ Last updated: 2026-04-09
 ### Two-DB Split (session DB write isolation)
 
 - Session DB split into `inbound.db` (host-owned) and `outbound.db` (container-owned)
-- Each file has exactly one writer — eliminates SQLite write contention across host-container mount
-- Host uses even seq numbers, container uses odd (collision-free)
+- Each file has one normal writer side: host owns inbound, runner owns outbound.
+  The stopped-container immediate-ack path is the documented outbound exception.
+- Host uses even seq numbers, runner uses odd (collision-free, not a cross-DB clock)
 - Container heartbeat via file touch (`/workspace/.heartbeat`) instead of DB UPDATE
 - Scheduling MCP tools emit system actions via messages_out; host applies them to inbound.db in `delivery.ts:handleSystemAction()`
 - Host sweep reads `processing_ack` table + heartbeat file mtime for stale detection

@@ -124,14 +124,25 @@ Written by `writeSessionRouting()` on every container wake, derived from `sessio
 
 ## 3. Sequence numbering invariant
 
-Every message (in or out) gets a monotonic integer `seq`, unique _within the session_ across both tables.
+Every message gets an integer `seq` from a direction-specific parity lane. The
+lanes prevent the same value from being allocated in both tables, but they are
+not a globally monotonic clock across two independent SQLite files.
 
-- **Host writes even seq** (2, 4, 6, …) to `messages_in` — `nextEvenSeq()` at `src/db/session-db.ts:75`.
-- **Container writes odd seq** (1, 3, 5, …) to `messages_out` — logic at `container/agent-runner/src/db/messages-out.ts:54` (`max % 2 === 0 ? max + 1 : max + 2`), reading `MAX(seq)` across _both_ tables to preserve global ordering.
+- **Host writes even seq** (2, 4, 6, …), normally to `messages_in` via
+  `nextEvenSeq()`. The stopped-container control-ack path may write an even
+  row to `messages_out`.
+- **Runner writes odd seq** (1, 3, 5, …) to `messages_out`. Its allocator
+  observes `MAX(seq)` in both tables before selecting the next odd value.
 
-Why disjoint? `seq` is the agent-facing message ID. When the agent calls `edit_message(seq=5)` or `add_reaction(seq=6)`, `getMessageIdBySeq()` uses the parity to route the lookup: odd → `messages_out`, even → `messages_in`. The parity alone disambiguates without a join. Collisions would break editing.
+Why disjoint? `seq` is the agent-facing message ID. When the agent calls
+`edit_message(seq=5)` or `add_reaction(seq=6)`, lookup checks both tables.
+Parity guarantees that at most one direction owns a value. Collisions would
+break editing.
 
-If you add a code path that writes to either table, preserve parity — the invariant isn't enforced by a constraint, only by the two helper functions.
+Do not sort a union of both tables by `seq` and treat it as exact chronology.
+Host inbound allocation does not lock or read the runner-owned DB. If you add
+a write path, preserve actor parity; the cross-table invariant is enforced by
+the allocators, not a shared database constraint.
 
 ---
 
@@ -146,7 +157,7 @@ Everything the agent produces: chat replies, edits, reactions, cards, question s
 ```sql
 CREATE TABLE messages_out (
   id            TEXT PRIMARY KEY,
-  seq           INTEGER UNIQUE,   -- ODD only (container assigns) — see §3
+  seq           INTEGER UNIQUE,   -- odd runner rows; even stopped-host control rows
   in_reply_to   TEXT,
   timestamp     TEXT NOT NULL,
   deliver_after TEXT,
@@ -161,7 +172,8 @@ CREATE TABLE messages_out (
 
 Content shapes: see [api-details.md §Session DB Schema Details](api-details.md#session-db-schema-details).
 
-**Writer (container):** `writeMessageOut()` in `container/agent-runner/src/db/messages-out.ts`.
+**Writers:** runner `writeMessageOut()` normally; host
+`writeOutboundDirect()` only while the container is confirmed stopped.
 **Readers (host):** `src/delivery.ts` (polling delivery), `getMessageIdBySeq()` / `getRoutingBySeq()` for edit/reaction targeting.
 
 ### 4.2 `processing_ack`

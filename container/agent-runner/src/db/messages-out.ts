@@ -56,8 +56,9 @@ export function writeMessageOut(msg: WriteMessageOut): number {
   // which already guards this exact hot path.
   outbound.exec('BEGIN IMMEDIATE');
   try {
-    // Read max seq from both DBs to maintain global ordering.
-    // Safe: each side only reads the other DB, never writes to it.
+    // Observe both parity lanes so this odd ID is above the current visible
+    // maximum. This avoids collisions; it is not a cross-DB chronological
+    // clock because host inbound allocation does not lock outbound.db.
     const maxOut = (outbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
     const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
     const max = Math.max(maxOut, maxIn);

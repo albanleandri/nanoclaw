@@ -239,8 +239,10 @@ CREATE TABLE job_deliveries (
 `;
 
 /**
- * Session DB schemas — split into two files so each has exactly one writer.
- * This eliminates SQLite write contention across the host-container mount boundary.
+ * Session DB schemas — split into two files with one normal writer side each.
+ * This eliminates normal SQLite write contention across the host-container
+ * mount boundary. A stopped-container-only host control-write exception exists
+ * for outbound.db.
  *
  *   inbound.db  — host writes, container reads (read-only mount or open read-only)
  *   outbound.db — container writes, host reads (read-only open)

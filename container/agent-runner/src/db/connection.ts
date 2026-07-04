@@ -7,7 +7,9 @@
  *   inbound.db  — host writes new messages here; container opens READ-ONLY
  *   outbound.db — container writes responses + acks here; host opens read-only
  *
- * Each file has exactly one writer, so no cross-process lock contention.
+ * Each file has one normal writer side, so there is no host/container write
+ * contention. Poll-loop and MCP subprocess writes to outbound.db serialize
+ * through SQLite; the host's narrow direct-write path is stopped-container only.
  *
  * ⚠ Cross-mount visibility: inbound.db MUST be journal_mode=DELETE (set by
  * the host when the file is created). WAL's `-shm` is memory-mapped and
