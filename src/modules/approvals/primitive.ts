@@ -23,7 +23,7 @@
  */
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
-import { createPendingApproval, getSession } from '../../db/sessions.js';
+import { createPendingApproval, deletePendingApproval, getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
@@ -226,7 +226,13 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
 
   const approvalId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const normalizedOptions = normalizeOptions(APPROVAL_OPTIONS);
-  createPendingApproval({
+  const adapter = getDeliveryAdapter();
+  if (!adapter) {
+    notifyAgent(session, `${action} failed: approval delivery is not available.`);
+    return;
+  }
+
+  const inserted = createPendingApproval({
     approval_id: approvalId,
     session_id: session.id,
     request_id: approvalId,
@@ -236,28 +242,30 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     title,
     options_json: JSON.stringify(normalizedOptions),
   });
+  if (!inserted) {
+    notifyAgent(session, `${action} failed: could not reserve a unique approval request.`);
+    return;
+  }
 
-  const adapter = getDeliveryAdapter();
-  if (adapter) {
-    try {
-      await adapter.deliver(
-        target.messagingGroup.channel_type,
-        target.messagingGroup.platform_id,
-        null,
-        'chat-sdk',
-        JSON.stringify({
-          type: 'ask_question',
-          questionId: approvalId,
-          title,
-          question,
-          options: APPROVAL_OPTIONS,
-        }),
-      );
-    } catch (err) {
-      log.error('Failed to deliver approval card', { action, approvalId, err });
-      notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
-      return;
-    }
+  try {
+    await adapter.deliver(
+      target.messagingGroup.channel_type,
+      target.messagingGroup.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({
+        type: 'ask_question',
+        questionId: approvalId,
+        title,
+        question,
+        options: APPROVAL_OPTIONS,
+      }),
+    );
+  } catch (err) {
+    deletePendingApproval(approvalId);
+    log.error('Failed to deliver approval card', { action, approvalId, err });
+    notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
+    return;
   }
 
   log.info('Approval requested', { action, approvalId, agentName, approver: target.userId });

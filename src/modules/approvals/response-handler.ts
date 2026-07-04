@@ -13,7 +13,7 @@
  * core iterates handlers and the first one to return `true` claims the response.
  */
 import { wakeContainer } from '../../container-runner.js';
-import { deletePendingApproval, getPendingApproval, getSession } from '../../db/sessions.js';
+import { claimPendingApproval, deletePendingApproval, getPendingApproval, getSession } from '../../db/sessions.js';
 import type { ResponsePayload } from '../../response-registry.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
@@ -56,6 +56,16 @@ async function handleRegisteredApproval(
   selectedOption: string,
   userId: string,
 ): Promise<void> {
+  const outcome = selectedOption === 'approve' ? 'approve' : 'reject';
+  if (!claimPendingApproval(approval.approval_id, outcome === 'approve' ? 'approved' : 'rejected')) {
+    log.info('Approval response ignored after prior claim', {
+      approvalId: approval.approval_id,
+      action: approval.action,
+      userId,
+    });
+    return;
+  }
+
   if (!approval.session_id) {
     deletePendingApproval(approval.approval_id);
     return;
@@ -78,7 +88,7 @@ async function handleRegisteredApproval(
     });
   };
 
-  if (selectedOption !== 'approve') {
+  if (outcome === 'reject') {
     notify(`Your ${approval.action} request was rejected by admin.`);
     log.info('Approval rejected', { approvalId: approval.approval_id, action: approval.action, userId });
     deletePendingApproval(approval.approval_id);

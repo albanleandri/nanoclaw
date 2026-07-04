@@ -54,6 +54,47 @@ afterEach(() => {
 });
 
 describe('approval response authorization', () => {
+  it('claims an approval before awaiting its handler so concurrent clicks apply once', async () => {
+    upsertUser({ id: 'telegram:owner', kind: 'telegram', display_name: 'Owner', created_at: now() });
+    grantRole({ user_id: 'telegram:owner', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
+
+    const { registerApprovalHandler } = await import('./primitive.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    let releaseHandler!: () => void;
+    const handlerBlocked = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    const handler = vi.fn(() => handlerBlocked);
+    registerApprovalHandler('concurrent_approval_action', handler);
+
+    createPendingApproval({
+      approval_id: 'appr-concurrent',
+      session_id: 'sess-1',
+      request_id: 'appr-concurrent',
+      action: 'concurrent_approval_action',
+      payload: JSON.stringify({}),
+      created_at: now(),
+      title: 'Concurrent approval',
+      options_json: JSON.stringify([]),
+    });
+    const response = {
+      questionId: 'appr-concurrent',
+      value: 'approve',
+      userId: 'owner',
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+    };
+
+    const first = handleApprovalsResponse(response);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    await expect(handleApprovalsResponse(response)).resolves.toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    releaseHandler();
+    await expect(first).resolves.toBe(true);
+  });
+
   it('ignores a valid approval id clicked by a non-admin user', async () => {
     const { registerApprovalHandler } = await import('./primitive.js');
     const { handleApprovalsResponse } = await import('./response-handler.js');

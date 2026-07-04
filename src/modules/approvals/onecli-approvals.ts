@@ -4,13 +4,14 @@
  * When the OneCLI gateway intercepts a credentialed request that needs human
  * approval, it holds the HTTP connection open and fires our `configureManualApproval`
  * callback. We:
- *   1. Deliver an ask_question card to the admin channel (same routing as
+ *   1. Persist a `pending_approvals` row (action='onecli_credential') and install
+ *      the in-memory resolver before making the approval card visible.
+ *   2. Deliver an ask_question card to the admin channel (same routing as
  *      `requestApproval()` — global admin agent group's first messaging group).
- *   2. Persist a `pending_approvals` row (action='onecli_credential') so we can
- *      edit the card on expiry and sweep stale rows at startup.
  *   3. Wait on an in-memory Promise: resolved by the admin click
  *      (`resolveOneCLIApproval`) or by a local expiry timer.
- *   4. On expiry, edit the card to "Expired" and return 'deny' — the gateway's
+ *   4. On delivery failure, remove both pending states and deny. On expiry,
+ *      edit the card to "Expired" and return 'deny' — the gateway's
  *      HTTP side will have already closed, but we need to release the Promise
  *      so the SDK callback returns cleanly.
  *
@@ -26,6 +27,7 @@ import {
   createPendingApproval,
   deletePendingApproval,
   getPendingApprovalsByAction,
+  updatePendingApprovalPlatformMessageId,
   updatePendingApprovalStatus,
 } from '../../db/sessions.js';
 import type { ChannelDeliveryAdapter } from '../../delivery.js';
@@ -91,7 +93,7 @@ export function startOneCLIApprovalHandler(deliveryAdapter: ChannelDeliveryAdapt
 
   handle = onecli.configureManualApproval(async (request: ApprovalRequest): Promise<Decision> => {
     try {
-      return await handleRequest(request);
+      return await handleOneCLIApprovalRequest(request, adapterRef);
     } catch (err) {
       log.error('OneCLI approval handler errored', { id: request.id, err });
       return 'deny';
@@ -110,8 +112,11 @@ export function stopOneCLIApprovalHandler(): void {
   adapterRef = null;
 }
 
-async function handleRequest(request: ApprovalRequest): Promise<Decision> {
-  if (!adapterRef) return 'deny';
+export async function handleOneCLIApprovalRequest(
+  request: ApprovalRequest,
+  deliveryAdapter: ChannelDeliveryAdapter | null,
+): Promise<Decision> {
+  if (!deliveryAdapter) return 'deny';
 
   // Originating agent group is carried on the request via OneCLI's agent
   // identifier (set by container-runner.ts to agentGroup.id). Use it as
@@ -150,27 +155,7 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
     { label: 'Approve', selectedLabel: '✅ Approved', value: 'approve' },
     { label: 'Reject', selectedLabel: '❌ Rejected', value: 'reject' },
   ];
-  let platformMessageId: string | undefined;
-  try {
-    platformMessageId = await adapterRef.deliver(
-      target.messagingGroup.channel_type,
-      target.messagingGroup.platform_id,
-      null,
-      'chat-sdk',
-      JSON.stringify({
-        type: 'ask_question',
-        questionId: approvalId,
-        title: onecliTitle,
-        question,
-        options: onecliOptions,
-      }),
-    );
-  } catch (err) {
-    log.error('Failed to deliver OneCLI approval card', { approvalId, oneCliRequestId: request.id, err });
-    return 'deny';
-  }
-
-  createPendingApproval({
+  const inserted = createPendingApproval({
     approval_id: approvalId,
     session_id: null,
     request_id: request.id,
@@ -188,19 +173,23 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
     agent_group_id: agentGroupId,
     channel_type: target.messagingGroup.channel_type,
     platform_id: target.messagingGroup.platform_id,
-    platform_message_id: platformMessageId ?? null,
+    platform_message_id: null,
     expires_at: request.expiresAt,
     status: 'pending',
     title: onecliTitle,
     options_json: JSON.stringify(onecliOptions),
   });
+  if (!inserted) {
+    log.error('Failed to reserve unique OneCLI approval id', { approvalId, oneCliRequestId: request.id });
+    return 'deny';
+  }
 
   // Expiry timer fires just before the gateway's own TTL so our decision lands
   // in time to be recorded, even though the HTTP side will already be closing.
   const expiresAtMs = new Date(request.expiresAt).getTime();
   const timeoutMs = Math.max(1000, expiresAtMs - Date.now() - 1000);
 
-  return new Promise<Decision>((resolve) => {
+  const decisionPromise = new Promise<Decision>((resolve) => {
     const timer = setTimeout(() => {
       if (!pending.has(approvalId)) return;
       pending.delete(approvalId);
@@ -212,6 +201,35 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
 
     pending.set(approvalId, { resolve, timer });
   });
+
+  try {
+    const platformMessageId = await deliveryAdapter.deliver(
+      target.messagingGroup.channel_type,
+      target.messagingGroup.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({
+        type: 'ask_question',
+        questionId: approvalId,
+        title: onecliTitle,
+        question,
+        options: onecliOptions,
+      }),
+    );
+    if (platformMessageId) {
+      updatePendingApprovalPlatformMessageId(approvalId, platformMessageId);
+    }
+  } catch (err) {
+    const state = pending.get(approvalId);
+    if (!state) return decisionPromise;
+    pending.delete(approvalId);
+    clearTimeout(state.timer);
+    deletePendingApproval(approvalId);
+    log.error('Failed to deliver OneCLI approval card', { approvalId, oneCliRequestId: request.id, err });
+    return 'deny';
+  }
+
+  return decisionPromise;
 }
 
 async function expireApproval(approvalId: string, reason: string): Promise<void> {

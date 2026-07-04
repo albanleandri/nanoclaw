@@ -217,6 +217,23 @@ export function updatePendingApprovalStatus(approvalId: string, status: PendingA
   getDb().prepare('UPDATE pending_approvals SET status = ? WHERE approval_id = ?').run(status, approvalId);
 }
 
+/** Atomically claim a still-pending approval for one resolver. */
+export function claimPendingApproval(
+  approvalId: string,
+  status: Extract<PendingApproval['status'], 'approved' | 'rejected'>,
+): boolean {
+  const result = getDb()
+    .prepare("UPDATE pending_approvals SET status = ? WHERE approval_id = ? AND status = 'pending'")
+    .run(status, approvalId);
+  return result.changes === 1;
+}
+
+export function updatePendingApprovalPlatformMessageId(approvalId: string, platformMessageId: string): void {
+  getDb()
+    .prepare('UPDATE pending_approvals SET platform_message_id = ? WHERE approval_id = ?')
+    .run(platformMessageId, approvalId);
+}
+
 export function deletePendingApproval(approvalId: string): void {
   getDb().prepare('DELETE FROM pending_approvals WHERE approval_id = ?').run(approvalId);
 }
