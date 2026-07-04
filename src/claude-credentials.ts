@@ -81,7 +81,14 @@ export async function defaultFetcher(refreshToken: string, scopes: string[]): Pr
           try {
             const data = JSON.parse(Buffer.concat(chunks).toString());
             if (!data.access_token) {
-              log.error('Token refresh failed', { status: res.statusCode, data });
+              // Log only the standard OAuth error fields, never the whole body
+              // — the response from a token endpoint can carry credential
+              // material and should not land in logs verbatim.
+              log.error('Token refresh failed', {
+                status: res.statusCode,
+                error: data.error,
+                errorDescription: data.error_description,
+              });
               resolve(null);
               return;
             }
