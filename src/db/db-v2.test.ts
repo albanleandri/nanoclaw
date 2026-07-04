@@ -82,6 +82,33 @@ describe('migrations', () => {
       expect.arrayContaining(['runtime_id', 'side_effect_boundary_crossed', 'execution_session_id']),
     );
   });
+
+  it('deduplicates legacy global roles and enforces their uniqueness', () => {
+    closeDb();
+    const db = initTestDb();
+    const migrationIndex = migrations.findIndex((migration) => migration.name === 'user-role-global-uniqueness');
+    runMigrations(db, migrations.slice(0, migrationIndex));
+    db.prepare(
+      "INSERT INTO users (id, kind, display_name, created_at) VALUES ('u-global', 'telegram', 'Global', '2026-01-01')",
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+       VALUES ('u-global', 'admin', NULL, NULL, ?)`,
+    );
+    insert.run('2026-01-01');
+    insert.run('2026-01-02');
+
+    runMigrations(db);
+
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM user_roles WHERE user_id = 'u-global' AND role = 'admin' AND agent_group_id IS NULL",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+    expect(() => insert.run('2026-01-03')).toThrow();
+  });
 });
 
 // ── Agent Groups ──

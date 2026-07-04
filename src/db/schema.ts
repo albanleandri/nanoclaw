@@ -78,6 +78,8 @@ CREATE TABLE user_roles (
   PRIMARY KEY (user_id, role, agent_group_id)
 );
 CREATE INDEX idx_user_roles_scope ON user_roles(agent_group_id, role);
+CREATE UNIQUE INDEX idx_user_roles_global_unique
+  ON user_roles(user_id, role) WHERE agent_group_id IS NULL;
 
 -- "Known" membership in an agent group. Required for an unprivileged user
 -- to interact with a workspace. Admin @ A is implicitly a member of A.

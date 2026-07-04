@@ -107,12 +107,17 @@ CREATE TABLE user_roles (
   PRIMARY KEY (user_id, role, agent_group_id)
 );
 CREATE INDEX idx_user_roles_scope ON user_roles(agent_group_id, role);
+CREATE UNIQUE INDEX idx_user_roles_global_unique
+  ON user_roles(user_id, role) WHERE agent_group_id IS NULL;
 ```
 
 Invariants:
 
 - `role = 'owner'` → must be global (`agent_group_id IS NULL`). Enforced in `grantRole()`.
 - `role = 'admin'` → global (NULL) or scoped to one agent group.
+- Global grants are unique per `(user_id, role)`. The partial unique index is
+  required because SQLite permits duplicate NULL values in the composite
+  primary key.
 - Admin @ A implies membership in A — no `agent_group_members` row required.
 
 Access layer: `src/db/user-roles.ts`, `src/access.ts`.
@@ -498,6 +503,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 029 | `029-orchestration-fallback.ts`           | Durable fallback compatibility/side-effect facts and append-only candidate decisions                                                                                 |
 | 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
 | 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                |
+| 032 | `032-user-role-global-uniqueness.ts`      | Deduplicate legacy global role grants and enforce one `(user_id, role, NULL)` row with a partial unique index                                                       |
 
 Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 
