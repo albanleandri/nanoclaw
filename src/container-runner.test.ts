@@ -8,6 +8,7 @@ import {
   assertUniqueMountDestinations,
   buildGroupWorkspaceMounts,
   buildRtkStateMount,
+  buildSessionWorkspaceMounts,
   buildSessionRuntimeConfigMounts,
   resolveProviderName,
   syncSharedResourceSymlinks,
@@ -46,6 +47,21 @@ describe('buildRtkStateMount', () => {
       containerPath: '/home/node/.local/share/rtk',
       readonly: false,
     });
+  });
+});
+
+describe('buildSessionWorkspaceMounts', () => {
+  it('overlays the host-owned inbound database read-only after the writable session directory', () => {
+    const sessionPath = path.join('/data', 'sessions', 'agent-group', 'session');
+
+    expect(buildSessionWorkspaceMounts(sessionPath)).toEqual([
+      { hostPath: sessionPath, containerPath: '/workspace', readonly: false },
+      {
+        hostPath: path.join(sessionPath, 'inbound.db'),
+        containerPath: '/workspace/inbound.db',
+        readonly: true,
+      },
+    ]);
   });
 });
 

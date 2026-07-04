@@ -412,6 +412,17 @@ export function buildSessionRuntimeConfigMounts(runtimeConfigPath: string): Volu
   ];
 }
 
+export function buildSessionWorkspaceMounts(sessDir: string): VolumeMount[] {
+  return [
+    { hostPath: sessDir, containerPath: '/workspace', readonly: false },
+    {
+      hostPath: path.join(sessDir, 'inbound.db'),
+      containerPath: '/workspace/inbound.db',
+      readonly: true,
+    },
+  ];
+}
+
 export function buildRtkStateMount(agentGroupId: string): VolumeMount {
   return {
     hostPath: path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.rtk'),
@@ -452,8 +463,10 @@ function buildMounts(
   const sessDir = sessionDir(agentGroup.id, session.id);
   const groupDir = path.resolve(GROUPS_DIR, agentGroup.folder);
 
-  // Session folder at /workspace (contains inbound.db, outbound.db, outbox/, .claude/)
-  mounts.push({ hostPath: sessDir, containerPath: '/workspace', readonly: false });
+  // The session folder must remain writable for outbound.db, outbox/, and
+  // provider state. Overlay the host-owned inbound DB read-only so the
+  // container can consume messages without mutating host-owned state.
+  mounts.push(...buildSessionWorkspaceMounts(sessDir));
 
   mounts.push(...buildGroupWorkspaceMounts(groupDir));
 
