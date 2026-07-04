@@ -88,6 +88,18 @@ export function replaceDestinations(db: Database.Database, entries: DestinationR
  */
 export function nextEvenSeq(db: Database.Database): number {
   const maxSeq = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
+  return nextEvenSeqFromMax(maxSeq);
+}
+
+/**
+ * Round a global max seq up to the next even (host-lane) value.
+ *
+ * Callers that write host-owned rows into a session DB must supply the max
+ * seq across BOTH session tables (messages_in + messages_out), not just one,
+ * so the result never collides with a container's odd seq or an inbound seq —
+ * seq is the agent-facing message id and is looked up across both tables.
+ */
+export function nextEvenSeqFromMax(maxSeq: number): number {
   return maxSeq < 2 ? 2 : maxSeq + 2 - (maxSeq % 2);
 }
 

@@ -16,11 +16,35 @@ vi.mock('./config.js', async () => {
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-write-outbound' };
 });
 
-import { initSessionFolder, outboundDbPath, writeOutboundDirect } from './session-manager.js';
+import { inboundDbPath, initSessionFolder, outboundDbPath, writeOutboundDirect } from './session-manager.js';
 
 const TEST_DIR = '/tmp/nanoclaw-test-write-outbound';
 const AG = 'ag-test';
 const SESS = 'sess-test';
+
+/** Seed a container-written (odd-seq) outbound row. */
+function seedOutbound(seq: number): void {
+  const db = new Database(outboundDbPath(AG, SESS));
+  try {
+    db.prepare(
+      "INSERT INTO messages_out (id, seq, timestamp, kind, content) VALUES (?, ?, datetime('now'), 'chat', '{}')",
+    ).run(`container-${seq}`, seq);
+  } finally {
+    db.close();
+  }
+}
+
+/** Seed a host-written inbound row (e.g. an accumulated message). */
+function seedInbound(seq: number): void {
+  const db = new Database(inboundDbPath(AG, SESS));
+  try {
+    db.prepare(
+      "INSERT INTO messages_in (id, seq, kind, timestamp, status, content) VALUES (?, ?, 'chat', datetime('now'), 'pending', '{}')",
+    ).run(`inbound-${seq}`, seq);
+  } finally {
+    db.close();
+  }
+}
 
 function readMessagesOut(): Array<{ id: string; seq: number; kind: string; content: string }> {
   const db = new Database(outboundDbPath(AG, SESS), { readonly: true });
@@ -96,5 +120,47 @@ describe('writeOutboundDirect', () => {
     const rows = readMessagesOut();
     expect(rows.map((r) => r.id)).toEqual(['denial-1', 'denial-2']);
     expect(rows.map((r) => r.seq)).toEqual([2, 4]);
+  });
+
+  it('stays in the even host lane above the container odd-seq max', () => {
+    // Container has replied (odd seqs 1, 3). The old MAX(messages_out)+2 would
+    // yield 5 — an ODD seq in the container's lane, violating host-even parity.
+    seedOutbound(1);
+    seedOutbound(3);
+
+    writeOutboundDirect(AG, SESS, {
+      id: 'denial-1',
+      kind: 'chat',
+      platformId: null,
+      channelType: null,
+      threadId: null,
+      content: '{"text":"denied"}',
+    });
+
+    const denial = readMessagesOut().find((r) => r.id === 'denial-1');
+    expect(denial).toBeDefined();
+    expect(denial!.seq % 2).toBe(0); // even, not the old odd 5
+    expect(denial!.seq).toBe(4); // next even above global max 3
+  });
+
+  it('accounts for inbound seqs so it never collides with an inbound message id', () => {
+    // An accumulated inbound message holds seq 2 while messages_out is empty.
+    // The old MAX(messages_out)+2 = 2 collided with that inbound seq (both
+    // tables share the agent-facing seq namespace); the new max-across-both
+    // allocation skips to 4.
+    seedInbound(2);
+
+    writeOutboundDirect(AG, SESS, {
+      id: 'denial-1',
+      kind: 'chat',
+      platformId: null,
+      channelType: null,
+      threadId: null,
+      content: '{"text":"denied"}',
+    });
+
+    const denial = readMessagesOut().find((r) => r.id === 'denial-1');
+    expect(denial).toBeDefined();
+    expect(denial!.seq).toBe(4);
   });
 });

@@ -34,6 +34,7 @@ import {
   upsertSessionRouting,
   insertMessage,
   migrateMessagesInTable,
+  nextEvenSeqFromMax,
 } from './db/session-db.js';
 import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
 import { log } from './log.js';
@@ -401,8 +402,8 @@ export function openOutboundDbRw(agentGroupId: string, sessionId: string): Datab
  * Needs the read-write open — the readonly handle the delivery poll uses
  * can't INSERT. This is a host-side write to the container-owned outbound.db,
  * but it's safe even with a container running: both sides open with DELETE
- * journal + busy_timeout, and the even host seq stays out of the container's
- * odd-seq space.
+ * journal + busy_timeout, and the seq is allocated under BEGIN IMMEDIATE in
+ * the host's even lane, disjoint from the container's odd seqs.
  */
 export function writeOutboundDirect(
   agentGroupId: string,
@@ -417,12 +418,32 @@ export function writeOutboundDirect(
   },
 ): void {
   const db = openOutboundDbRw(agentGroupId, sessionId);
+  const inbound = openInboundDb(agentGroupId, sessionId);
   try {
-    db.prepare(
-      `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
-       VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_out), datetime('now'), ?, ?, ?, ?, ?)`,
-    ).run(message.id, message.kind, message.platformId, message.channelType, message.threadId, message.content);
+    // Serialize seq allocation against the container's writeMessageOut (which
+    // also uses BEGIN IMMEDIATE). Take the outbound write lock BEFORE reading
+    // MAX(seq) so the read-compute-insert is atomic across processes.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      // Max across BOTH tables: messages_out holds the container's odd seqs,
+      // messages_in holds the host's even seqs. Reading only messages_out
+      // (the old behavior) yielded an ODD seq once a container had replied and
+      // could collide with an inbound seq when messages_out was empty. Round
+      // up to the next even value to stay in the host lane and above both.
+      const maxOut = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
+      const maxIn = (inbound.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_in').get() as { m: number }).m;
+      const seq = nextEvenSeqFromMax(Math.max(maxOut, maxIn));
+      db.prepare(
+        `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
+         VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
+      ).run(message.id, seq, message.kind, message.platformId, message.channelType, message.threadId, message.content);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
   } finally {
+    inbound.close();
     db.close();
   }
 }
