@@ -459,7 +459,7 @@ The agent-runner transforms messages_in rows into a prompt string. The provider 
 
 Mixed kinds (e.g., a chat message + a system response) are combined with clear delimiters. Each section is labeled by kind.
 
-**Command detection:** Messages starting with `/` are checked against a command list. Recognized commands bypass formatting and are passed raw to the provider (for Claude's slash command handling) or intercepted by the agent-runner (for NanoClaw-level commands like session reset).
+**Command detection:** Messages starting with `/` are checked against a command list. Matching uses the complete first whitespace-delimited token, with an optional Telegram `@bot_name` suffix removed; command prefixes do not match. Recognized commands bypass formatting and are passed raw to the provider (for Claude's slash command handling) or intercepted by the agent-runner (for NanoClaw-level commands like session reset).
 
 ### Routing
 

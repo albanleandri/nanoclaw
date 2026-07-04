@@ -59,12 +59,26 @@ describe('gateCommand — unknown slash commands', () => {
     expect(gateCommand('/memory', 'u-1', 'ag-1')).toEqual({ action: 'pass' });
     expect(gateCommand('/custom-thing', null, 'ag-1')).toEqual({ action: 'pass' });
   });
+
+  it.each(['/clear-all', '/clearfoo', '/clear/path', '/clear@'])(
+    'does not treat the command prefix %s as /clear',
+    (command) => {
+      expect(gateCommand(command, null, 'ag-1')).toEqual({ action: 'pass' });
+    },
+  );
 });
 
 describe('gateCommand — admin commands, unauthenticated', () => {
   it('denies admin command when userId is null', () => {
     const result = gateCommand('/clear', null, 'ag-1');
     expect(result).toEqual({ action: 'deny', command: '/clear' });
+  });
+
+  it('denies a Telegram-addressed admin command using its canonical name', () => {
+    expect(gateCommand('/clear@NanoClawBot', null, 'ag-1')).toEqual({
+      action: 'deny',
+      command: '/clear',
+    });
   });
 
   it('denies admin command for a user with no role', () => {

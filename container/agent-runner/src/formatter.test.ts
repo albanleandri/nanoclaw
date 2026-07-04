@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
-import { formatMessages, stripInternalTags } from './formatter.js';
+import { categorizeMessage, formatMessages, isClearCommand, stripInternalTags } from './formatter.js';
 import { TIMEZONE } from './timezone.js';
 
 beforeEach(() => {
@@ -83,6 +83,25 @@ describe('multi-message chat batches', () => {
     expect(firstIdx).toBeGreaterThan(0);
     expect(secondIdx).toBeGreaterThan(firstIdx);
     expect(thirdIdx).toBeGreaterThan(secondIdx);
+  });
+});
+
+describe('slash command parsing', () => {
+  it('matches /clear as an exact command, not an arbitrary prefix', () => {
+    for (const text of ['/clear-all', '/clearfoo', '/clear/path', '/clear@']) {
+      insertMessage(`m-${text}`, 'chat', { text });
+      const message = getPendingMessages().at(-1);
+      expect(message).toBeDefined();
+      expect(isClearCommand(message!)).toBe(false);
+    }
+  });
+
+  it('canonicalizes a Telegram-addressed /clear command', () => {
+    insertMessage('m-clear-addressed', 'chat', { text: '/clear@NanoClawBot' });
+    const message = getPendingMessages()[0]!;
+
+    expect(categorizeMessage(message)).toMatchObject({ category: 'admin', command: '/clear' });
+    expect(isClearCommand(message)).toBe(true);
   });
 });
 

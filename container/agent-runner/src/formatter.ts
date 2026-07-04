@@ -21,6 +21,14 @@ export interface CommandInfo {
   senderId: string | null;
 }
 
+function extractCommand(text: string): string {
+  const token = text.split(/\s/, 1)[0].toLowerCase();
+  // Keep this grammar aligned with the host command gate. Telegram group
+  // commands may use /command@bot_name, but arbitrary /clear... prefixes
+  // must not acquire /clear's privileged meaning inside the container.
+  return token.match(/^([^@]+)@[a-z0-9_]+$/)?.[1] ?? token;
+}
+
 /**
  * Categorize a message as a command or not.
  * Only applies to chat/chat-sdk messages.
@@ -42,7 +50,7 @@ export function categorizeMessage(msg: MessageInRow): CommandInfo {
   }
 
   // Extract the command name (e.g., '/clear' from '/clear some args')
-  const command = text.split(/\s/)[0].toLowerCase();
+  const command = extractCommand(text);
 
   if (ADMIN_COMMANDS.has(command)) {
     return { category: 'admin', command, text, senderId };
@@ -61,9 +69,8 @@ export function categorizeMessage(msg: MessageInRow): CommandInfo {
  * before messages reach the container.
  */
 export function isClearCommand(msg: MessageInRow): boolean {
-  const content = parseContent(msg.content);
-  const text = (content.text || '').trim();
-  return text.toLowerCase().startsWith('/clear');
+  const info = categorizeMessage(msg);
+  return info.category === 'admin' && info.command === '/clear';
 }
 
 /**

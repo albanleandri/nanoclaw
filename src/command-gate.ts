@@ -14,6 +14,14 @@ export type GateResult = { action: 'pass' } | { action: 'filter' } | { action: '
 const FILTERED_COMMANDS = new Set(['/help', '/login', '/logout', '/doctor', '/config', '/remote-control']);
 const ADMIN_COMMANDS = new Set(['/clear', '/compact', '/context', '/cost', '/files']);
 
+function extractCommand(text: string): string {
+  const token = text.split(/\s/, 1)[0].toLowerCase();
+  // Telegram group commands may address a specific bot as /command@bot_name.
+  // Only a syntactically complete suffix is removed; prefixes such as
+  // /clear-all and malformed /clear@ remain distinct commands.
+  return token.match(/^([^@]+)@[a-z0-9_]+$/)?.[1] ?? token;
+}
+
 /**
  * Classify a message and decide whether it should reach the container.
  * Returns 'pass' for normal messages and authorized admin commands,
@@ -31,7 +39,7 @@ export function gateCommand(content: string, userId: string | null, agentGroupId
 
   if (!text.startsWith('/')) return { action: 'pass' };
 
-  const command = text.split(/\s/)[0].toLowerCase();
+  const command = extractCommand(text);
 
   if (FILTERED_COMMANDS.has(command)) return { action: 'filter' };
 
