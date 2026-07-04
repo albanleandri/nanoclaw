@@ -781,10 +781,11 @@ Provider-specific settings (model, reasoning effort, MCP servers) also come from
 
 ## Agent-Runner Properties
 
-- Native providers receive configured MCP servers; the NanoClaw server runs
-  with Bun. Verified generic profiles execute the same registered canonical
-  handlers through the in-process protocol-tool broker instead of MCP
-  discovery.
+- Native providers receive only capability-authorized configured MCP servers;
+  the NanoClaw server runs with Bun and filters its catalog using the
+  materialized session plan. Verified generic profiles execute the same
+  registered canonical handlers through the in-process protocol-tool broker
+  instead of MCP discovery.
 - Provider-native project docs are loaded by their native runtimes. The host
   also materializes bounded request-level system instructions in runtime
   config where required.

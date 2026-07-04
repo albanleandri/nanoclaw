@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 
-import { callRegisteredTool, listRegisteredToolDefinitions, registerTools } from './server.js';
+import { callRegisteredTool, filterToolsByCapability, listRegisteredToolDefinitions, registerTools } from './server.js';
 import { closeSessionDb, getInboundDb, initTestSessionDb } from '../db/connection.js';
 import './catalog.js';
 
 describe('in-process MCP tool catalog', () => {
+  it('only exposes tools granted by the materialized capability plan', () => {
+    const tools = filterToolsByCapability(listRegisteredToolDefinitions(), new Set(['nanoclaw.send-message']));
+
+    expect(tools.map((tool) => tool.tool.name)).toEqual(
+      expect.arrayContaining(['send_message', 'send_file', 'edit_message', 'add_reaction']),
+    );
+    expect(tools.map((tool) => tool.tool.name)).not.toContain('install_packages');
+  });
+
+  it('assigns every registered tool to a capability', () => {
+    expect(listRegisteredToolDefinitions().filter((tool) => !tool.audit)).toEqual([]);
+  });
+
   it('registers the provider-neutral RTK shell tool', () => {
     expect(listRegisteredToolDefinitions().map((definition) => definition.tool.name)).toContain('run_shell');
   });

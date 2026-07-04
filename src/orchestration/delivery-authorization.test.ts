@@ -5,7 +5,13 @@ import { closeDb, createAgentGroup, createSession, initTestDb, runMigrations } f
 import { handleSystemAction, registerDeliveryAction } from '../delivery.js';
 import type { Session } from '../types.js';
 import { compileDirectPlan } from './patterns/direct.js';
-import { createOrchestrationRun, markRunDispatched, requestOrchestrationCancellation } from './run-store.js';
+import {
+  createOrchestrationRun,
+  markRunDispatched,
+  recordSessionCapabilityAuthorization,
+  requestOrchestrationCancellation,
+} from './run-store.js';
+import { registerCapability } from '../capabilities/capability-registry.js';
 
 const handler = vi.fn(async () => {});
 const session: Session = {
@@ -20,7 +26,19 @@ const session: Session = {
   created_at: '2026-01-01',
 };
 
-beforeAll(() => registerDeliveryAction('orchestration_auth_test', handler));
+beforeAll(() => {
+  registerDeliveryAction('orchestration_auth_test', handler);
+  registerDeliveryAction('orchestration_unmapped_test', handler);
+  registerCapability({
+    id: 'test.orchestration-auth',
+    version: 1,
+    description: 'Test-only correlated host action.',
+    requirements: {},
+    sideEffects: 'local-write',
+    approval: 'never',
+    adapters: [{ kind: 'host-action', entrypoint: 'host:orchestration-auth-test' }],
+  });
+});
 beforeEach(() => {
   handler.mockClear();
   const db = initTestDb();
@@ -41,6 +59,7 @@ function activeRun() {
   });
   const run = createOrchestrationRun(plan, 'input');
   markRunDispatched(run.run_id);
+  recordSessionCapabilityAuthorization('session', ['test.orchestration-auth']);
   return run;
 }
 
@@ -53,6 +72,19 @@ describe('run-correlated host action authorization', () => {
       outboundMessageId: 'action:1',
     });
     expect(handler).toHaveBeenCalledOnce();
+    inDb.close();
+  });
+
+  it('rejects a correlated action that has no capability manifest', async () => {
+    activeRun();
+    const inDb = new Database(':memory:');
+    await expect(
+      handleSystemAction({ action: 'orchestration_unmapped_test' }, session, inDb, {
+        inReplyTo: 'input',
+        outboundMessageId: 'action:unmapped',
+      }),
+    ).rejects.toThrow(/no capability manifest/i);
+    expect(handler).not.toHaveBeenCalled();
     inDb.close();
   });
 

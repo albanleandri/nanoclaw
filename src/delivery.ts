@@ -30,6 +30,7 @@ import type { Session } from './types.js';
 import { tryIndexSessionMessage } from './session-search/indexer.js';
 import {
   authorizeCorrelatedHostAction,
+  authorizeSessionHostAction,
   directDeliveryDecision,
   recordDirectDelivery,
 } from './orchestration/run-store.js';
@@ -508,13 +509,17 @@ export async function handleSystemAction(
 
   const registered = actionHandlers.get(action);
   if (registered) {
-    if (source?.inReplyTo && action !== 'capability_audit' && action !== 'orchestration_result') {
-      authorizeCorrelatedHostAction({
-        sourceSessionId: session.id,
-        inputMessageId: source.inReplyTo,
-        outboundMessageId: source.outboundMessageId,
-        action,
-      });
+    if (action !== 'capability_audit' && action !== 'orchestration_result') {
+      if (source?.inReplyTo) {
+        authorizeCorrelatedHostAction({
+          sourceSessionId: session.id,
+          inputMessageId: source.inReplyTo,
+          outboundMessageId: source.outboundMessageId,
+          action,
+        });
+      } else {
+        authorizeSessionHostAction(session.id, action);
+      }
     }
     await registered(content, session, inDb, source);
     return;

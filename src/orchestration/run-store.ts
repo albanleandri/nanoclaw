@@ -893,6 +893,7 @@ export function authorizeCorrelatedHostAction(input: {
   createdAt?: string;
 }): { correlated: boolean; runId?: string } {
   const now = input.createdAt ?? new Date().toISOString();
+  authorizeSessionHostAction(input.sourceSessionId, input.action);
   const row = getDb()
     .prepare(
       `SELECT r.run_id, r.status AS run_status, a.status AS attempt_status
@@ -916,19 +917,6 @@ export function authorizeCorrelatedHostAction(input: {
        WHERE run_id=? AND kind='model' AND status='running'`,
     )
     .run(row.run_id);
-  const entrypoint = `host:${input.action.replaceAll('_', '-')}`;
-  const capability = listCapabilities().find((manifest) =>
-    manifest.adapters.some((adapter) => adapter.kind === 'host-action' && adapter.entrypoint === entrypoint),
-  );
-  if (capability) {
-    const snapshot = getDb()
-      .prepare('SELECT capabilities_json FROM orchestration_session_authorizations WHERE session_id=?')
-      .get(input.sourceSessionId) as { capabilities_json: string } | undefined;
-    const granted = snapshot ? (JSON.parse(snapshot.capabilities_json) as string[]) : [];
-    if (!granted.includes(capability.id)) {
-      throw new Error(`Orchestration host action requires compiled capability: ${capability.id}`);
-    }
-  }
   appendEvent({
     eventId: `host-action:${input.outboundMessageId}:${row.run_id}`,
     runId: row.run_id,
@@ -939,6 +927,23 @@ export function authorizeCorrelatedHostAction(input: {
     createdAt: now,
   });
   return { correlated: true, runId: row.run_id };
+}
+
+export function authorizeSessionHostAction(sourceSessionId: string, action: string): void {
+  const entrypoint = `host:${action.replaceAll('_', '-')}`;
+  const capability = listCapabilities().find((manifest) =>
+    manifest.adapters.some((adapter) => adapter.kind === 'host-action' && adapter.entrypoint === entrypoint),
+  );
+  if (!capability) {
+    throw new Error(`Host action has no capability manifest: ${action}`);
+  }
+  const snapshot = getDb()
+    .prepare('SELECT capabilities_json FROM orchestration_session_authorizations WHERE session_id=?')
+    .get(sourceSessionId) as { capabilities_json: string } | undefined;
+  const granted = snapshot ? (JSON.parse(snapshot.capabilities_json) as string[]) : [];
+  if (!granted.includes(capability.id)) {
+    throw new Error(`Host action requires compiled capability: ${capability.id}`);
+  }
 }
 
 export function requestOrchestrationCancellation(input: {

@@ -75,18 +75,24 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'mcp-tools', 'index.ts');
 
-  // Build MCP servers config: nanoclaw built-in + any from container.json
+  const grantedCapabilities = new Set(config.sessionRuntimePlan?.capabilities.map((item) => item.id) ?? []);
+
+  // Build MCP servers config from the host-compiled capability plan. The
+  // NanoClaw subprocess independently filters its tool catalog using the same
+  // grant set, so a guessed tool call is rejected as well as omitted.
   const mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {
     nanoclaw: {
       command: 'bun',
       args: ['run', mcpServerPath],
-      env: {},
+      env: { NANOCLAW_CAPABILITIES: JSON.stringify([...grantedCapabilities]) },
     },
   };
 
-  for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
-    mcpServers[name] = serverConfig;
-    log(`Additional MCP server: ${name} (${serverConfig.command})`);
+  if (grantedCapabilities.has('nanoclaw.external-mcp')) {
+    for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
+      mcpServers[name] = serverConfig;
+      log(`Additional MCP server: ${name} (${serverConfig.command})`);
+    }
   }
 
   const provider = createProvider(providerName, {

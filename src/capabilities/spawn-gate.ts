@@ -19,6 +19,9 @@ export function deriveCapabilityProfile(config: ContainerConfig): AgentCapabilit
   const requested = [
     'nanoclaw.send-message',
     'nanoclaw.schedule-task',
+    'nanoclaw.manage-agents',
+    'nanoclaw.self-modify',
+    'nanoclaw.manage-jobs',
     'nanoclaw.request-agent-task',
     'nanoclaw.get-agent-task',
     'nanoclaw.cancel-agent-task',
@@ -29,11 +32,17 @@ export function deriveCapabilityProfile(config: ContainerConfig): AgentCapabilit
     'nanoclaw.publish-agent-task-artifact',
     'memory.session-search',
     'runtime.shell',
+    'nanoclaw.browse-web',
   ];
   // The provider-neutral RTK shell is intentionally limited to the native,
   // container-isolated runtimes. Generic protocol profiles retain their
   // bounded canonical tool contract and record the shell as unavailable.
-  const allowDegraded: string[] = ['runtime.shell'];
+  const allowDegraded: string[] = ['runtime.shell', 'nanoclaw.browse-web'];
+  if ((config.cliScope ?? 'group') !== 'disabled') requested.push('nanoclaw.cli');
+  if (Object.keys(config.mcpServers ?? {}).length > 0) {
+    requested.push('nanoclaw.external-mcp');
+    allowDegraded.push('nanoclaw.external-mcp');
+  }
   if (Object.keys(config.mcpServers ?? {}).includes('browser')) {
     requested.push('web.browse');
     allowDegraded.push('web.browse');

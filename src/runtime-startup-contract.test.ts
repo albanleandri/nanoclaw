@@ -33,6 +33,7 @@ describe.each([
 
     expect(planned.skippedSkills).toEqual(['skill-removed-from-install']);
     expect(planned.gatedConfig.skills).toEqual([]);
+    expect(planned.materializedPlan).toEqual(planned.compiledPlan);
 
     const launch = await compileContainerLaunchPlan({
       containerName: `test-${effective.provider}`,

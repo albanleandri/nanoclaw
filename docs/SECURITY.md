@@ -139,7 +139,10 @@ that are unapproved, drifted, incompatible, or missing requirements fail
 closed. A configured skill that is no longer installed is omitted with a
 warning rather than preventing all startup.
 
-Native providers translate compiled intent into provider-native policy.
+Native providers receive the compiled plan in their runtime JSON. The built-in
+NanoClaw MCP server exposes and invokes only tools whose capability IDs are in
+that plan; configured external MCP servers require the compiled external-MCP
+grant. This is enforced in the server process, not only in model instructions.
 Generic OpenAI-compatible profiles remain text-only until function calling is
 verified through the real endpoint/credential route. Verified generic
 profiles receive only compiled canonical NanoClaw tools with strict argument
@@ -163,9 +166,10 @@ Agent tools request host behavior by writing structured `system` rows to
 5. perform the bounded host operation;
 6. return a structured response through `inbound.db` when needed.
 
-Known correlated actions require an active source-derived orchestration run
-and the capability in that session's compiled authorization snapshot. Late or
-cancelled actions fail closed.
+Every non-internal action requires a code-owned host-action capability manifest
+and that capability in the session's compiled authorization snapshot.
+Correlated actions additionally require an active source-derived orchestration
+run. Unknown, late, or cancelled actions fail closed.
 
 ## Orchestration safety
 

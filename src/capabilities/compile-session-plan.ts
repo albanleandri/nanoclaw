@@ -48,7 +48,7 @@ export function compileEffectiveSessionPlan(input: {
       writableWorkspace: true,
     },
   });
-  let materializedPlan: SessionRuntimePlan | undefined;
+  let materializedPlan: SessionRuntimePlan | undefined = compiledPlan;
   if (input.runtimeDescriptor.kind === 'protocol-loop' && input.effectiveProvider.profile?.toolStrategy === 'native') {
     const capabilities = compiledPlan.capabilities.filter((item) => item.adapter === 'protocol-tool');
     if (capabilities.length === 0) {

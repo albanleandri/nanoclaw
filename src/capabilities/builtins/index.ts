@@ -13,6 +13,69 @@ registerCapability({
   ],
 });
 
+registerCapability({
+  id: 'nanoclaw.manage-agents',
+  version: 1,
+  description: 'Create and wire persistent agent groups.',
+  requirements: { durableState: true },
+  sideEffects: 'local-write',
+  approval: 'policy',
+  adapters: [{ kind: 'host-action', entrypoint: 'host:create-agent' }],
+});
+
+registerCapability({
+  id: 'nanoclaw.self-modify',
+  version: 1,
+  description: 'Request changes to the agent container package and MCP configuration.',
+  requirements: { durableState: true },
+  sideEffects: 'credentialed',
+  approval: 'always',
+  adapters: [
+    { kind: 'host-action', entrypoint: 'host:install-packages' },
+    { kind: 'host-action', entrypoint: 'host:add-mcp-server' },
+  ],
+});
+
+registerCapability({
+  id: 'nanoclaw.manage-jobs',
+  version: 1,
+  description: 'Start, inspect, and cancel durable background jobs.',
+  requirements: { durableState: true },
+  sideEffects: 'local-write',
+  approval: 'policy',
+  adapters: [
+    { kind: 'host-action', entrypoint: 'host:start-job' },
+    { kind: 'host-action', entrypoint: 'host:get-job-status' },
+    { kind: 'host-action', entrypoint: 'host:cancel-job' },
+  ],
+});
+
+registerCapability({
+  id: 'nanoclaw.cli',
+  version: 1,
+  description: 'Dispatch an ncl command through the host with the configured CLI scope.',
+  requirements: { durableState: true },
+  sideEffects: 'local-write',
+  approval: 'policy',
+  adapters: [{ kind: 'host-action', entrypoint: 'host:cli-request' }],
+});
+
+registerCapability({
+  id: 'nanoclaw.external-mcp',
+  version: 1,
+  description: 'Connect the runtime to operator-configured external MCP servers.',
+  requirements: { toolCalling: 'native-or-bridged', mcp: true },
+  sideEffects: 'credentialed',
+  approval: 'policy',
+  adapters: [
+    {
+      kind: 'mcp',
+      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      entrypoint: 'mcp:configured',
+    },
+  ],
+});
+
 for (const taskTool of [
   ['nanoclaw.request-agent-task', 'request_agent_task'],
   ['nanoclaw.get-agent-task', 'get_agent_task'],
@@ -46,6 +109,11 @@ registerCapability({
   approval: 'never',
   adapters: [
     { kind: 'host-action', entrypoint: 'host:schedule-task' },
+    { kind: 'host-action', entrypoint: 'host:list-tasks' },
+    { kind: 'host-action', entrypoint: 'host:cancel-task' },
+    { kind: 'host-action', entrypoint: 'host:pause-task' },
+    { kind: 'host-action', entrypoint: 'host:resume-task' },
+    { kind: 'host-action', entrypoint: 'host:update-task' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:schedule_task' },
   ],
 });
@@ -60,6 +128,22 @@ registerCapability({
   adapters: [
     { kind: 'host-action', entrypoint: 'host:session-search' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:session_search' },
+  ],
+});
+
+registerCapability({
+  id: 'nanoclaw.browse-web',
+  version: 1,
+  description: 'Fetch and sanitize web pages through the built-in NanoClaw MCP server.',
+  requirements: { toolCalling: 'native-or-bridged', mcp: true, network: true },
+  sideEffects: 'none',
+  approval: 'policy',
+  adapters: [
+    {
+      kind: 'mcp',
+      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      entrypoint: 'mcp:nanoclaw',
+    },
   ],
 });
 

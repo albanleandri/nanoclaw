@@ -11,6 +11,7 @@ import {
   type ChannelDeliveryAdapter,
 } from '../delivery.js';
 import type { Session } from '../types.js';
+import { recordSessionCapabilityAuthorization } from '../orchestration/run-store.js';
 import { clearJobTypesForTesting, registerJobType } from './registry.js';
 import { getActiveJobIdsForTesting, resetJobsForTesting } from './runner.js';
 import './actions.js';
@@ -75,6 +76,7 @@ beforeEach(() => {
   runMigrations(db);
   createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
   createSession(session());
+  recordSessionCapabilityAuthorization('sess-1', ['nanoclaw.manage-jobs']);
   registerLongFixtureJob();
 });
 

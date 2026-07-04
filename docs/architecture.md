@@ -207,7 +207,11 @@ Before spawn, the host compiles a `SessionRuntimePlan` from:
 
 Required unsupported capabilities fail before spawn. A runtime without MCP
 support receives no MCP configuration. A verified generic profile receives
-only the compiled canonical protocol-tool bindings.
+only the compiled canonical protocol-tool bindings. Native runtime JSON also
+contains the compiled plan: the built-in NanoClaw MCP subprocess filters both
+tool discovery and invocation by granted capability ID, and configured
+external MCP servers are attached only when the external-MCP capability was
+compiled.
 
 The host materializes provider-native project documents (`CLAUDE.md` and
 `AGENTS.md`) as compatibility artifacts. Provider-specific state and auth
@@ -316,7 +320,9 @@ successful delivery.
 Tools never grant host authority directly. Native MCP tools and verified
 protocol-loop tools write structured outbound rows. Registered host action
 handlers validate the source session, caller permissions, correlation, and
-compiled capability authorization before changing host state.
+compiled capability authorization before changing host state. Every
+non-internal action requires a code-owned capability manifest and a grant in
+the session snapshot; correlated actions additionally require an active run.
 
 Examples include:
 
