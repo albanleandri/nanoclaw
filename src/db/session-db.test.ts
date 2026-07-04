@@ -15,6 +15,7 @@ import {
   getInboundSourceSessionId,
   getOldestDuePendingTimestamp,
   migrateMessagesInTable,
+  syncProcessingAcks,
 } from './session-db.js';
 
 const TEST_DIR = '/tmp/nanoclaw-session-db-test';
@@ -159,5 +160,42 @@ describe('due trigger queries', () => {
     expect(countDueMessages(db)).toBe(1);
     expect(getOldestDuePendingTimestamp(db)).toBe(row.processAfter);
     db.close();
+  });
+});
+
+describe('syncProcessingAcks', () => {
+  it('preserves completed and failed terminal outcomes', () => {
+    const inDb = makeDueMessageDb();
+    const outDb = new Database(':memory:');
+    outDb.exec(`
+      CREATE TABLE processing_ack (
+        message_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        status_changed TEXT NOT NULL
+      );
+    `);
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
+         VALUES (?, ?, 'chat', datetime('now'), 'pending', 1, '{}')`,
+      )
+      .run('completed-message', 2);
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
+         VALUES (?, ?, 'chat', datetime('now'), 'pending', 1, '{}')`,
+      )
+      .run('failed-message', 4);
+    outDb.prepare("INSERT INTO processing_ack VALUES (?, 'completed', datetime('now'))").run('completed-message');
+    outDb.prepare("INSERT INTO processing_ack VALUES (?, 'failed', datetime('now'))").run('failed-message');
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(inDb.prepare('SELECT id, status FROM messages_in ORDER BY seq').all()).toEqual([
+      { id: 'completed-message', status: 'completed' },
+      { id: 'failed-message', status: 'failed' },
+    ]);
+    inDb.close();
+    outDb.close();
   });
 });

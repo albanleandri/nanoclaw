@@ -204,16 +204,18 @@ export function getMessageForRetry(
 }
 
 export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Database): void {
-  const completed = outDb
-    .prepare("SELECT message_id FROM processing_ack WHERE status IN ('completed', 'failed')")
-    .all() as Array<{ message_id: string }>;
+  const terminal = outDb
+    .prepare("SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed')")
+    .all() as Array<{ message_id: string; status: 'completed' | 'failed' }>;
 
-  if (completed.length === 0) return;
+  if (terminal.length === 0) return;
 
-  const updateStmt = inDb.prepare("UPDATE messages_in SET status = 'completed' WHERE id = ? AND status != 'completed'");
+  const updateStmt = inDb.prepare(
+    "UPDATE messages_in SET status = ? WHERE id = ? AND status NOT IN ('completed', 'failed')",
+  );
   inDb.transaction(() => {
-    for (const { message_id } of completed) {
-      updateStmt.run(message_id);
+    for (const { message_id, status } of terminal) {
+      updateStmt.run(status, message_id);
     }
   })();
 }

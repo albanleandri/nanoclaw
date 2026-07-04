@@ -177,6 +177,9 @@ CREATE TABLE processing_ack (
 ```
 
 Crash recovery: on container startup, stale `processing` entries get cleared. Host-side sync: `syncProcessingAcks()` in `src/host-sweep.ts`.
+Terminal acknowledgements retain their outcome when reconciled:
+`completed` becomes `messages_in.status = 'completed'`, while `failed` becomes
+`messages_in.status = 'failed'`.
 
 Follow-up messages that arrive while a provider query is active move to
 `processing` when the poll loop pushes them into the active query. They move to
