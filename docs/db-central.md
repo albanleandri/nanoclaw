@@ -368,6 +368,12 @@ Recurring task rows are never duplicated into the administrator's session.
 
 `jobs` and `job_events` remain the shared durable lifecycle/event backbone. Migration 022 adds `agent_tasks`, a narrow ownership and correlation relation for `jobs.type='agent_task'`.
 
+The channel/platform fields on `jobs` are delivery state, not authority. Job
+actions persist only a host-resolved messaging-group route authorized for the
+source session, and the delivery poll revalidates that relationship before
+sending each progress or terminal event. Rows without a valid source session
+or currently authorized route remain pending.
+
 Key `agent_tasks` columns are `job_id`, requester/assignee agent group and session IDs, optional `parent_task_id`, discriminated `scope`, reserved plan-role correlation fields, and stable dispatch/cancel message IDs. Requester and assignee indexes support actor-scoped lookup. The complete validated `AgentTaskEnvelope` remains in `jobs.params_json`.
 
 Task state is monotonic (`queued → running → succeeded|failed|cancelled`), events have per-job sequence numbers, and stable action/message IDs make host delivery retries idempotent. `scope='agent-delegation'` is executable; `scope='plan-role'` is schema-reserved.
@@ -488,7 +494,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 028 | `028-orchestration-lifecycle.ts`          | Attempt leases, cancellation, session authorization snapshots, and capability-audit correlation                                                                      |
 | 029 | `029-orchestration-fallback.ts`           | Durable fallback compatibility/side-effect facts and append-only candidate decisions                                                                                 |
 | 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
-| 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                 |
+| 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                |
 
 Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 

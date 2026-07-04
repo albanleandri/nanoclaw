@@ -4,6 +4,8 @@ import {
   createAgentGroup,
   closeDb,
   createJob,
+  createMessagingGroup,
+  createSession,
   getDb,
   getJobDeliveries,
   initTestDb,
@@ -36,6 +38,26 @@ beforeEach(() => {
   const db = initTestDb();
   runMigrations(db);
   createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
+  createMessagingGroup({
+    id: 'mg-1',
+    channel_type: 'telegram',
+    platform_id: 'telegram:123',
+    name: 'Chat',
+    is_group: 1,
+    unknown_sender_policy: 'strict',
+    created_at: now(),
+  });
+  createSession({
+    id: 'sess-1',
+    agent_group_id: 'ag-1',
+    messaging_group_id: 'mg-1',
+    thread_id: null,
+    agent_provider: null,
+    status: 'active',
+    container_status: 'stopped',
+    last_active: null,
+    created_at: now(),
+  });
   setJobDeliveryProgressIntervalForTesting(JOB_DELIVERY_DEFAULT_PROGRESS_INTERVAL_MS);
 });
 
@@ -46,6 +68,27 @@ afterEach(() => {
 });
 
 describe('job delivery', () => {
+  it('leaves events pending when a persisted route is not authorized for the source session', async () => {
+    const deliveries: string[] = [];
+    setDeliveryAdapter(mockAdapter(deliveries));
+    createJob({
+      id: 'job-1',
+      type: 'fixture',
+      agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
+      params: {},
+      channelType: 'telegram',
+      platformId: 'attacker-chat',
+    });
+    appendJobEvent('job-1', { id: 'evt-1', level: 'final', eventType: 'final', message: 'Complete' });
+
+    await deliverJobEventsOnce();
+
+    expect(deliveries).toEqual([]);
+    expect(getJobDeliveries('job-1')).toEqual([]);
+  });
+
   it('delivers the first progress event once', async () => {
     const deliveries: string[] = [];
     setDeliveryAdapter(mockAdapter(deliveries));
@@ -53,6 +96,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -74,6 +119,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -99,6 +146,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -124,6 +173,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -145,6 +196,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -178,6 +231,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'friendly_fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',
@@ -197,6 +252,8 @@ describe('job delivery', () => {
       id: 'job-1',
       type: 'fixture',
       agentGroupId: 'ag-1',
+      sessionId: 'sess-1',
+      messagingGroupId: 'mg-1',
       params: {},
       channelType: 'telegram',
       platformId: 'telegram:123',

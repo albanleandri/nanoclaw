@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { getJob, getJobEvents, listRecentJobs, type JobRecord } from '../db/jobs.js';
 import { getDeliveryAdapter, registerDeliveryAction } from '../delivery.js';
 import type { Session } from '../types.js';
+import { authorizeChannelDestination } from '../channel-destination-auth.js';
 import { getJobType } from './registry.js';
 import { cancelJob, startJob } from './runner.js';
 
@@ -10,14 +11,30 @@ function textResponse(text: string): string {
   return JSON.stringify({ text });
 }
 
-async function deliverToOrigin(_session: Session, content: Record<string, unknown>, text: string): Promise<void> {
+interface AuthorizedJobRoute {
+  messagingGroupId: string;
+  channelType: string;
+  platformId: string;
+  threadId: string | null;
+}
+
+function resolveAuthorizedRoute(session: Session, content: Record<string, unknown>): AuthorizedJobRoute {
+  const channelType = typeof content.channelType === 'string' ? content.channelType : '';
+  const platformId = typeof content.platformId === 'string' ? content.platformId : '';
+  if (!channelType || !platformId) throw new Error('job action is missing channel routing');
+  const messagingGroup = authorizeChannelDestination(session, channelType, platformId);
+  return {
+    messagingGroupId: messagingGroup.id,
+    channelType: messagingGroup.channel_type,
+    platformId: messagingGroup.platform_id,
+    threadId: typeof content.threadId === 'string' ? content.threadId : null,
+  };
+}
+
+async function deliverToOrigin(route: AuthorizedJobRoute, text: string): Promise<void> {
   const adapter = getDeliveryAdapter();
   if (!adapter) return;
-  const channelType = (content.channelType as string | undefined) ?? null;
-  const platformId = (content.platformId as string | undefined) ?? null;
-  const threadId = (content.threadId as string | null | undefined) ?? null;
-  if (!channelType || !platformId) return;
-  await adapter.deliver(channelType, platformId, threadId, 'chat', textResponse(text));
+  await adapter.deliver(route.channelType, route.platformId, route.threadId, 'chat', textResponse(text));
 }
 
 function publicJobName(job: JobRecord): string {
@@ -57,30 +74,26 @@ function statusSummary(job: JobRecord): string {
 registerDeliveryAction(
   'start_job',
   async (content: Record<string, unknown>, session: Session, _inDb: Database.Database) => {
+    const route = resolveAuthorizedRoute(session, content);
     try {
       const job = startJob({
         type: String(content.type ?? ''),
         params: content.params ?? {},
         agentGroupId: session.agent_group_id,
         sessionId: session.id,
-        messagingGroupId: session.messaging_group_id,
-        channelType: (content.channelType as string | undefined) ?? null,
-        platformId: (content.platformId as string | undefined) ?? null,
-        threadId: (content.threadId as string | null | undefined) ?? null,
+        messagingGroupId: route.messagingGroupId,
+        channelType: route.channelType,
+        platformId: route.platformId,
+        threadId: route.threadId,
         requestedBy: (content.requestedBy as string | undefined) ?? null,
       });
       const label = job.type === 'stock_market_screen' ? 'Screen' : 'Job';
       await deliverToOrigin(
-        session,
-        content,
+        route,
         `${label} started. I will send progress here every few minutes and a final result when it is done.`,
       );
     } catch (err) {
-      await deliverToOrigin(
-        session,
-        content,
-        `Could not start job: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      await deliverToOrigin(route, `Could not start job: ${err instanceof Error ? err.message : String(err)}`);
     }
   },
 );
@@ -88,24 +101,26 @@ registerDeliveryAction(
 registerDeliveryAction(
   'get_job_status',
   async (content: Record<string, unknown>, session: Session, _inDb: Database.Database) => {
+    const route = resolveAuthorizedRoute(session, content);
     const job = findConversationJob(content, session);
-    await deliverToOrigin(session, content, job ? statusSummary(job) : 'No active job found for this conversation.');
+    await deliverToOrigin(route, job ? statusSummary(job) : 'No active job found for this conversation.');
   },
 );
 
 registerDeliveryAction(
   'cancel_job',
   async (content: Record<string, unknown>, session: Session, _inDb: Database.Database) => {
+    const route = resolveAuthorizedRoute(session, content);
     const target = findConversationJob(content, session);
     if (!target) {
-      await deliverToOrigin(session, content, 'No active job found for this conversation.');
+      await deliverToOrigin(route, 'No active job found for this conversation.');
       return;
     }
     if (target.type === 'agent_task') {
-      await deliverToOrigin(session, content, 'Use cancel_agent_task for durable delegated tasks.');
+      await deliverToOrigin(route, 'Use cancel_agent_task for durable delegated tasks.');
       return;
     }
     const job = cancelJob(target.id);
-    await deliverToOrigin(session, content, job ? `${publicJobName(job)} cancellation requested.` : 'Job not found.');
+    await deliverToOrigin(route, job ? `${publicJobName(job)} cancellation requested.` : 'Job not found.');
   },
 );

@@ -171,6 +171,12 @@ and that capability in the session's compiled authorization snapshot.
 Correlated actions additionally require an active source-derived orchestration
 run. Unknown, late, or cancelled actions fail closed.
 
+Durable job routes are not trusted from container action payloads. The host
+resolves the channel/platform pair to a messaging group, applies the same
+origin-or-destination ACL as ordinary delivery, stores the canonical route,
+and revalidates it against the source session before every progress/final
+delivery.
+
 ## Orchestration safety
 
 Direct engaged messages use a host-owned versioned plan and central step

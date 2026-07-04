@@ -12,7 +12,6 @@ import type Database from 'better-sqlite3';
 import { getRunningSessions, getActiveSessions, createPendingQuestion } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroupByPlatform } from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -34,6 +33,7 @@ import {
   directDeliveryDecision,
   recordDirectDelivery,
 } from './orchestration/run-store.js';
+import { authorizeChannelDestination } from './channel-destination-auth.js';
 
 const ACTIVE_POLL_MS = 1000;
 const SWEEP_POLL_MS = 60_000;
@@ -352,27 +352,7 @@ async function deliverMessage(
   // (instead of marking it delivered when nothing was actually delivered,
   // which was the pre-refactor bug).
   if (msg.channel_type && msg.platform_id) {
-    const mg = getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
-    if (!mg) {
-      throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
-    }
-    const isOriginChat = session.messaging_group_id === mg.id;
-    // Guarded: without the agent-to-agent module, `agent_destinations`
-    // doesn't exist and we permit all non-origin channel sends (the
-    // origin-chat case is always allowed regardless). Inlined SQL instead
-    // of importing `hasDestination` so core doesn't depend on the module.
-    if (!isOriginChat && hasTable(getDb(), 'agent_destinations')) {
-      const row = getDb()
-        .prepare(
-          'SELECT 1 FROM agent_destinations WHERE agent_group_id = ? AND target_type = ? AND target_id = ? LIMIT 1',
-        )
-        .get(session.agent_group_id, 'channel', mg.id);
-      if (!row) {
-        throw new Error(
-          `unauthorized channel destination: ${session.agent_group_id} cannot send to ${mg.channel_type}/${mg.platform_id}`,
-        );
-      }
-    }
+    authorizeChannelDestination(session, msg.channel_type, msg.platform_id);
   }
 
   // Track pending questions for ask_user_question flow.

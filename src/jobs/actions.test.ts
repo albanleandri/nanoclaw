@@ -3,7 +3,16 @@ import path from 'path';
 
 import type Database from 'better-sqlite3';
 
-import { createAgentGroup, createSession, closeDb, getDb, getJob, initTestDb, runMigrations } from '../db/index.js';
+import {
+  createAgentGroup,
+  createMessagingGroup,
+  createSession,
+  closeDb,
+  getDb,
+  getJob,
+  initTestDb,
+  runMigrations,
+} from '../db/index.js';
 import {
   clearDeliveryAdapterForTesting,
   handleSystemAction,
@@ -24,7 +33,7 @@ function session(): Session {
   return {
     id: 'sess-1',
     agent_group_id: 'ag-1',
-    messaging_group_id: null,
+    messaging_group_id: 'mg-1',
     thread_id: null,
     agent_provider: null,
     status: 'active',
@@ -75,6 +84,15 @@ beforeEach(() => {
   const db = initTestDb();
   runMigrations(db);
   createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
+  createMessagingGroup({
+    id: 'mg-1',
+    channel_type: 'telegram',
+    platform_id: 'chat-1',
+    name: 'Chat',
+    is_group: 1,
+    unknown_sender_policy: 'strict',
+    created_at: now(),
+  });
   createSession(session());
   recordSessionCapabilityAuthorization('sess-1', ['nanoclaw.manage-jobs']);
   registerLongFixtureJob();
@@ -88,6 +106,29 @@ afterEach(() => {
 });
 
 describe('job delivery actions', () => {
+  it('rejects a container-supplied route that is not authorized for the source session', async () => {
+    const deliveries: string[] = [];
+    setDeliveryAdapter(mockAdapter(deliveries));
+
+    await expect(
+      handleSystemAction(
+        {
+          action: 'start_job',
+          type: 'fixture_long',
+          params: {},
+          channelType: 'telegram',
+          platformId: 'attacker-chat',
+          threadId: null,
+        },
+        session(),
+        getDb() as Database.Database,
+      ),
+    ).rejects.toThrow(/unknown messaging group/i);
+
+    expect(getActiveJobIdsForTesting()).toEqual([]);
+    expect(deliveries).toEqual([]);
+  });
+
   it('starts a job from a system action and sends a user-facing confirmation without raw ids', async () => {
     const deliveries: string[] = [];
     setDeliveryAdapter(mockAdapter(deliveries));

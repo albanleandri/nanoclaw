@@ -8,6 +8,8 @@ import {
 } from '../db/jobs.js';
 import { getDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
+import { getSession } from '../db/sessions.js';
+import { authorizeChannelDestination } from '../channel-destination-auth.js';
 import { getJobType } from './registry.js';
 
 export const JOB_DELIVERY_DEFAULT_POLL_MS = 10_000;
@@ -70,14 +72,30 @@ export async function deliverJobEventsOnce(): Promise<void> {
 
   const jobs = listRecentJobs({ limit: 100 }).filter((job) => job.channel_type && job.platform_id);
   for (const job of jobs) {
+    let route: { channelType: string; platformId: string };
+    try {
+      if (!job.session_id) throw new Error('job has no source session');
+      const session = getSession(job.session_id);
+      if (!session || session.agent_group_id !== job.agent_group_id) {
+        throw new Error('job source session is missing or belongs to another agent');
+      }
+      const messagingGroup = authorizeChannelDestination(session, job.channel_type!, job.platform_id!);
+      if (job.messaging_group_id && job.messaging_group_id !== messagingGroup.id) {
+        throw new Error('job messaging-group route does not match its channel route');
+      }
+      route = { channelType: messagingGroup.channel_type, platformId: messagingGroup.platform_id };
+    } catch (err) {
+      log.warn('Job event route authorization failed; leaving events pending', { jobId: job.id, err });
+      continue;
+    }
     const delivered = getJobDeliveries(job.id);
     const events = getJobEvents(job.id, { limit: 500 });
     for (const event of events) {
       if (!shouldDeliverEvent(event, delivered, events)) continue;
       try {
         const platformMessageId = await adapter.deliver(
-          job.channel_type!,
-          job.platform_id!,
+          route.channelType,
+          route.platformId,
           job.thread_id,
           'chat',
           JSON.stringify({ text: formatEvent(job, event, events) }),

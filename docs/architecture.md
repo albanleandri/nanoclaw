@@ -379,7 +379,11 @@ advances recurring occurrences without wall-clock drift.
 
 Long-running host work uses the central `jobs`/`job_events` lifecycle rather
 than pretending a container tool call is durable. Agent-task delegation uses
-its own central task/event lifecycle and dedicated assignee sessions.
+its own central task/event lifecycle and dedicated assignee sessions. Job
+start/status/cancel actions resolve their route through host-owned messaging
+groups and the normal destination ACL before use. Progress and terminal
+delivery revalidate the persisted route against the source session, so an
+outbound action or stale job row cannot select an arbitrary channel.
 
 ## Security invariants
 
