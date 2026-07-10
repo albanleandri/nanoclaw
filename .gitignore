@@ -22,6 +22,10 @@ docs/HANDOFF.local.md
 docs/UPSTREAM_UPDATE_GUIDE.local.md
 # Audit reports enumerate live weaknesses — never commit to the public repo
 docs/AUDIT-*.local.md
+# Private research lives in the private custom-skills submodule.
+docs/model-neutral-architecture-assessment.md
+docs/model-neutral-architecture-implementation-plan.md
+docs/UPSTREAM-REVIEW-*.md
 # Work artifacts (plans, specs, etc.) generated during sessions — ephemeral, not tracked
 docs/superpowers/
 **/.claude-shared.md
