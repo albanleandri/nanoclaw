@@ -40,6 +40,8 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
 
     expect(prompt).toContain('Wrap each delivered message');
     expect(prompt).toContain('<message to="name">');
+    expect(prompt).toContain('do not send a separate visible confirmation');
+    expect(prompt).toContain('Only report delivery status when delivery failed');
     expect(prompt).toContain('`casa`');
   });
 
@@ -57,6 +59,8 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
 
     expect(prompt).toContain('Wrap each delivered message');
     expect(prompt).toContain('<message to="name">');
+    expect(prompt).toContain('do not send a separate visible confirmation');
+    expect(prompt).toContain('Only report delivery status when delivery failed');
     expect(prompt).toContain('default to addressing the destination it came `from`');
     expect(prompt).toContain('`casa`');
   });

@@ -13,6 +13,7 @@ import { getCurrentInReplyTo } from '../current-batch.js';
 import { findByName, getAllDestinations } from '../destinations.js';
 import { getMessageIdBySeq, getRoutingBySeq, writeMessageOut } from '../db/messages-out.js';
 import { getSessionRouting } from '../db/session-routing.js';
+import { stripInternalTags } from '../formatter.js';
 import { registerTools } from './server.js';
 import type { McpToolDefinition } from './types.js';
 
@@ -117,8 +118,10 @@ export const sendMessage: McpToolDefinition = {
     },
   },
   async handler(args) {
-    const text = args.text as string;
-    if (!text) return err('text is required');
+    const rawText = args.text as string;
+    if (!rawText) return err('text is required');
+    const text = stripInternalTags(rawText);
+    if (!text) return ok('Internal-only message suppressed');
 
     const routing = resolveRouting(args.to as string | undefined);
     if ('error' in routing) return err(routing.error);
@@ -139,7 +142,9 @@ export const sendMessage: McpToolDefinition = {
     });
 
     log(`send_message: #${seq} → ${routing.resolvedName}`);
-    return ok(`Message sent to ${routing.resolvedName} (id: ${seq})`);
+    return ok(
+      `Message sent to ${routing.resolvedName} (id: ${seq}). Do not send a separate success confirmation; report delivery status only if something failed or needs user action.`,
+    );
   },
 };
 
@@ -193,7 +198,9 @@ export const sendFile: McpToolDefinition = {
     });
 
     log(`send_file: ${id} → ${routing.resolvedName} (${filename})`);
-    return ok(`File sent to ${routing.resolvedName} (id: ${id}, filename: ${filename})`);
+    return ok(
+      `File sent to ${routing.resolvedName} (id: ${id}, filename: ${filename}). Do not send a separate success confirmation; report delivery status only if something failed or needs user action.`,
+    );
   },
 };
 

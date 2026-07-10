@@ -126,5 +126,9 @@ function buildDestinationsSection(): string {
   lines.push(
     'The `send_message` MCP tool is the same delivery, available mid-turn — handy for a quick acknowledgment ("on it") before a slow tool call. Each `send_message` call and each final-response `<message>` block lands as its own message in the conversation, so they read as a sequence rather than as one combined reply.',
   );
+  lines.push('');
+  lines.push(
+    'After `send_message` or `send_file` delivers the planned content, do not send a separate visible confirmation such as "sent", "delivered", "logged", or "done" to any main/default channel unless the user explicitly asked for that confirmation. Only report delivery status when delivery failed, was blocked, or needs user action. Use `<internal>...</internal>` for private success notes.',
+  );
   return lines.join('\n');
 }

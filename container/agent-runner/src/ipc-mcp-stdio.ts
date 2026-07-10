@@ -157,6 +157,7 @@ MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It ca
 \u2022 Always send a message (e.g., reminders, daily briefings)
 \u2022 Only send a message when there's something to report (e.g., "notify me if...")
 \u2022 Never send a message (background maintenance tasks)
+Do not ask task agents to send a separate visible confirmation that planned content was sent, delivered, or logged unless the user explicitly requested that confirmation. They should report delivery status only when delivery failed, was blocked, or needs user action, and use <internal>...</internal> for private success notes.
 
 SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)

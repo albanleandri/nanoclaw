@@ -50,6 +50,21 @@ describe('send_message MCP tool — in_reply_to plumbing', () => {
     expect(out).toHaveLength(1);
     expect(out[0].in_reply_to).toBeNull();
   });
+
+  it('suppresses internal-only messages', async () => {
+    const result = await sendMessage.handler({ to: 'peer', text: '<internal>Daily DD delivered elsewhere.</internal>' });
+
+    expect(result.isError).toBeUndefined();
+    expect(getUndeliveredMessages()).toHaveLength(0);
+  });
+
+  it('strips internal blocks before writing outbound text', async () => {
+    await sendMessage.handler({ to: 'peer', text: 'visible <internal>hidden</internal> text' });
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe('visible  text');
+  });
 });
 
 describe('send_file MCP tool — filename safety', () => {

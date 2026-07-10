@@ -328,6 +328,41 @@ describe('poll loop integration', () => {
     await loopPromise.catch(() => {});
   });
 
+  it('internal tags inside message blocks are stripped before delivery', async () => {
+    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const provider = new MockProvider(
+      {},
+      () => '<message to="discord-test">visible <internal>hidden status</internal> text</message>',
+    );
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+    controller.abort();
+
+    const out = getUndeliveredMessages();
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content).text).toBe('visible  text');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('does not deliver internal-only message blocks', async () => {
+    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const provider = new MockProvider({}, () => '<message to="discord-test"><internal>delivered elsewhere</internal></message>');
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 500);
+
+    await sleep(100);
+    controller.abort();
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+
+    await loopPromise.catch(() => {});
+  });
+
   it('handles mixed task + chat batch with correct origin metadata', async () => {
     // Seed destination for routing lookup
     insertMessage('m-chat', { sender: 'Alice', text: 'check this' }, { platformId: 'chan-1', channelType: 'discord' });

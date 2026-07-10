@@ -72,7 +72,7 @@ import './orchestration/host-bridge.js';
 import { startCliServer, stopCliServer } from './cli/socket-server.js';
 
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
-import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
+import { initChannelAdapters, teardownChannelAdapters } from './channels/channel-registry.js';
 
 async function main(): Promise<void> {
   hardenProjectSecretFiles(process.cwd());
