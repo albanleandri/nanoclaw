@@ -27,7 +27,7 @@ import {
 
 const FUTURE = Date.now() + 2 * 60 * 60 * 1000; // 2 hours from now
 const PAST = Date.now() - 60 * 1000; // 1 minute ago
-const SOON = Date.now() + 3 * 60 * 1000; // 3 min from now (within 5-min buffer)
+const SOON = Date.now() + 10 * 60 * 1000; // within the 15-minute buffer
 
 function makeCreds(overrides: Partial<ClaudeOAuthCredentials> = {}): ClaudeOAuthCredentials {
   return {
@@ -96,12 +96,12 @@ describe('isTokenExpired', () => {
     expect(isTokenExpired(PAST)).toBe(true);
   });
 
-  it('returns true when token expires within the 5-minute buffer', () => {
+  it('returns true when token expires within the 15-minute buffer', () => {
     expect(isTokenExpired(SOON)).toBe(true);
   });
 
   it('returns false when token expires exactly at the buffer boundary', () => {
-    const justBeyondBuffer = Date.now() + 5 * 60 * 1000 + 1000;
+    const justBeyondBuffer = Date.now() + 15 * 60 * 1000 + 1000;
     expect(isTokenExpired(justBeyondBuffer)).toBe(false);
   });
 });

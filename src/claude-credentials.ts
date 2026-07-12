@@ -29,8 +29,10 @@ const REFRESH_TIMEOUT_MS = 10_000; // abort if the token endpoint doesn't respon
 // Omitting this causes the endpoint to return "Invalid request format".
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
-// Refresh 5 minutes before actual expiry to avoid races
-const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+// Refresh well before actual expiry. The credential is reconciled into OneCLI
+// every five minutes, so a 15-minute buffer guarantees multiple opportunities
+// to refresh and publish it before Anthropic can reject a request.
+export const EXPIRY_BUFFER_MS = 15 * 60 * 1000;
 
 /**
  * Read credentials from the given file path (defaults to ~/.claude/.credentials.json).

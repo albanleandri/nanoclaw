@@ -81,6 +81,19 @@ cd container/agent-runner && bun run test:coverage
 - Do not add a TypeScript build step to the agent container; Bun executes the
   bind-mounted source directly.
 
+## Claude credential reliability
+
+- Set `CLAUDE_ONECLI_SECRET_ID` to the OneCLI secret containing the Claude
+  OAuth access token. NanoClaw reconciles the host credential into that secret
+  at startup and every five minutes.
+- OAuth refresh starts 15 minutes before recorded expiry. This provides at
+  least two retry opportunities before expiry and does not require launching
+  Claude Code interactively after the initial account authorization.
+- A failed refresh never overwrites OneCLI with a known-expired token. Failures
+  are logged and retried while the last-known-good vault value is preserved.
+- `nanoclaw-refresh-token.timer`, where installed, is only an additional
+  recovery mechanism; the running host owns the primary refresh lifecycle.
+
 ## Usage-Limit Replies
 
 - If the provider returns a classified quota/auth error, or a recognized bare

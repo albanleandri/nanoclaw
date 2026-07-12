@@ -11,6 +11,7 @@ import { createChannelDeliveryBridge } from './channel-delivery-bridge.js';
 import { DATA_DIR } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
+import { startClaudeTokenMaintenance, stopClaudeTokenMaintenance } from './claude-token-maintenance.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
@@ -106,6 +107,10 @@ async function main(): Promise<void> {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 
+  // Keep the host OAuth credential refreshed and reconciled into OneCLI.
+  // This is runtime infrastructure; it must not depend on launching Claude CLI.
+  startClaudeTokenMaintenance();
+
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
     return {
@@ -193,6 +198,7 @@ async function shutdown(signal: string): Promise<void> {
   stopDeliveryPolls();
   stopJobDeliveryPoll();
   stopHostSweep();
+  stopClaudeTokenMaintenance();
   await stopCliServer();
   try {
     await teardownChannelAdapters();
