@@ -9,15 +9,11 @@ describe('parseTextStyles — headings with inline emphasis (telegram)', () => {
   // `_7\. _Title__`, which Telegram rejects ("can't find end of Underline
   // entity") and the reply is dropped after retries.
   it('unwraps bold inside a heading instead of nesting delimiters', () => {
-    expect(parseTextStyles('### 7. **Hypey token-saving claims**', 'telegram')).toBe(
-      '*7. Hypey token-saving claims*',
-    );
+    expect(parseTextStyles('### 7. **Hypey token-saving claims**', 'telegram')).toBe('*7. Hypey token-saving claims*');
   });
 
   it('unwraps multiple bold spans inside one heading', () => {
-    expect(parseTextStyles('## **RTK** vs **context offloading**', 'telegram')).toBe(
-      '*RTK vs context offloading*',
-    );
+    expect(parseTextStyles('## **RTK** vs **context offloading**', 'telegram')).toBe('*RTK vs context offloading*');
   });
 
   it('unwraps italic underscores inside a heading', () => {
