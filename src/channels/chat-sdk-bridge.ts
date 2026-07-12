@@ -133,6 +133,15 @@ export interface ChatSdkBridgeConfig {
    */
   transformOutboundText?: (text: string) => string;
   /**
+   * When the adapter rejects a formatted message and this predicate matches
+   * the error, the bridge re-posts the same chunk as raw plain text instead
+   * of letting the delivery retry loop resend an identical (deterministically
+   * failing) payload and then drop the reply. Used by Telegram, whose Bot API
+   * rejects the whole message when the rendered MarkdownV2 has unbalanced
+   * entities ("can't parse entities"). Degraded formatting beats silence.
+   */
+  shouldFallbackToPlainText?: (err: unknown) => boolean;
+  /**
    * Maximum text length the underlying adapter accepts in a single message.
    * When set, the bridge splits outbound text longer than this on paragraph
    * → line → hard-char boundaries and posts multiple messages. Without this,
@@ -599,10 +608,20 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
           const attachFiles = i === 0 && fileUploads && fileUploads.length > 0;
-          const result = await adapter.postMessage(
-            tid,
-            attachFiles ? { markdown: chunk, files: fileUploads } : { markdown: chunk },
-          );
+          let result;
+          try {
+            result = await adapter.postMessage(
+              tid,
+              attachFiles ? { markdown: chunk, files: fileUploads } : { markdown: chunk },
+            );
+          } catch (err) {
+            if (!config.shouldFallbackToPlainText?.(err)) throw err;
+            log.warn('Adapter rejected formatted message, re-posting as plain text', {
+              adapter: adapter.name,
+              err,
+            });
+            result = await adapter.postMessage(tid, attachFiles ? { raw: chunk, files: fileUploads } : { raw: chunk });
+          }
           if (i === 0) firstId = result?.id;
         }
         return firstId;

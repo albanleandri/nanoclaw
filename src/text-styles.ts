@@ -287,6 +287,18 @@ function splitProtectedRegions(text: string): Segment[] {
   return segments.length > 0 ? segments : [{ content: text, protected: false }];
 }
 
+/**
+ * Remove emphasis pairs from a heading title. Runs after the italic/bold
+ * conversions, so bold is already `*x*` and italic is `_x_`. The underscore
+ * variant requires non-word boundaries so snake_case identifiers and URLs
+ * survive intact.
+ */
+function unwrapEmphasis(text: string): string {
+  return text
+    .replace(/\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*/g, '$1')
+    .replace(/(?<!\w)_(?=[^\s_])([^_\n]+?)(?<=[^\s_])_(?!\w)/g, '$1');
+}
+
 /** Apply marker-substitution transformations to a non-code segment. */
 function transformSegment(text: string, channel: ChannelType): string {
   let t = text;
@@ -303,8 +315,12 @@ function transformSegment(text: string, channel: ChannelType): string {
   // 2. Bold: **text** → *text* (whatsapp/telegram/slack use single *)
   t = t.replace(/\*\*(?=[^\s*])([^*]+?)(?<=[^\s*])\*\*/g, '*$1*');
 
-  // 3. Headings: ## Title → *Title* (any level, line-start only)
-  t = t.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
+  // 3. Headings: ## Title → *Title* (any level, line-start only).
+  // Emphasis already inside the title is unwrapped, not preserved: nesting it
+  // inside the heading's own `*...*` produces adjacent delimiters (e.g.
+  // `*7. *x**`) that Telegram's MarkdownV2 re-parse rejects, dropping the
+  // whole message at delivery.
+  t = t.replace(/^#{1,6}\s+(.+)$/gm, (_line, title: string) => `*${unwrapEmphasis(title)}*`);
 
   // 4. Links
   if (channel === 'slack') {

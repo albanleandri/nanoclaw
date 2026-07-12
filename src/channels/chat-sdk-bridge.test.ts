@@ -279,3 +279,64 @@ describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
     expect(msg.markdown).toBe('plain hello');
   });
 });
+
+describe('createChatSdkBridge.deliver — plain-text fallback on formatting rejection', () => {
+  // Regression: Telegram rejects messages whose rendered MarkdownV2 has
+  // unbalanced entities ("can't parse entities"). Retrying the identical
+  // payload can never succeed, so the reply was silently dropped after the
+  // delivery retries — the agent believed it had replied. With
+  // shouldFallbackToPlainText configured, the bridge re-posts the chunk as
+  // raw text instead.
+  const entityError = () =>
+    new Error("Bad Request: can't parse entities: Can't find end of Underline entity at byte offset 1712");
+  const isEntityError = (err: unknown) => err instanceof Error && /can't parse entities/i.test(err.message);
+
+  it('re-posts as raw text when the adapter rejects the formatted message', async () => {
+    const calls: PostCall[] = [];
+    const postMessage = async (threadId: string, message: AdapterPostableMessage): Promise<RawMessage<unknown>> => {
+      calls.push({ threadId, message });
+      if (typeof message === 'object' && message !== null && 'markdown' in message) throw entityError();
+      return { id: 'msg-plain', threadId, raw: {} };
+    };
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      shouldFallbackToPlainText: isEntityError,
+    });
+    const id = await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: { text: '*7. *broken nesting**' },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0].message).toEqual({ markdown: '*7. *broken nesting**' });
+    expect(calls[1].message).toEqual({ raw: '*7. *broken nesting**' });
+    expect(id).toBe('msg-plain');
+  });
+
+  it('rethrows non-matching errors so the normal delivery retry path still applies', async () => {
+    const postMessage = async (): Promise<RawMessage<unknown>> => {
+      throw new Error('socket hang up');
+    };
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      shouldFallbackToPlainText: isEntityError,
+    });
+    await expect(bridge.deliver('telegram:42', null, { kind: 'chat-sdk', content: { text: 'hello' } })).rejects.toThrow(
+      'socket hang up',
+    );
+  });
+
+  it('rethrows when no fallback predicate is configured (existing behavior)', async () => {
+    const postMessage = async (): Promise<RawMessage<unknown>> => {
+      throw entityError();
+    };
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+    });
+    await expect(bridge.deliver('telegram:42', null, { kind: 'chat-sdk', content: { text: 'hello' } })).rejects.toThrow(
+      /can't parse entities/,
+    );
+  });
+});

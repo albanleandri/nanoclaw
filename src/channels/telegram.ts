@@ -228,6 +228,10 @@ function createTelegramChannelAdapter(options: {
     extractReplyContext,
     supportsThreads: false,
     transformOutboundText: (text: string) => sanitizeTelegramLegacyMarkdown(parseTextStyles(text, 'telegram')),
+    // Telegram rejects the whole message when the rendered MarkdownV2 has
+    // unbalanced entities; the same payload can never succeed on retry, so
+    // fall back to plain text rather than dropping the reply.
+    shouldFallbackToPlainText: (err: unknown) => err instanceof Error && /can't parse entities/i.test(err.message),
     maxTextLength: 4000,
   });
 
