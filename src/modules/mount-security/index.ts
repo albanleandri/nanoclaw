@@ -29,9 +29,10 @@ export interface AllowedRoot {
   description?: string;
 }
 
-// Cache the allowlist in memory - only reloads on process restart
-let cachedAllowlist: MountAllowlist | null = null;
-let allowlistLoadError: string | null = null;
+// Cache only successfully parsed content while the file is unchanged. Missing
+// or malformed files are retried on the next call so an operator can recover
+// without restarting the host.
+let cache: { path: string; mtimeMs: number; allowlist: MountAllowlist } | null = null;
 
 /**
  * Default blocked patterns - paths that should never be mounted
@@ -59,58 +60,66 @@ const DEFAULT_BLOCKED_PATTERNS = [
 /**
  * Load the mount allowlist from the external config location.
  * Returns null if the file doesn't exist or is invalid.
- * Result is cached in memory for the lifetime of the process.
+ * Successful results are cached until the file mtime changes.
  */
 export function loadMountAllowlist(): MountAllowlist | null {
-  if (cachedAllowlist !== null) {
-    return cachedAllowlist;
-  }
-
-  if (allowlistLoadError !== null) {
-    // Already tried and failed, don't spam logs
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(MOUNT_ALLOWLIST_PATH);
+  } catch {
+    log.warn(
+      'Mount allowlist not found - additional mounts will be BLOCKED. Create the file to enable additional mounts.',
+      { path: MOUNT_ALLOWLIST_PATH },
+    );
     return null;
   }
 
-  try {
-    if (!fs.existsSync(MOUNT_ALLOWLIST_PATH)) {
-      // Do NOT cache this as an error — file may be created later without restart.
-      // Only parse/structural errors are permanently cached.
-      log.warn(
-        'Mount allowlist not found - additional mounts will be BLOCKED. Create the file to enable additional mounts.',
-        { path: MOUNT_ALLOWLIST_PATH },
-      );
-      return null;
-    }
+  if (cache?.path === MOUNT_ALLOWLIST_PATH && cache.mtimeMs === stat.mtimeMs) {
+    return cache.allowlist;
+  }
 
+  try {
     const content = fs.readFileSync(MOUNT_ALLOWLIST_PATH, 'utf-8');
-    const allowlist = JSON.parse(content) as MountAllowlist;
+    const raw = JSON.parse(content) as Record<string, unknown>;
 
     // Validate structure
-    if (!Array.isArray(allowlist.allowedRoots)) {
+    if (!Array.isArray(raw.allowedRoots)) {
       throw new Error('allowedRoots must be an array');
     }
 
-    if (!Array.isArray(allowlist.blockedPatterns)) {
+    if (!Array.isArray(raw.blockedPatterns)) {
       throw new Error('blockedPatterns must be an array');
     }
 
-    // Merge with default blocked patterns
-    const mergedBlockedPatterns = [...new Set([...DEFAULT_BLOCKED_PATTERNS, ...allowlist.blockedPatterns])];
-    allowlist.blockedPatterns = mergedBlockedPatterns;
+    const allowedRoots = (raw.allowedRoots as Array<Record<string, unknown>>).map((root) => {
+      const rootPath = typeof root.path === 'string' ? root.path : '';
+      const description = typeof root.description === 'string' ? root.description : undefined;
+      const allowReadWrite =
+        typeof root.allowReadWrite === 'boolean'
+          ? root.allowReadWrite
+          : typeof root.readOnly === 'boolean'
+            ? !root.readOnly
+            : false;
+      return { path: rootPath, allowReadWrite, description };
+    });
 
-    cachedAllowlist = allowlist;
+    // Merge with default blocked patterns
+    const blockedPatterns = [...new Set([...DEFAULT_BLOCKED_PATTERNS, ...(raw.blockedPatterns as string[])])];
+    const allowlist: MountAllowlist = { allowedRoots, blockedPatterns };
+
+    cache = { path: MOUNT_ALLOWLIST_PATH, mtimeMs: stat.mtimeMs, allowlist };
     log.info('Mount allowlist loaded successfully', {
       path: MOUNT_ALLOWLIST_PATH,
       allowedRoots: allowlist.allowedRoots.length,
       blockedPatterns: allowlist.blockedPatterns.length,
     });
 
-    return cachedAllowlist;
+    return allowlist;
   } catch (err) {
-    allowlistLoadError = err instanceof Error ? err.message : String(err);
+    cache = null;
     log.error('Failed to load mount allowlist - additional mounts will be BLOCKED', {
       path: MOUNT_ALLOWLIST_PATH,
-      error: allowlistLoadError,
+      error: err instanceof Error ? err.message : String(err),
     });
     return null;
   }

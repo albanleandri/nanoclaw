@@ -218,6 +218,13 @@ export function writeSessionMessage(
     onWake?: 0 | 1;
   },
 ): void {
+  // A documented/manual session reset may remove the folder while leaving its
+  // central DB row. Recreate the two-DB session filesystem before accepting
+  // the next message; initSessionFolder is idempotent for healthy sessions.
+  if (!fs.existsSync(inboundDbPath(agentGroupId, sessionId))) {
+    initSessionFolder(agentGroupId, sessionId);
+  }
+
   // Extract base64 attachment data, save to inbox, replace with file paths
   const content = extractAttachmentFiles(agentGroupId, sessionId, message.id, message.content);
 
@@ -427,8 +434,17 @@ export function writeOutboundDirect(
       const seq = nextEvenSeqFromMax(Math.max(maxOut, maxIn));
       db.prepare(
         `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
-         VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
-      ).run(message.id, seq, message.kind, message.platformId, message.channelType, message.threadId, message.content);
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        message.id,
+        seq,
+        new Date().toISOString(),
+        message.kind,
+        message.platformId,
+        message.channelType,
+        message.threadId,
+        message.content,
+      );
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');

@@ -30,8 +30,12 @@ describe('writeMessageOut — seq allocation', () => {
     expect(s1 % 2).toBe(1);
     expect(s2 % 2).toBe(1);
     expect(s2).toBeGreaterThan(s1);
-    const row = getOutboundDb().prepare('SELECT seq FROM messages_out WHERE id = ?').get('a') as { seq: number };
+    const row = getOutboundDb().prepare('SELECT seq, timestamp FROM messages_out WHERE id = ?').get('a') as {
+      seq: number;
+      timestamp: string;
+    };
     expect(row.seq).toBe(s1);
+    expect(row.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
   });
 
   test('stays in the odd lane above an inbound (even) global max', () => {

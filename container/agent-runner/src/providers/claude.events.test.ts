@@ -35,14 +35,14 @@ describe('Claude SDK event translation', () => {
     });
   });
 
-  it('translates compaction and task progress without acknowledging a turn', () => {
+  it('keeps compaction as activity metadata and translates task progress', () => {
     expect(
       translateClaudeSdkMessage({
         type: 'system',
         subtype: 'compact_boundary',
         compact_metadata: { pre_tokens: 1234 },
-      }).events[1],
-    ).toEqual({ type: 'result', text: 'Context compacted (1,234 tokens compacted).' });
+      }),
+    ).toEqual({ events: [{ type: 'activity' }], acknowledgesTurn: false });
     expect(
       translateClaudeSdkMessage({ type: 'system', subtype: 'task_notification', summary: 'Worker done' }).events[1],
     ).toEqual({ type: 'progress', message: 'Worker done' });

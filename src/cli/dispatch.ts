@@ -17,19 +17,18 @@ import { lookup } from './registry.js';
 export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<ResponseFrame> {
   let cmd = lookup(req.command);
 
-  // Fallback: if the full command isn't registered, trim the last
-  // dash-segment and treat it as the target ID. This lets clients join
-  // all positional args with dashes (e.g. `ncl groups get abc123`
-  // → command "groups-get-abc123" → trim → "groups-get" + id "abc123").
+  // Fallback: clients join positional args with dashes. Resolve the longest
+  // registered command prefix so generated IDs containing dashes remain whole.
   if (!cmd) {
-    const idx = req.command.lastIndexOf('-');
-    if (idx > 0) {
-      const shortened = req.command.slice(0, idx);
-      const tail = req.command.slice(idx + 1);
+    const parts = req.command.split('-');
+    for (let i = parts.length - 1; i > 0; i--) {
+      const shortened = parts.slice(0, i).join('-');
       const fallback = lookup(shortened);
       if (fallback) {
+        const tail = parts.slice(i).join('-');
         cmd = fallback;
         req = { ...req, command: shortened, args: { ...req.args, id: req.args.id ?? tail } };
+        break;
       }
     }
   }

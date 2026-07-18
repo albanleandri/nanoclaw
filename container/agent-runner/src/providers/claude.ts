@@ -5,6 +5,7 @@ import path from 'path';
 import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
+import { TIMEZONE, formatLocalStamp } from '../timezone.js';
 import { registerProvider } from './provider-registry.js';
 import { normalizeProviderUsage } from './usage.js';
 import type {
@@ -264,7 +265,7 @@ function archiveTranscriptFile(
 
     const conversationsDir = process.env.NANOCLAW_CONVERSATIONS_DIR || '/workspace/agent/conversations';
     fs.mkdirSync(conversationsDir, { recursive: true });
-    const filename = `${new Date().toISOString().split('T')[0]}-${name}.md`;
+    const filename = `${formatLocalStamp(new Date(), TIMEZONE).slice(0, 10)}-${name}.md`;
     fs.writeFileSync(path.join(conversationsDir, filename), formatTranscriptMarkdown(messages, summary, assistantName));
     log(`Archived conversation to ${filename}`);
     return true;
@@ -391,9 +392,8 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
   } else if (message.type === 'system' && message.subtype === 'rate_limit_event') {
     events.push({ type: 'error', message: 'Rate limit', retryable: false, classification: 'quota' });
   } else if (message.type === 'system' && message.subtype === 'compact_boundary') {
-    const meta = message.compact_metadata as { pre_tokens?: number } | undefined;
-    const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
-    events.push({ type: 'result', text: `Context compacted${detail}.` });
+    // Boundary metadata is not a provider result and must not surface as turn
+    // output. The activity event above still records stream progress.
   } else if (message.type === 'system' && message.subtype === 'task_notification') {
     events.push({ type: 'progress', message: String(message.summary || 'Task notification') });
   }

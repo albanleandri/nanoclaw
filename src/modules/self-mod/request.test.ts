@@ -23,7 +23,7 @@ vi.mock('../../log.js', () => ({
 import { notifyAgent, requestApproval } from '../approvals/index.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
-import { handleInstallPackages, handleAddMcpServer } from './request.js';
+import { escapeInvisibles, handleInstallPackages, handleAddMcpServer } from './request.js';
 
 const mockNotify = vi.mocked(notifyAgent);
 const mockRequest = vi.mocked(requestApproval);
@@ -192,5 +192,99 @@ describe('handleAddMcpServer — valid request', () => {
     const opts = mockRequest.mock.calls[0][0];
     expect(opts.payload.args).toEqual([]);
     expect(opts.payload.env).toEqual({});
+  });
+
+  it('shows every applied field inside one intact code fence', async () => {
+    await handleAddMcpServer(
+      {
+        name: 'server',
+        command: 'node',
+        args: ['--flag', '```\nfake fence'],
+        env: { MODE: 'safe', NOTE: 'line1\nline2' },
+      },
+      FAKE_SESSION,
+    );
+
+    const opts = mockRequest.mock.calls[0][0];
+    expect(opts.question.split('```')).toHaveLength(3);
+    expect(opts.question).toContain('name: "server"');
+    expect(opts.question).toContain('command: "node"');
+    expect(opts.question).toContain('--flag');
+    expect(opts.question).toContain('MODE');
+    expect(opts.question).toContain('line1\\nline2');
+    expect(opts.question).toContain('\\u0060\\u0060\\u0060');
+  });
+
+  it('redacts secret-shaped card values while preserving the approval payload', async () => {
+    await handleAddMcpServer(
+      {
+        name: 'server',
+        command: 'node',
+        args: ['--token', 'ghp_deadbeef'],
+        env: { API_KEY: 'plain-looking-secret', MODE: 'safe' },
+      },
+      FAKE_SESSION,
+    );
+
+    const opts = mockRequest.mock.calls[0][0];
+    expect(opts.question).not.toContain('ghp_deadbeef');
+    expect(opts.question).not.toContain('plain-looking-secret');
+    expect(opts.question).toContain('<redacted:');
+    expect(opts.question).toContain('MODE');
+    expect(opts.question).toContain('safe');
+    expect(opts.payload).toEqual({
+      name: 'server',
+      command: 'node',
+      args: ['--token', 'ghp_deadbeef'],
+      env: { API_KEY: 'plain-looking-secret', MODE: 'safe' },
+    });
+  });
+});
+
+describe('handleAddMcpServer — validation and bounds', () => {
+  it('rejects malformed args and env before requesting approval', async () => {
+    await handleAddMcpServer({ name: 'server', command: 'node', args: ['ok', 1] }, FAKE_SESSION);
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('array of strings'));
+    expect(mockRequest).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockGetAgentGroup.mockReturnValue(FAKE_AGENT_GROUP as ReturnType<typeof getAgentGroup>);
+    await handleAddMcpServer({ name: 'server', command: 'node', env: ['bad'] }, FAKE_SESSION);
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('map of string'));
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects excessive argument and environment counts', async () => {
+    await handleAddMcpServer(
+      { name: 'server', command: 'node', args: Array.from({ length: 33 }, (_, i) => `a${i}`) },
+      FAKE_SESSION,
+    );
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('max 32 args'));
+    expect(mockRequest).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockGetAgentGroup.mockReturnValue(FAKE_AGENT_GROUP as ReturnType<typeof getAgentGroup>);
+    const env = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`K${i}`, 'v']));
+    await handleAddMcpServer({ name: 'server', command: 'node', env }, FAKE_SESSION);
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('max 32 env'));
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized raw payloads and rendered cards', async () => {
+    await handleAddMcpServer({ name: 'server', command: 'node', args: [`sk-${'a'.repeat(17_000)}`] }, FAKE_SESSION);
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('16384 bytes'));
+    expect(mockRequest).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockGetAgentGroup.mockReturnValue(FAKE_AGENT_GROUP as ReturnType<typeof getAgentGroup>);
+    await handleAddMcpServer({ name: 'server', command: 'node', args: ['a'.repeat(1600)] }, FAKE_SESSION);
+    expect(mockNotify).toHaveBeenCalledWith(FAKE_SESSION, expect.stringContaining('1500 bytes'));
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('escapeInvisibles', () => {
+  it('makes bidi, zero-width, separators, and backticks visible', () => {
+    expect(escapeInvisibles('a\u202eb\u200bc\ufeff`')).toBe('a\\u202eb\\u200bc\\ufeff\\u0060');
   });
 });

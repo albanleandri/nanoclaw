@@ -16,7 +16,16 @@ vi.mock('./config.js', async () => {
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-write-outbound' };
 });
 
-import { inboundDbPath, initSessionFolder, outboundDbPath, writeOutboundDirect } from './session-manager.js';
+import {
+  inboundDbPath,
+  initSessionFolder,
+  outboundDbPath,
+  sessionDir,
+  writeOutboundDirect,
+  writeSessionMessage,
+} from './session-manager.js';
+import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
+import { createSession } from './db/sessions.js';
 
 const TEST_DIR = '/tmp/nanoclaw-test-write-outbound';
 const AG = 'ag-test';
@@ -46,12 +55,13 @@ function seedInbound(seq: number): void {
   }
 }
 
-function readMessagesOut(): Array<{ id: string; seq: number; kind: string; content: string }> {
+function readMessagesOut(): Array<{ id: string; seq: number; timestamp: string; kind: string; content: string }> {
   const db = new Database(outboundDbPath(AG, SESS), { readonly: true });
   try {
-    return db.prepare('SELECT id, seq, kind, content FROM messages_out ORDER BY seq').all() as Array<{
+    return db.prepare('SELECT id, seq, timestamp, kind, content FROM messages_out ORDER BY seq').all() as Array<{
       id: string;
       seq: number;
+      timestamp: string;
       kind: string;
       content: string;
     }>;
@@ -87,6 +97,7 @@ describe('writeOutboundDirect', () => {
     expect(rows[0].id).toBe('denial-1');
     expect(rows[0].seq).toBe(2);
     expect(rows[0].seq % 2).toBe(0); // host uses even seq numbers
+    expect(rows[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
     expect(JSON.parse(rows[0].content).text).toBe('Admin commands are restricted.');
   });
 
@@ -162,5 +173,54 @@ describe('writeOutboundDirect', () => {
     const denial = readMessagesOut().find((r) => r.id === 'denial-1');
     expect(denial).toBeDefined();
     expect(denial!.seq).toBe(4);
+  });
+});
+
+describe('writeSessionMessage', () => {
+  beforeEach(() => {
+    const db = initTestDb();
+    runMigrations(db);
+    createAgentGroup({
+      id: AG,
+      name: 'Reset test',
+      folder: 'reset-test',
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+    createSession({
+      id: SESS,
+      agent_group_id: AG,
+      messaging_group_id: null,
+      thread_id: null,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => closeDb());
+
+  it('re-provisions a deleted session folder before writing', () => {
+    fs.rmSync(sessionDir(AG, SESS), { recursive: true, force: true });
+
+    expect(() =>
+      writeSessionMessage(AG, SESS, {
+        id: 'after-reset',
+        kind: 'chat',
+        timestamp: new Date().toISOString(),
+        content: JSON.stringify({ text: 'still here?' }),
+      }),
+    ).not.toThrow();
+
+    const db = new Database(inboundDbPath(AG, SESS), { readonly: true });
+    try {
+      expect(db.prepare('SELECT id FROM messages_in WHERE id = ?').get('after-reset')).toMatchObject({
+        id: 'after-reset',
+      });
+    } finally {
+      db.close();
+    }
   });
 });

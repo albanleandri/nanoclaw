@@ -48,6 +48,19 @@ export function formatLocalTime(utcIso: string, timezone: string): string {
   });
 }
 
+/** Compact sortable local stamp for human-facing output: "YYYY-MM-DD HH:mm". */
+export function formatLocalStamp(date: Date, timezone: string): string {
+  return date.toLocaleString('sv-SE', {
+    timeZone: resolveTimezone(timezone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function resolveContainerTimezone(): string {
   const candidates = [process.env.TZ, Intl.DateTimeFormat().resolvedOptions().timeZone];
   for (const tz of candidates) {

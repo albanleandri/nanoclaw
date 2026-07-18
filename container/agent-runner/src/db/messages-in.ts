@@ -102,10 +102,10 @@ export function markProcessing(ids: string[]): void {
   if (ids.length === 0) return;
   const db = getOutboundDb();
   const stmt = db.prepare(
-    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'processing', datetime('now'))",
+    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'processing', ?)",
   );
   db.transaction(() => {
-    for (const id of ids) stmt.run(id);
+    for (const id of ids) stmt.run(id, new Date().toISOString());
   })();
 }
 
@@ -114,10 +114,10 @@ export function markCompleted(ids: string[]): void {
   if (ids.length === 0) return;
   const db = getOutboundDb();
   const stmt = db.prepare(
-    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'completed', datetime('now'))",
+    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'completed', ?)",
   );
   db.transaction(() => {
-    for (const id of ids) stmt.run(id);
+    for (const id of ids) stmt.run(id, new Date().toISOString());
   })();
 }
 

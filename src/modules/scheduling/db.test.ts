@@ -54,6 +54,16 @@ describe('insertTask', () => {
     expect(row.series_id).toBe('task-1');
     db.close();
   });
+
+  it('stores an ISO UTC timestamp', () => {
+    const db = freshDb();
+    insertBasicTask(db, 'task-iso', null);
+    const row = db.prepare('SELECT timestamp FROM messages_in WHERE id = ?').get('task-iso') as {
+      timestamp: string;
+    };
+    expect(row.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    db.close();
+  });
 });
 
 describe('cancelTask / pauseTask / resumeTask series matching', () => {

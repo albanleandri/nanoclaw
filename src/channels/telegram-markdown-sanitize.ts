@@ -1,11 +1,10 @@
 /**
- * Sanitize outbound text for Telegram's legacy `Markdown` parse mode.
+ * Sanitize outbound text before the adapter renders Telegram MarkdownV2.
  *
- * WORKAROUND: The @chat-adapter/telegram adapter hardcodes parse_mode=Markdown
- * (legacy) but its converter emits CommonMark. Messages with `**bold**`, odd
- * delimiter counts, or malformed links are rejected by Telegram and dropped
- * after retries. Remove this once upstream ships real mode-aware conversion
- * (vercel/chat PR #367 adds the knob; a follow-up is needed for the converter).
+ * WORKAROUND: the adapter parses CommonMark and renders MarkdownV2, but malformed
+ * or nested emphasis can still produce entities Telegram rejects. The delivery
+ * bridge falls back to plain text on parse errors; this sanitizer avoids the
+ * common malformed shapes before they reach that fallback.
  */
 
 const CODE_PATTERN = /```[\s\S]*?```|`[^`\n]*`/g;
@@ -22,10 +21,8 @@ export function sanitizeTelegramLegacyMarkdown(input: string): string {
   });
 
   // The adapter re-parses and re-stringifies markdown before sending, which
-  // rewrites `- item` list bullets into `* item` — injecting unbalanced
-  // asterisks that Telegram's legacy Markdown parser then rejects. Replace
-  // list bullets with a plain Unicode bullet so the adapter treats the line
-  // as prose.
+  // can rewrite list markers into emphasis-like shapes. Replace list bullets
+  // with a plain Unicode bullet so the adapter treats the line as prose.
   text = text.replace(/^(\s*)[-+]\s+/gm, '$1• ');
 
   // Flatten Markdown horizontal rules (bare --- / *** / ___ lines) to a

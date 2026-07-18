@@ -147,6 +147,15 @@ register({
   handler: async (args) => ({ id: (args as Record<string, unknown>).id, agent_group_id: 'g1' }),
 });
 
+register({
+  name: 'groups-get',
+  description: 'test positional id parsing',
+  resource: 'groups',
+  access: 'open',
+  parseArgs: (raw) => raw,
+  handler: async (args) => ({ echo: args }),
+});
+
 import { dispatch } from './dispatch.js';
 import type { CallerContext } from './frame.js';
 
@@ -162,6 +171,18 @@ beforeEach(() => {
   mockGetResource.mockImplementation((plural: string) =>
     scopeFields[plural] ? { scopeField: scopeFields[plural] } : undefined,
   );
+});
+
+describe('dash-joined positional id resolution', () => {
+  it('preserves a generated id containing dashes', async () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+    const resp = await dispatch({ id: '1', command: `groups-get-${uuid}`, args: {} }, { caller: 'host' });
+
+    expect(resp.ok).toBe(true);
+    if (resp.ok) {
+      expect((resp.data as { echo: Record<string, unknown> }).echo.id).toBe(uuid);
+    }
+  });
 });
 
 // --- Helpers ---
