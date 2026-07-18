@@ -10,10 +10,13 @@ const DEFAULT_SETTINGS_JSON =
   JSON.stringify(
     {
       env: {
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
         CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
       },
+      // NanoClaw already provides agent-to-agent delegation and host-side
+      // orchestration, so Claude's overlapping workflow harness is needless
+      // context overhead for newly created groups.
+      disableWorkflows: true,
       hooks: {
         PreCompact: [
           {

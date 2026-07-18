@@ -32,6 +32,8 @@ function log(msg: string): void {
 //   the question and blocks on the real reply.
 // - EnterPlanMode / ExitPlanMode / EnterWorktree / ExitWorktree: Claude
 //   Code UI affordances; in a headless container they'd appear stuck.
+// - DesignSync / ReportFindings: desktop reporting surfaces with no headless
+//   receiver; including their schemas only consumes context.
 const SDK_DISALLOWED_TOOLS = [
   'CronCreate',
   'CronDelete',
@@ -42,6 +44,8 @@ const SDK_DISALLOWED_TOOLS = [
   'ExitPlanMode',
   'EnterWorktree',
   'ExitWorktree',
+  'DesignSync',
+  'ReportFindings',
 ];
 
 // Tool allowlist for NanoClaw agent containers. MCP-tool entries are derived

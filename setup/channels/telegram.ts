@@ -41,6 +41,10 @@ import { accentGreen, brandBold, fitToWidth, fmtDuration, note } from '../lib/th
 
 const DEFAULT_AGENT_NAME = 'Nano';
 
+export function telegramBotUrl(botUsername: string): string {
+  return `https://telegram.me/${botUsername}`;
+}
+
 export async function runTelegramChannel(displayName: string): Promise<ChannelFlowResult> {
   const tokenOrBack = await collectTelegramToken();
   if (tokenOrBack === 'back') return BACK_TO_CHANNEL_SELECTION;
@@ -48,11 +52,11 @@ export async function runTelegramChannel(displayName: string): Promise<ChannelFl
   const botUsername = await validateTelegramToken(token);
 
   // Deep-link the user into the bot's chat so they're on the right screen
-  // by the time pair-telegram prints the code. https://t.me/<bot> works
+  // by the time pair-telegram prints the code. https://telegram.me/<bot> works
   // everywhere: browsers show an "Open in Telegram" button when the app is
   // installed, or the bot's web profile if not. tg://resolve?domain= is
   // more direct but silently fails when the scheme isn't registered.
-  const botUrl = `https://t.me/${botUsername}`;
+  const botUrl = telegramBotUrl(botUsername);
   // Two card variants — auto-open fires only on GUI, so headless users
   // need full self-serve instructions inside the card itself, while GUI
   // users get a leaner status line plus the auto-open + a single
