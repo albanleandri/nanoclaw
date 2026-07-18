@@ -12,7 +12,7 @@ Frequent recurring scheduled tasks — more than a few times a day — consume A
 2. When the task fires, the script runs first
 3. Script returns: `{ "wakeAgent": true/false, "data": {...} }`
 4. If `wakeAgent: false` — nothing happens, task waits for next run
-5. If `wakeAgent: true` — claude receives the script's data + prompt and handles
+5. If `wakeAgent: true` — the active agent runtime receives the script's data and prompt
 
 ### Always test your script first
 
@@ -36,5 +36,5 @@ If a user wants a task to run more than a few times a day and a script can't be 
 
 - Explain that each time the task fires it uses API credits and risks rate limits
 - Suggest adjusting the task requirements in a way that will allow you to use a script
-- If the user needs an LLM to evaluate data, suggest using an API key with direct Anthropic API calls inside the script
+- If the check genuinely needs an LLM, suggest an explicitly authorized provider API call inside the script and explain its credential, cost, and rate-limit implications
 - Help the user find the minimum viable frequency

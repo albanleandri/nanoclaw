@@ -77,7 +77,7 @@ external services, so least privilege still matters.
 
 - **Multi-channel messaging** — channel adapters are installed on demand with `/add-<channel>` skills. Telegram support is present in this tree; other adapters such as Discord, Slack, WhatsApp, GitHub, Linear, Matrix, Google Chat, Webex, WeChat, Microsoft Teams, iMessage, and email belong to channel skills or forks.
 - **Flexible isolation** — connect each channel to its own agent for full privacy, share one agent across many channels for unified memory with separate conversations, or fold multiple channels into a single shared session so one conversation spans many surfaces. Pick per channel via `/manage-channels`. See [docs/isolation-model.md](docs/isolation-model.md).
-- **Per-agent workspace** — each agent group has a durable workspace and generated provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex). The host keeps a group-level `container.json` snapshot and mounts an effective per-session `container.runtime.json`, including the neutral `agentProfile`, into the container. Nothing crosses the boundary unless you wire it to.
+- **Per-agent workspace** — each agent group has a durable workspace, while effective provider-native docs (`CLAUDE.md` for Claude, `AGENTS.md` for Codex) are composed per session from that group's selected skills/resources and compiled capabilities. The host keeps a group-level `container.json` snapshot and mounts an effective per-session `container.runtime.json`, including the neutral `agentProfile`, into the container. Nothing crosses the boundary unless you wire it to.
 - **Scheduled tasks** — one-shot or recurring jobs that wake the selected agent/provider and can message you back
 - **Durable agent delegation** — authorized agents can delegate correlated work to another agent, receive progress and files, and cancel it without sharing credentials or privileges
 - **Scoped session search** — agents can search normalized text from their own prior sessions through SQLite FTS5; results carry source IDs and never cross agent-group boundaries
@@ -189,7 +189,8 @@ Key files:
 - `src/capabilities/` — code-owned capability manifests, availability checks, runtime support resolution, and the pre-spawn compiler/gate
 - `src/rtk.ts` — non-destructive Claude hook registration for the RTK compatibility path
 - `container/agent-runner/` — Bun agent-runner: poll loop, MCP tools, provider abstraction
-- `groups/<folder>/` — per-agent-group workspace (generated provider docs, memory/work files, group-level `container.json` snapshot)
+- `groups/<folder>/` — per-agent-group workspace (memory/work files and group-level `container.json` snapshot; legacy generated provider-doc artifacts may remain during compatibility rollout)
+- `data/v2-sessions/<agent-group-id>/<session-id>/provider-docs/` — effective capability-filtered provider docs mounted read-only for that session
 - `data/v2-sessions/<agent-group-id>/<session-id>/` — per-session DBs, heartbeat, outbox, and effective `container.runtime.json`
 
 Coverage is part of CI. Run `pnpm run test:coverage` for the host and

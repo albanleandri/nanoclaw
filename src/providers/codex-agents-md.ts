@@ -29,7 +29,6 @@ export const CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
 export const CODEX_PROJECT_DOC_WARN_BYTES = 28 * 1024;
 
 const HEADER = '<!-- Composed at spawn. Do not edit. Edit memory/system/definition.md for memory behavior. -->';
-const RUNTIME_CONTRACT_HOST_SUBPATH = path.join('container', 'CLAUDE.md');
 const MCP_TOOLS_CONTAINER_PREFIX = '/app/src/mcp-tools/';
 const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
 
@@ -68,14 +67,25 @@ interface AgentsMdSection {
   content: string;
 }
 
-export function composeGroupAgentsMd(group: AgentGroup, groupDir: string): void {
-  if (!fs.existsSync(groupDir)) fs.mkdirSync(groupDir, { recursive: true });
+export function composeGroupAgentsMd(
+  group: AgentGroup,
+  groupDir: string,
+  options: { outputDir?: string; containerConfig?: ContainerConfig } = {},
+): void {
+  const outputDir = options.outputDir ?? groupDir;
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   const projectRoot = process.cwd();
-  const configRow = getContainerConfig(group.id);
-  const containerConfig = configRow ? configFromDb(configRow, group) : defaultContainerConfig(group);
+  const configRow = options.containerConfig ? undefined : getContainerConfig(group.id);
+  const containerConfig =
+    options.containerConfig ?? (configRow ? configFromDb(configRow, group) : defaultContainerConfig(group));
   const profile = buildAgentProfile(group, containerConfig);
-  const instructionSections = collectInstructionSections({ projectRoot, profile });
+  const instructionSections = collectInstructionSections({
+    projectRoot,
+    profile,
+    provider: 'codex',
+    capabilityIds: containerConfig.sessionRuntimePlan?.capabilities.map((item) => item.id),
+  });
 
   const sections: AgentsMdSection[] = [{ name: 'header', content: HEADER }];
   const pushSection = (name: string, ...content: string[]): void => {
@@ -86,7 +96,7 @@ export function composeGroupAgentsMd(group: AgentGroup, groupDir: string): void 
     if (body) sections.push({ name, content: `# ${name}\n\n${body}` });
   };
 
-  const runtimeContent = readRuntimeContract(projectRoot, instructionSections);
+  const runtimeContent = readRuntimeContract(instructionSections);
   if (runtimeContent) pushSection('NanoClaw Runtime Contract', runtimeContent);
 
   pushSection('Memory System', MEMORY_POINTER, memoryIndexInline(groupDir));
@@ -99,15 +109,12 @@ export function composeGroupAgentsMd(group: AgentGroup, groupDir: string): void 
   }
 
   const content = fitAgentsMdToCap(group, sections);
-  writeAtomic(path.join(groupDir, 'AGENTS.md'), content);
+  writeAtomic(path.join(outputDir, 'AGENTS.md'), content);
 }
 
-function readRuntimeContract(projectRoot: string, sections: InstructionSection[]): string {
+function readRuntimeContract(sections: InstructionSection[]): string {
   const runtimeSection = sections.find((section) => section.kind === 'runtime');
-  if (!runtimeSection) return '';
-  const runtimeContractPath = path.join(projectRoot, RUNTIME_CONTRACT_HOST_SUBPATH);
-  if (!fs.existsSync(runtimeContractPath)) return '';
-  return fs.readFileSync(runtimeContractPath, 'utf-8');
+  return runtimeSection?.content ?? '';
 }
 
 function readInstructionSectionContent(projectRoot: string, section: InstructionSection): string {
@@ -171,6 +178,13 @@ function fitAgentsMdToCap(group: AgentGroup, sections: AgentsMdSection[]): strin
   }
 
   const bytes = Buffer.byteLength(content, 'utf-8');
+  log.info('Composed Codex instruction context', {
+    group: group.name,
+    bytes,
+    estimatedTokens: Math.ceil(bytes / 4),
+    sections: sectionBytes(),
+    dropped,
+  });
   if (dropped.length > 0) {
     log.error('AGENTS.md exceeded Codex project-doc cap — dropped largest instruction sections', {
       group: group.name,

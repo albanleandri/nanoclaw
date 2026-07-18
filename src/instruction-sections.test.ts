@@ -12,6 +12,8 @@ const tempDirs: string[] = [];
 function tempProject(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-instruction-sections-'));
   tempDirs.push(dir);
+  writeFile(dir, 'container/runtime/core.md', 'runtime core');
+  writeFile(dir, 'container/runtime/claude.md', 'claude memory');
   return dir;
 }
 
@@ -50,6 +52,17 @@ afterEach(() => {
 });
 
 describe('collectInstructionSections', () => {
+  it('keeps shared module instruction fragments provider-neutral', () => {
+    const moduleDir = path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools');
+    const fragments = fs
+      .readdirSync(moduleDir)
+      .filter((name) => name.endsWith('.instructions.md'))
+      .map((name) => fs.readFileSync(path.join(moduleDir, name), 'utf8'))
+      .join('\n');
+
+    expect(fragments).not.toMatch(/\b(?:Claude|Codex|Anthropic|OpenAI)\b|CLAUDE\.local\.md|SDK `Agent`/i);
+  });
+
   it('collects runtime, selected skill, module, MCP, and resource sections', () => {
     const projectRoot = tempProject();
     writeFile(projectRoot, 'container/skills/calendar/instructions.md', 'calendar instructions');
@@ -60,6 +73,7 @@ describe('collectInstructionSections', () => {
 
     const sections = collectInstructionSections({
       projectRoot,
+      provider: 'claude',
       profile: profile({
         tools: {
           skills: ['calendar'],
@@ -85,7 +99,7 @@ describe('collectInstructionSections', () => {
           id: 'runtime-contract',
           title: 'NanoClaw Runtime Contract',
           kind: 'runtime',
-          containerPath: '/app/CLAUDE.md',
+          content: 'runtime core\n\nclaude memory',
           required: true,
         },
         {
@@ -135,6 +149,26 @@ describe('collectInstructionSections', () => {
 
     expect(sections.map((section) => section.id)).toContain('module-scheduling');
     expect(sections.map((section) => section.id)).not.toContain('module-cli');
+  });
+
+  it('includes only modules backed by the effective session capabilities', () => {
+    const projectRoot = tempProject();
+    for (const moduleName of ['core', 'interactive', 'scheduling', 'self-mod', 'agents', 'cli']) {
+      writeFile(
+        projectRoot,
+        `container/agent-runner/src/mcp-tools/${moduleName}.instructions.md`,
+        `${moduleName} instructions`,
+      );
+    }
+
+    const sections = collectInstructionSections({
+      projectRoot,
+      profile: profile(),
+      capabilityIds: ['nanoclaw.send-message', 'nanoclaw.schedule-task'],
+    });
+    const moduleIds = sections.filter((section) => section.kind === 'module').map((section) => section.id);
+
+    expect(moduleIds).toEqual(['module-core', 'module-interactive', 'module-scheduling']);
   });
 
   it('does not advertise a shared resource whose mount source is absent', () => {

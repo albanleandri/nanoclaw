@@ -795,8 +795,9 @@ Provider-specific settings (model, reasoning effort, MCP servers) also come from
   materialized session plan. Verified generic profiles execute the same
   registered canonical handlers through the in-process protocol-tool broker
   instead of MCP discovery.
-- Provider-native project docs are loaded by their native runtimes. The host
-  also materializes bounded request-level system instructions in runtime
+- Provider-native project docs are composed as capability-filtered per-session
+  overlays and loaded by their native runtimes. The host also materializes
+  bounded request-level system instructions in runtime
   config where required.
 - Additional directories discovery (`/workspace/extra/*`)
 - Logging via stderr (`[agent-runner] ...`)

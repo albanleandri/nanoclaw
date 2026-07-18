@@ -398,6 +398,7 @@ function resolveProviderContribution(
         agentGroupId: agentGroup.id,
         groupDir: path.resolve(GROUPS_DIR, agentGroup.folder),
         selectedSkills: containerConfig.skills,
+        containerConfig,
         hostEnv: process.env,
         effectiveProvider,
       })
@@ -405,7 +406,7 @@ function resolveProviderContribution(
   return { provider, contribution };
 }
 
-export function buildGroupWorkspaceMounts(groupDir: string): VolumeMount[] {
+export function buildGroupWorkspaceMounts(groupDir: string, includeManagedDocs = true): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const workspacePaths = ['/workspace/agent', '/workspace/group'];
 
@@ -417,10 +418,12 @@ export function buildGroupWorkspaceMounts(groupDir: string): VolumeMount[] {
   // compatibility /workspace/group path would make managed files writable.
   // container.json is intentionally excluded: each session mounts its own
   // effective runtime config after provider resolution.
-  const managedPaths = [
-    { hostPath: path.join(groupDir, 'CLAUDE.md'), relativePath: 'CLAUDE.md' },
-    { hostPath: path.join(groupDir, '.claude-fragments'), relativePath: '.claude-fragments' },
-  ];
+  const managedPaths = includeManagedDocs
+    ? [
+        { hostPath: path.join(groupDir, 'CLAUDE.md'), relativePath: 'CLAUDE.md' },
+        { hostPath: path.join(groupDir, '.claude-fragments'), relativePath: '.claude-fragments' },
+      ]
+    : [];
   for (const managedPath of managedPaths) {
     if (!fs.existsSync(managedPath.hostPath)) continue;
     for (const containerPath of workspacePaths) {
@@ -440,6 +443,25 @@ export function buildSessionRuntimeConfigMounts(runtimeConfigPath: string): Volu
     { hostPath: runtimeConfigPath, containerPath: '/workspace/agent/container.json', readonly: true },
     { hostPath: runtimeConfigPath, containerPath: '/workspace/group/container.json', readonly: true },
   ];
+}
+
+export function buildSessionClaudeDocMounts(providerDocsDir: string): VolumeMount[] {
+  const mounts: VolumeMount[] = [];
+  const docPath = path.join(providerDocsDir, 'CLAUDE.md');
+  const fragmentsPath = path.join(providerDocsDir, '.claude-fragments');
+  for (const workspace of ['/workspace/agent', '/workspace/group']) {
+    if (fs.existsSync(docPath)) {
+      mounts.push({ hostPath: docPath, containerPath: `${workspace}/CLAUDE.md`, readonly: true });
+    }
+    if (fs.existsSync(fragmentsPath)) {
+      mounts.push({
+        hostPath: fragmentsPath,
+        containerPath: `${workspace}/.claude-fragments`,
+        readonly: true,
+      });
+    }
+  }
+  return mounts;
 }
 
 export function buildSessionWorkspaceMounts(sessDir: string): VolumeMount[] {
@@ -485,9 +507,11 @@ function buildMounts(
   // Bash calls are compressed before reaching the LLM context window.
   ensureRtkClaudeHook(path.join(claudeDir, 'settings.json'));
 
-  // Compose CLAUDE.md fresh every spawn from the shared base, enabled skill
-  // fragments, and MCP server instructions. See `claude-md-compose.ts`.
-  composeGroupClaudeMd(agentGroup);
+  // Compose the effective Claude project doc below the private session
+  // directory. Group workspaces can host concurrent sessions with different
+  // capability plans, so generated provider docs must never be shared.
+  const providerDocsDir = path.join(sessionDir(agentGroup.id, session.id), 'provider-docs');
+  composeGroupClaudeMd(agentGroup, { outputDir: providerDocsDir, containerConfig });
 
   const mounts: VolumeMount[] = [];
   const sessDir = sessionDir(agentGroup.id, session.id);
@@ -498,7 +522,8 @@ function buildMounts(
   // container can consume messages without mutating host-owned state.
   mounts.push(...buildSessionWorkspaceMounts(sessDir));
 
-  mounts.push(...buildGroupWorkspaceMounts(groupDir));
+  mounts.push(...buildGroupWorkspaceMounts(groupDir, false));
+  mounts.push(...buildSessionClaudeDocMounts(providerDocsDir));
 
   // Global memory directory — always read-only.
   const globalDir = path.join(GROUPS_DIR, 'global');
@@ -518,11 +543,16 @@ function buildMounts(
     mounts.push({ hostPath: docsDir, containerPath: '/app/docs', readonly: true });
   }
 
-  // Shared CLAUDE.md — read-only, imported by the composed entry point via
-  // the `.claude-shared.md` symlink inside the group dir.
+  // Compatibility Claude entry point and its provider-aware runtime sources.
+  // Session-specific provider docs inline these sources, but keeping the
+  // legacy /app/CLAUDE.md import graph valid avoids breaking direct consumers.
   const sharedClaudeMd = path.join(process.cwd(), 'container', 'CLAUDE.md');
   if (fs.existsSync(sharedClaudeMd)) {
     mounts.push({ hostPath: sharedClaudeMd, containerPath: '/app/CLAUDE.md', readonly: true });
+  }
+  const sharedRuntimeDir = path.join(process.cwd(), 'container', 'runtime');
+  if (fs.existsSync(sharedRuntimeDir)) {
+    mounts.push({ hostPath: sharedRuntimeDir, containerPath: '/app/runtime', readonly: true });
   }
 
   // Per-group .claude-shared at /home/node/.claude (Claude state, settings,

@@ -3,7 +3,7 @@
  *
  * Replaces the per-group "written once at init, owned by the group" pattern
  * with a host-regenerated entry point that imports:
- *   - a shared base (`container/CLAUDE.md` mounted RO at `/app/CLAUDE.md`)
+ *   - the provider-neutral runtime core and Claude appendix
  *   - optional per-skill fragments (skills that ship `instructions.md`)
  *   - optional per-MCP-server fragments (inline `instructions` field in
  *     `container.json`)
@@ -27,41 +27,52 @@ import { buildAgentProfile } from './agent-profile.js';
 
 export { collectSkillInstructionFragments } from './instruction-sections.js';
 
-// Symlink targets are container paths — dangling on host (hence the readlink
-// dance instead of existsSync), valid inside the container via RO mounts.
-const SHARED_CLAUDE_MD_CONTAINER_PATH = '/app/CLAUDE.md';
 const COMPOSED_HEADER = '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->';
 
 /**
- * Regenerate `groups/<folder>/CLAUDE.md` from the shared base, enabled skill
- * fragments, and MCP server fragments declared in `container.json`. Creates
- * an empty `CLAUDE.local.md` if missing.
+ * Regenerate a Claude project doc from the neutral runtime core, Claude
+ * appendix, enabled skill fragments, and MCP server fragments. Creates an
+ * empty `CLAUDE.local.md` only when composing into the persistent group dir.
  */
-export function composeGroupClaudeMd(group: AgentGroup): void {
-  const groupDir = path.resolve(GROUPS_DIR, group.folder);
+export function composeGroupClaudeMd(
+  group: AgentGroup,
+  options: { outputDir?: string; containerConfig?: ContainerConfig } = {},
+): void {
+  const groupDir = options.outputDir ?? path.resolve(GROUPS_DIR, group.folder);
   if (!fs.existsSync(groupDir)) {
     fs.mkdirSync(groupDir, { recursive: true });
   }
-
-  const sharedLink = path.join(groupDir, '.claude-shared.md');
-  syncSymlink(sharedLink, SHARED_CLAUDE_MD_CONTAINER_PATH);
 
   const fragmentsDir = path.join(groupDir, '.claude-fragments');
   if (!fs.existsSync(fragmentsDir)) {
     fs.mkdirSync(fragmentsDir, { recursive: true });
   }
 
-  const configRow = getContainerConfig(group.id);
-  const containerConfig = configRow ? configFromDb(configRow, group) : defaultContainerConfig(group);
+  const configRow = options.containerConfig ? undefined : getContainerConfig(group.id);
+  const containerConfig =
+    options.containerConfig ?? (configRow ? configFromDb(configRow, group) : defaultContainerConfig(group));
   const profile = buildAgentProfile(group, containerConfig);
   const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
+  const sectionBytes: Array<{ section: string; bytes: number }> = [];
 
-  for (const section of collectInstructionSections({ projectRoot: process.cwd(), profile })) {
-    if (section.kind === 'runtime') continue;
+  for (const section of collectInstructionSections({
+    projectRoot: process.cwd(),
+    profile,
+    provider: 'claude',
+    capabilityIds: containerConfig.sessionRuntimePlan?.capabilities.map((item) => item.id),
+  })) {
     if (section.containerPath) {
       desired.set(section.id + '.md', { type: 'symlink', content: section.containerPath });
+      const hostPath = section.containerPath
+        .replace('/app/skills/', path.join(process.cwd(), 'container', 'skills') + path.sep)
+        .replace(
+          '/app/src/mcp-tools/',
+          path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools') + path.sep,
+        );
+      sectionBytes.push({ section: section.id, bytes: fs.existsSync(hostPath) ? fs.statSync(hostPath).size : 0 });
     } else if (section.content) {
       desired.set(section.id + '.md', { type: 'inline', content: section.content });
+      sectionBytes.push({ section: section.id, bytes: Buffer.byteLength(section.content, 'utf8') });
     }
   }
 
@@ -81,16 +92,23 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
   }
 
   // Composed entry — imports only.
-  const imports = ['@./.claude-shared.md'];
+  const imports: string[] = [];
   for (const name of [...desired.keys()].sort()) {
     imports.push(`@./.claude-fragments/${name}`);
   }
   const body = [COMPOSED_HEADER, ...imports, ''].join('\n');
   writeAtomic(path.join(groupDir, 'CLAUDE.md'), body);
+  const totalBytes = sectionBytes.reduce((sum, section) => sum + section.bytes, Buffer.byteLength(body, 'utf8'));
+  log.info('Composed Claude instruction context', {
+    group: group.name,
+    bytes: totalBytes,
+    estimatedTokens: Math.ceil(totalBytes / 4),
+    sections: sectionBytes,
+  });
 
-  const localFile = path.join(groupDir, 'CLAUDE.local.md');
-  if (!fs.existsSync(localFile)) {
-    fs.writeFileSync(localFile, '');
+  if (!options.outputDir) {
+    const localFile = path.join(groupDir, 'CLAUDE.local.md');
+    if (!fs.existsSync(localFile)) fs.writeFileSync(localFile, '');
   }
 }
 
@@ -106,7 +124,7 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
  *     is skipped because `CLAUDE.local.md` now exists)
  *
  * Globally:
- *   - delete `groups/global/` (content already in `container/CLAUDE.md`)
+ *   - delete `groups/global/` (content moved into the managed runtime contract)
  */
 export function migrateGroupsToClaudeLocal(): void {
   if (!fs.existsSync(GROUPS_DIR)) return;

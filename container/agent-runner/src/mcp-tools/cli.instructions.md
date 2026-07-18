@@ -18,12 +18,12 @@ Your CLI access may be scoped. Run `ncl help` to see which resources are availab
 
 Run `ncl help` for the full list. Common resources:
 
-| Resource | Verbs | What it is |
-|----------|-------|------------|
-| groups | list, get, create, update, delete, restart, config get/update, config add-mcp-server/remove-mcp-server, config add-package/remove-package | Agent groups (workspace, personality, container config) |
-| sessions | list, get | Active sessions (read-only) |
-| destinations | list, add, remove | Where an agent group can send messages |
-| members | list, add, remove | Unprivileged access gate for an agent group |
+| Resource     | Verbs                                                                                                                                     | What it is                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| groups       | list, get, create, update, delete, restart, config get/update, config add-mcp-server/remove-mcp-server, config add-package/remove-package | Agent groups (workspace, personality, container config) |
+| sessions     | list, get                                                                                                                                 | Active sessions (read-only)                             |
+| destinations | list, add, remove                                                                                                                         | Where an agent group can send messages                  |
+| members      | list, add, remove                                                                                                                         | Unprivileged access gate for an agent group             |
 
 Additional resources (available under `global` scope only): messaging-groups, wirings, users, roles, user-dms, dropped-messages, approvals.
 
@@ -43,7 +43,7 @@ Read commands (list, get) are open. Write commands (create, update, delete, rest
 
 Write commands require admin approval. Here's what happens:
 
-1. You run the command (e.g. `ncl groups config update --model claude-sonnet-4-5-20250514`).
+1. You run the command (e.g. `ncl groups config update --model MODEL_ID`).
 2. The command returns immediately with an `approval-pending` response — it has **not** been executed yet.
 3. An admin or owner gets a notification showing exactly what you requested, with approve/reject options.
 4. Once the admin responds:
@@ -65,7 +65,7 @@ ncl members list
 # Write commands (approval required)
 ncl groups restart
 ncl groups restart --rebuild --message "Config updated."
-ncl groups config update --model claude-sonnet-4-5-20250514
+ncl groups config update --model MODEL_ID
 ncl groups config add-mcp-server --name rss --command npx --args '["some-rss-mcp"]'
 ncl groups config add-package --npm some-package
 ncl members add --user telegram:jane

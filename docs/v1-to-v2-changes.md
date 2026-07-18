@@ -67,6 +67,7 @@ Message history (v1 `messages` table, v1 `chats` table) is **not migrated**. The
 **v1:** dedicated `scheduled_tasks` table in `store/messages.db` with its own columns (`schedule_type`, `schedule_value`, `next_run`, `last_run`, `context_mode`, `script`, `status`). A separate cron-ish scheduler process read from it.
 
 **v2:** scheduled tasks are **`messages_in` rows with `kind='task'`** in a session's `inbound.db`. Relevant columns:
+
 - `process_after` (ISO8601) — host sweep wakes the container when `datetime(process_after) <= datetime('now')`
 - `recurrence` — cron string; `NULL` = one-shot
 - `series_id` — groups recurring occurrences; set to the task id on first insert
@@ -82,7 +83,7 @@ Tasks can exist before a session is awake — the host sweep creates/wakes the c
 
 **v1:** `.env` — plain environment variables. `DISCORD_BOT_TOKEN`, `ANTHROPIC_API_KEY`, etc. The host read them directly and passed them in to any code that needed them.
 
-**v2:** OneCLI Agent Vault. A separate local service at `http://127.0.0.1:10254` holds secrets. Agents are *scoped* to specific secrets and the vault injects them into approved API requests as they leave the container. The container never sees the raw secret value.
+**v2:** OneCLI Agent Vault. A separate local service at `http://127.0.0.1:10254` holds secrets. Agents are _scoped_ to specific secrets and the vault injects them into approved API requests as they leave the container. The container never sees the raw secret value.
 
 Gotcha: auto-created agents default to `selective` secret mode — no secrets attached, even if matching secrets exist in the vault. See the "auto-created agents start in selective secret mode" section of the root CLAUDE.md for the fix (`onecli agents set-secret-mode --mode all`).
 
@@ -95,6 +96,7 @@ Gotcha: auto-created agents default to `selective` secret mode — no secrets at
 **v1:** native adapters (e.g. `discord.js` used directly) imported in `src/channels/`. Installing a channel meant editing code, adding a dependency, and setting env vars.
 
 **v2:** channel adapters live on a sibling `channels` branch. Each `/add-<channel>` skill:
+
 1. `git fetch origin channels`
 2. `git show channels:src/channels/<name>.ts > src/channels/<name>.ts`
 3. Appends `import './<name>.js';` to `src/channels/index.ts`
@@ -112,6 +114,7 @@ Idempotent — re-running is a no-op. Pinned versions keep the supply chain hone
 **v1:** `registered_groups.is_main = 1` flagged one group as the privileged one. No `users` table. Permissions were conventions, not enforced.
 
 **v2:** explicit tables.
+
 - `users(id = "<channel_type>:<handle>", kind, display_name)` — one row per messaging-platform identifier
 - `user_roles(user_id, role ∈ {owner, admin}, agent_group_id nullable, granted_by, granted_at)` — owner is always global; admin can be global or scoped
 - `agent_group_members(user_id, agent_group_id, ...)` — "known" membership for the `sender_scope='known'` gate
@@ -127,10 +130,11 @@ Owner gets seeded during the `/migrate-from-v1` skill's interview phase ("Which 
 **v1:** `groups/<folder>/CLAUDE.md` and optional `logs/`. `CLAUDE.md` was a plain instruction file, group-specific.
 
 **v2:** each group still lives at `groups/<folder>/`, but the shape is richer:
-- `CLAUDE.md` — **composed at container spawn** from `.claude-shared.md` (symlink to global) + `.claude-fragments/*.md` (module fragments) + `CLAUDE.local.md`. **Don't edit `CLAUDE.md` directly.**
+
+- `CLAUDE.md` — a **session-private generated provider document** that imports the neutral runtime core, the Claude appendix, and enabled `.claude-fragments/*.md`. Claude loads `CLAUDE.local.md` separately. **Don't edit `CLAUDE.md` directly.**
 - `CLAUDE.local.md` — per-group content. The migration writes v1's old `CLAUDE.md` here.
 - `container.json` — optional per-group container config (apt deps, env, mounts). v1's `registered_groups.container_config` JSON is close but not identical — the migration stores the v1 payload at `groups/<folder>/.v1-container-config.json` for the skill to reconcile, rather than silently mapping it.
-- `.claude-fragments/` and `.claude-shared.md` are installed by `initGroupFilesystem()` the first time the host touches the group, so the migration only has to write `CLAUDE.local.md` and leave the scaffolding to the host.
+- Provider documents and fragments are generated under the private session directory at spawn, so the migration only has to write `CLAUDE.local.md` and leave runtime composition to the host.
 
 ---
 
@@ -149,6 +153,7 @@ Lockfiles: host uses `pnpm-lock.yaml`, agent-runner uses `bun.lock`. `minimumRel
 **v1:** if you added MCP servers or self-modification plumbing, it was usually direct edits to the long-running process.
 
 **v2:**
+
 - MCP servers register through `container/agent-runner/src/mcp-tools/*.ts` and load per-session. There's also `install_packages` and `add_mcp_server` self-mod tools that go through an admin-approval flow (`src/modules/self-mod/apply.ts`) before rebuilding the container image.
 - Custom MCP tools you wrote in v1 map cleanly to the v2 tool registry, but the import paths, runtime (Bun vs Node), and SQL helper differences (`bun:sqlite` uses `$name`-prefixed params) may need adjustment. The skill walks through this.
 

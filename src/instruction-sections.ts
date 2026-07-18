@@ -6,7 +6,10 @@ import { getSkillInstallation } from './db/skill-provenance.js';
 import { resolveAvailableSharedResources } from './shared-resources.js';
 import { discoverSkillCatalog, selectSkillCatalog } from './skills/catalog.js';
 
-const RUNTIME_CONTRACT_CONTAINER_PATH = '/app/CLAUDE.md';
+const RUNTIME_CONTRACT_HOST_SUBPATH = path.join('container', 'runtime', 'core.md');
+const RUNTIME_APPENDIX_HOST_SUBPATHS: Record<string, string> = {
+  claude: path.join('container', 'runtime', 'claude.md'),
+};
 const MCP_TOOLS_CONTAINER_BASE = '/app/src/mcp-tools';
 const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
 
@@ -24,7 +27,28 @@ export interface InstructionSection {
 export interface CollectInstructionSectionsOptions {
   projectRoot: string;
   profile: AgentProfile;
+  capabilityIds?: Iterable<string>;
+  provider?: string;
 }
+
+const MODULE_CAPABILITIES: Record<string, string[]> = {
+  core: ['nanoclaw.send-message'],
+  interactive: ['nanoclaw.send-message'],
+  scheduling: ['nanoclaw.schedule-task', 'nanoclaw.manage-jobs'],
+  'self-mod': ['nanoclaw.self-modify'],
+  agents: [
+    'nanoclaw.manage-agents',
+    'nanoclaw.request-agent-task',
+    'nanoclaw.get-agent-task',
+    'nanoclaw.cancel-agent-task',
+    'nanoclaw.report-agent-task-progress',
+    'nanoclaw.block-agent-task',
+    'nanoclaw.complete-agent-task',
+    'nanoclaw.fail-agent-task',
+    'nanoclaw.publish-agent-task-artifact',
+  ],
+  cli: ['nanoclaw.cli'],
+};
 
 interface SkillInstructionFragment {
   name: string;
@@ -33,12 +57,24 @@ interface SkillInstructionFragment {
 
 export function collectInstructionSections(options: CollectInstructionSectionsOptions): InstructionSection[] {
   const { projectRoot, profile } = options;
+  const capabilityIds = options.capabilityIds ? new Set(options.capabilityIds) : undefined;
+  const runtimePaths = [
+    path.join(projectRoot, RUNTIME_CONTRACT_HOST_SUBPATH),
+    ...(options.provider && RUNTIME_APPENDIX_HOST_SUBPATHS[options.provider]
+      ? [path.join(projectRoot, RUNTIME_APPENDIX_HOST_SUBPATHS[options.provider])]
+      : []),
+  ];
+  const runtimeContent = runtimePaths
+    .filter((runtimePath) => fs.existsSync(runtimePath))
+    .map((runtimePath) => fs.readFileSync(runtimePath, 'utf8').trim())
+    .filter(Boolean)
+    .join('\n\n');
   const sections: InstructionSection[] = [
     {
       id: 'runtime-contract',
       title: 'NanoClaw Runtime Contract',
       kind: 'runtime',
-      containerPath: RUNTIME_CONTRACT_CONTAINER_PATH,
+      content: runtimeContent,
       required: true,
     },
   ];
@@ -59,6 +95,10 @@ export function collectInstructionSections(options: CollectInstructionSectionsOp
       if (!match) continue;
       const moduleName = match[1];
       if (moduleName === 'cli' && profile.tools.cliScope === 'disabled') continue;
+      const requiredCapabilities = MODULE_CAPABILITIES[moduleName];
+      if (capabilityIds && requiredCapabilities && !requiredCapabilities.some((id) => capabilityIds.has(id))) {
+        continue;
+      }
       sections.push({
         id: `module-${moduleName}`,
         title: `NanoClaw Module: ${moduleName}`,

@@ -4,7 +4,11 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { GROUPS_DIR } from './config.js';
-import { materializeContainerJson, materializeSessionRuntimeJson } from './container-config.js';
+import {
+  buildRequestSystemInstructions,
+  materializeContainerJson,
+  materializeSessionRuntimeJson,
+} from './container-config.js';
 import { closeDb, createAgentGroup, createContainerConfig, initTestDb, runMigrations } from './db/index.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 
@@ -143,5 +147,25 @@ describe('materializeContainerJson agent profile', () => {
       plan,
     );
     expect(runtime.config.sessionRuntimePlan).toEqual(plan);
+  });
+
+  it('marks oversized optional request instructions as omitted instead of truncating silently', () => {
+    const instructions = buildRequestSystemInstructions(group, {
+      mcpServers: {
+        enormous: { command: 'node', instructions: 'x'.repeat(70 * 1024) },
+      },
+      packages: { apt: [], npm: [] },
+      additionalMounts: [],
+      skills: [],
+      cliScope: 'disabled',
+      assistantName: 'Reviewer',
+      groupName: group.name,
+      agentGroupId: group.id,
+    });
+
+    expect(Buffer.byteLength(instructions, 'utf8')).toBeLessThanOrEqual(64 * 1024);
+    expect(instructions).toContain('# Omitted for size');
+    expect(instructions).toContain('MCP Server: enormous');
+    expect(instructions).not.toContain('persistent Claude memory');
   });
 });

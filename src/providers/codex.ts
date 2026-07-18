@@ -89,9 +89,16 @@ registerProviderContainerConfig('codex', (ctx) => {
   fs.closeSync(fs.openSync(authPath, 'a'));
   syncHostCodexChatGptAuth(authPath);
 
-  // Compose this group's AGENTS.md and sync codex-native skill links.
+  // Compose a session-specific AGENTS.md. Multiple sessions in one group may
+  // have different compiled capability plans.
   const group = getAgentGroup(ctx.agentGroupId);
-  if (group) composeGroupAgentsMd(group, ctx.groupDir);
+  const providerDocsDir = path.join(ctx.sessionDir, 'provider-docs');
+  if (group) {
+    composeGroupAgentsMd(group, ctx.groupDir, {
+      outputDir: providerDocsDir,
+      containerConfig: ctx.containerConfig,
+    });
+  }
   syncCodexSkillLinks(ctx.groupDir, ctx.selectedSkills);
 
   // No credential env here. API-key auth stays in OneCLI. ChatGPT auth,
@@ -99,7 +106,7 @@ registerProviderContainerConfig('codex', (ctx) => {
   // CODEX_ENV_ALLOWLIST deliberately strips OPENAI_API_KEY from the codex
   // process env so auth never rides env vars.
   const mounts = [{ hostPath: codexDir, containerPath: '/home/node/.codex', readonly: false }];
-  const composedAgentsMd = path.join(ctx.groupDir, 'AGENTS.md');
+  const composedAgentsMd = path.join(providerDocsDir, 'AGENTS.md');
   if (fs.existsSync(composedAgentsMd)) {
     // RO over the RW group dir — regenerated every spawn, agent edits would
     // be clobbered anyway. Memory behavior is edited via memory/system/.

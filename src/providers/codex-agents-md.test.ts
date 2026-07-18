@@ -28,9 +28,9 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-codex-project-'));
     groupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-codex-agents-md-'));
     process.chdir(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, 'container'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, 'container', 'runtime'), { recursive: true });
     fs.writeFileSync(
-      path.join(projectRoot, 'container', 'CLAUDE.md'),
+      path.join(projectRoot, 'container', 'runtime', 'core.md'),
       [
         '## Token-efficient shell',
         '',
@@ -39,8 +39,6 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
         '## Shared knowledge',
         '',
         '/workspace/agent/shared/knowledge/MEMORY.md',
-        '/workspace/agent/shared/knowledge/knowledge/preferences/communication.md',
-        '/workspace/agent/shared/knowledge/knowledge/people/alban.md',
         'Do not duplicate shared user preferences into provider-specific memory files.',
       ].join('\n'),
     );
@@ -60,10 +58,10 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     const doc = fs.readFileSync(path.join(groupDir, 'AGENTS.md'), 'utf-8');
     expect(doc).toContain('## Shared knowledge');
     expect(doc).toContain('/workspace/agent/shared/knowledge/MEMORY.md');
-    expect(doc).toContain('/workspace/agent/shared/knowledge/knowledge/preferences/communication.md');
-    expect(doc).toContain('/workspace/agent/shared/knowledge/knowledge/people/alban.md');
     expect(doc).toContain('Do not duplicate shared user preferences into provider-specific memory files.');
     expect(doc).toContain('Use the NanoClaw `run_shell` MCP tool for shell commands');
+    expect(doc).not.toContain('CLAUDE.local.md');
+    expect(doc).not.toContain("Claude's native");
   });
 
   it('renders enabled module and MCP instructions through the shared profile boundary', () => {

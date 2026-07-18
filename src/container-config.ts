@@ -21,6 +21,7 @@ import type { EffectiveProviderConfig, EffectiveProviderProfile } from './provid
 import type { ProviderCapabilities } from './providers/provider-descriptor.js';
 import type { SessionRuntimePlan } from './capabilities/session-runtime-plan.js';
 import { writePrivateFileSync } from './private-files.js';
+import { log } from './log.js';
 
 export interface McpServerConfig {
   command: string;
@@ -113,24 +114,66 @@ function instructionContent(projectRoot: string, section: InstructionSection): s
   return '';
 }
 
-function buildRequestSystemInstructions(group: AgentGroup, config: ContainerConfig): string {
+export function buildRequestSystemInstructions(group: AgentGroup, config: ContainerConfig): string {
   const profile = buildAgentProfile(group, config);
-  const sections = collectInstructionSections({ projectRoot: process.cwd(), profile }).sort(
-    (a, b) => Number(Boolean(b.required)) - Number(Boolean(a.required)),
-  );
+  const sections = collectInstructionSections({
+    projectRoot: process.cwd(),
+    profile,
+    provider: config.provider,
+    capabilityIds: config.sessionRuntimePlan?.capabilities.map((item) => item.id),
+  }).sort((a, b) => Number(Boolean(b.required)) - Number(Boolean(a.required)));
   const chunks = [
-    `# Agent identity\n\nYou are ${profile.assistantName}, agent group ${profile.groupName}.`,
+    {
+      name: 'Agent identity',
+      required: true,
+      content: `# Agent identity\n\nYou are ${profile.assistantName}, agent group ${profile.groupName}.`,
+    },
     ...sections.map((section) => {
       const content = instructionContent(process.cwd(), section).trim();
-      return content ? `# ${section.title}\n\n${content}` : '';
+      return {
+        name: section.title,
+        required: Boolean(section.required),
+        content: content ? `# ${section.title}\n\n${content}` : '',
+      };
     }),
-  ].filter(Boolean);
-  let output = '';
-  for (const chunk of chunks) {
-    const next = output ? `${output}\n\n${chunk}` : chunk;
-    if (Buffer.byteLength(next, 'utf8') > REQUEST_SYSTEM_CONTEXT_MAX_BYTES) break;
-    output = next;
+  ].filter((chunk) => chunk.content);
+  const selected = [...chunks];
+  const dropped: string[] = [];
+  const render = (): string => {
+    const omission = dropped.length
+      ? `# Omitted for size\n\nOptional instruction sections omitted to fit the request context limit: ${dropped.join(', ')}.`
+      : '';
+    return [...selected.map((chunk) => chunk.content), omission].filter(Boolean).join('\n\n');
+  };
+  let output = render();
+  while (Buffer.byteLength(output, 'utf8') > REQUEST_SYSTEM_CONTEXT_MAX_BYTES) {
+    const candidate = selected
+      .filter((chunk) => !chunk.required)
+      .sort((a, b) => Buffer.byteLength(b.content, 'utf8') - Buffer.byteLength(a.content, 'utf8'))[0];
+    if (!candidate) {
+      throw new Error('Required request system instructions exceed the 64 KiB context limit');
+    }
+    selected.splice(selected.indexOf(candidate), 1);
+    dropped.push(candidate.name);
+    output = render();
   }
+  if (dropped.length > 0) {
+    log.error('Request system instructions exceeded context cap; optional sections omitted', {
+      group: group.name,
+      bytes: Buffer.byteLength(output, 'utf8'),
+      dropped,
+    });
+  }
+  log.info('Composed request system instructions', {
+    group: group.name,
+    bytes: Buffer.byteLength(output, 'utf8'),
+    estimatedTokens: Math.ceil(Buffer.byteLength(output, 'utf8') / 4),
+    sections: selected.map((chunk) => ({
+      section: chunk.name,
+      bytes: Buffer.byteLength(chunk.content, 'utf8'),
+    })),
+    dropped,
+  });
   return output;
 }
 

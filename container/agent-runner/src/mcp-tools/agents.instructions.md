@@ -4,7 +4,7 @@
 
 ### How it works
 
-- Creates a new agent with its own container, workspace, and session. Your `instructions` string seeds the agent's `CLAUDE.local.md` — its starting role and personality.
+- Creates a new agent with its own container, workspace, and session. Your `instructions` string seeds its persistent starting role and personality.
 - The agent's `name` becomes a destination on both sides: you address it via `send_message({ to: "<name>", ... })`, and its replies arrive as inbound messages with `from="<name>"`.
 - Each agent has its own persistent workspace under `groups/<folder>/` — memory, conversation history, and notes all survive across sessions. This is a full standalone agent, not a stateless sub-query.
 - **Fire-and-forget:** the call returns immediately without waiting for the agent to confirm it's ready. Messages you send will queue until it's up.
@@ -18,7 +18,7 @@ The right frame is: does this agent need its own memory and context that builds 
 
 ### When NOT to use
 
-- **One-off lookups or short tasks** — use the SDK `Agent` tool instead. It's stateless, spins up and completes in one shot, and leaves no persistent footprint.
+- **One-off lookups or short tasks** — handle them inline, or use a provider-native ephemeral worker when one is available. Do not create a persistent NanoClaw agent for work that needs no durable identity or memory.
 - **Work that finishes before the user's next message** — agents persist indefinitely. Don't create one for something you could do inline.
 
 ### Writing good `instructions`

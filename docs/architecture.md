@@ -224,8 +224,11 @@ tool discovery and invocation by granted capability ID, and configured
 external MCP servers are attached only when the external-MCP capability was
 compiled.
 
-The host materializes provider-native project documents (`CLAUDE.md` and
-`AGENTS.md`) as compatibility artifacts. Provider-specific state and auth
+The host materializes effective provider-native project documents (`CLAUDE.md`
+and `AGENTS.md`) below each private session directory and mounts them read-only
+over the durable group workspace. This prevents concurrent sessions with
+different compiled capability plans from overwriting each other's instructions.
+Legacy group-level documents remain compatibility artifacts. Provider-specific state and auth
 mounts are contributed by provider adapters. API-key profiles normally remain
 behind OneCLI and are not stored in runtime JSON; explicitly enabled host-file
 or direct-secret modes are mounted into the container.

@@ -31,6 +31,8 @@ export interface ProviderContainerContext {
   groupDir: string;
   /** Effective skill selection from the materialized container config. */
   selectedSkills: string[] | 'all';
+  /** Effective session config, including its compiled capability plan. */
+  containerConfig?: import('../container-config.js').ContainerConfig;
   /** `process.env` at spawn time — pull passthrough values from here. */
   hostEnv: NodeJS.ProcessEnv;
   /** Effective non-secret provider profile/runtime settings for this session. */

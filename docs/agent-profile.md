@@ -83,9 +83,9 @@ NanoClaw still emits provider-native instruction files because providers load co
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `groups/<folder>/container.json` | Group-level operator snapshot generated from central configuration.                                                                              |
 | `container.runtime.json`         | Effective session runtime config, including provider/profile selection, compiled capabilities, compatibility fields, and neutral `agentProfile`. |
-| `CLAUDE.md`                      | Generated Claude project doc. Imports the runtime contract and enabled fragments.                                                                |
+| `CLAUDE.md`                      | Session-private Claude project doc. Imports the neutral runtime core, Claude appendix, and enabled fragments.                                    |
 | `CLAUDE.local.md`                | Per-group Claude-compatible local memory/instructions.                                                                                           |
-| `AGENTS.md`                      | Generated Codex project doc. Renders compatible runtime sections within Codex's project-doc cap.                                                 |
+| `AGENTS.md`                      | Session-private Codex project doc. Renders the neutral runtime core and compatible sections within Codex's project-doc cap.                      |
 | `.claude-fragments/`             | Generated Claude import fragments for skills, modules, and MCP instructions.                                                                     |
 
 `CLAUDE.md` and `AGENTS.md` are generated compatibility artifacts. Do not edit them directly. Put durable group-specific instructions in the provider-neutral workspace where possible, or in the provider-specific local file when the provider requires it.

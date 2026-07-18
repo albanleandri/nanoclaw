@@ -5,6 +5,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { composeGroupClaudeMd } from './claude-md-compose.js';
+import type { ContainerConfig } from './container-config.js';
 import { closeDb, createAgentGroup, createContainerConfig, initTestDb, runMigrations } from './db/index.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 
@@ -67,6 +68,8 @@ afterEach(() => {
 
 describe('composeGroupClaudeMd', () => {
   it('renders the existing import-style entry point and reconciles fragments', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/runtime/claude.md', 'claude memory');
     writeSkill('calendar');
     writeFile('container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule tools');
 
@@ -99,7 +102,6 @@ describe('composeGroupClaudeMd', () => {
 
     composeGroupClaudeMd(group);
 
-    expect(fs.readlinkSync(path.join(groupDir, '.claude-shared.md'))).toBe('/app/CLAUDE.md');
     expect(fs.readlinkSync(path.join(groupDir, '.claude-fragments', 'skill-calendar.md'))).toBe(
       '/app/skills/calendar/instructions.md',
     );
@@ -109,16 +111,67 @@ describe('composeGroupClaudeMd', () => {
     expect(fs.readFileSync(path.join(groupDir, '.claude-fragments', 'mcp-search.md'), 'utf-8')).toBe('search tools');
     expect(fs.existsSync(path.join(groupDir, '.claude-fragments', 'stale.md'))).toBe(false);
     expect(fs.existsSync(path.join(groupDir, 'CLAUDE.local.md'))).toBe(true);
+    expect(fs.readFileSync(path.join(groupDir, '.claude-fragments', 'runtime-contract.md'), 'utf8')).toContain(
+      'claude memory',
+    );
+    expect(fs.readFileSync(path.join(groupDir, '.claude-fragments', 'runtime-contract.md'), 'utf8')).not.toContain(
+      'memory/system/definition.md',
+    );
 
     expect(fs.readFileSync(path.join(groupDir, 'CLAUDE.md'), 'utf-8')).toBe(
       [
         '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->',
-        '@./.claude-shared.md',
         '@./.claude-fragments/mcp-search.md',
         '@./.claude-fragments/module-scheduling.md',
+        '@./.claude-fragments/runtime-contract.md',
         '@./.claude-fragments/skill-calendar.md',
         '',
       ].join('\n'),
     );
+  });
+
+  it('keeps capability-filtered provider docs isolated between sessions', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/runtime/claude.md', 'claude memory');
+    writeFile('container/agent-runner/src/mcp-tools/core.instructions.md', 'core tools');
+    writeFile('container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule tools');
+    const group: AgentGroup = {
+      id: 'ag-isolated-compose',
+      name: 'Isolated Compose',
+      folder: 'isolated-compose-' + Date.now(),
+      agent_provider: null,
+      created_at: now(),
+    };
+    const base: ContainerConfig = {
+      mcpServers: {},
+      packages: { apt: [], npm: [] },
+      additionalMounts: [],
+      skills: [],
+      cliScope: 'disabled',
+    };
+    const plan = (ids: string[]): ContainerConfig['sessionRuntimePlan'] => ({
+      runtime: { runtimeId: 'claude', runtimeStateKey: 'claude' },
+      capabilities: ids.map((id) => ({ id, adapter: 'mcp' as const, entrypoint: `tool:${id}` })),
+      rejectedCapabilities: [],
+      policy: { cliScope: 'disabled', approvalMode: 'default', writableWorkspace: true },
+      instructionSections: [],
+    });
+    const first = path.join(projectRoot, 'sessions', 'first', 'provider-docs');
+    const second = path.join(projectRoot, 'sessions', 'second', 'provider-docs');
+
+    composeGroupClaudeMd(group, {
+      outputDir: first,
+      containerConfig: { ...base, sessionRuntimePlan: plan(['nanoclaw.send-message']) },
+    });
+    composeGroupClaudeMd(group, {
+      outputDir: second,
+      containerConfig: { ...base, sessionRuntimePlan: plan(['nanoclaw.schedule-task']) },
+    });
+
+    expect(fs.lstatSync(path.join(first, '.claude-fragments', 'module-core.md')).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(first, '.claude-fragments', 'module-scheduling.md'))).toBe(false);
+    expect(fs.existsSync(path.join(second, '.claude-fragments', 'module-core.md'))).toBe(false);
+    expect(fs.lstatSync(path.join(second, '.claude-fragments', 'module-scheduling.md')).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(projectRoot, 'groups', group.folder, 'CLAUDE.md'))).toBe(false);
   });
 });

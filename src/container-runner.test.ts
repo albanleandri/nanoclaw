@@ -8,6 +8,7 @@ import {
   assertUniqueMountDestinations,
   buildGroupWorkspaceMounts,
   buildRtkStateMount,
+  buildSessionClaudeDocMounts,
   buildSessionWorkspaceMounts,
   buildSessionRuntimeConfigMounts,
   resolveProviderName,
@@ -212,6 +213,26 @@ describe('buildGroupWorkspaceMounts', () => {
       );
       expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/agent/container.json' }));
       expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/group/container.json' }));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildSessionClaudeDocMounts', () => {
+  it('overlays both workspace aliases from one session-private source', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-session-docs-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'CLAUDE.md'), '# Session');
+      fs.mkdirSync(path.join(tmp, '.claude-fragments'));
+      const mounts = buildSessionClaudeDocMounts(tmp);
+      expect(mounts).toHaveLength(4);
+      expect(mounts).toContainEqual({
+        hostPath: path.join(tmp, 'CLAUDE.md'),
+        containerPath: '/workspace/agent/CLAUDE.md',
+        readonly: true,
+      });
+      expect(() => assertUniqueMountDestinations(mounts)).not.toThrow();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
