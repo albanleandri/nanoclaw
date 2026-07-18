@@ -2,7 +2,7 @@
 
 NanoClaw talks to the OneCLI gateway (credential vault + egress proxy) through `@onecli-sh/sdk`. The gateway is an external component with its own release line, so NanoClaw pins the **sanctioned gateway version** in [`versions.json`](../versions.json) under `onecli-gateway`. When an update moves that pin, the gateway must be upgraded — this doc is the migration path. It is written to be handed to a coding agent verbatim: detect → upgrade → verify → rollback.
 
-There is deliberately **no runtime version check, and setup does not migrate the gateway for you**: the gateway is a separate out-of-band component, and the migrator is your coding agent running `/update-nanoclaw` — it diffs `versions.json` across the update and routes you here when the `onecli-gateway` pin moved. (Setup detects a pre-`/v1` gateway and points at this doc, but never upgrades it.) Run the steps below verbatim.
+There is deliberately **no runtime version check, and setup does not migrate the gateway for you**: the gateway is a separate out-of-band component, and the migrator is your coding agent running `/update-nanoclaw` — it diffs `versions.json` across the update and routes you here when the `onecli-gateway` pin moved. Setup fails closed when a gateway predates `/v1`, so an incompatible vault cannot appear healthy and leave every message retrying forever. Run the steps below verbatim.
 
 ## 1. Detect
 
@@ -25,8 +25,18 @@ The gateway runs as a Docker service in `~/.onecli`. Upgrade just that container
 **Local gateway (the common case):**
 
 ```bash
-cd ~/.onecli && ONECLI_VERSION=<onecli-gateway pin from versions.json> docker compose pull onecli && docker compose up -d
+cd ~/.onecli
+# The upstream compose file may hard-code `latest`; replace only its OneCLI
+# image reference, leaving Postgres and all persistent volumes untouched.
+sed -i.bak -E 's#(image:[[:space:]]*ghcr.io/onecli/onecli:).*#\1<onecli-gateway pin from versions.json>#' docker-compose.yml
+docker compose pull onecli
+docker compose up -d onecli
 ```
+
+Do not downgrade after a newer gateway has started: OneCLI migrations are
+forward-only, and an older binary may no longer understand the migrated vault
+schema. If `latest` was started accidentally, pin that exact running version
+or a newer sanctioned version instead.
 
 **Remote gateway** — run the same command on the gateway's host (NanoClaw can't reach it over SSH).
 
@@ -45,7 +55,7 @@ docker run --rm --add-host=host.docker.internal:host-gateway \
   curlimages/curl -s -o /dev/null -w '%{http_code}' http://host.docker.internal:10254/v1/health
 ```
 
-This must print `200`. If it can't connect while the host-side check passed, set the bind address in `~/.onecli/.env` to the docker-bridge IP (or `0.0.0.0` on a host with a closed firewall) and `cd ~/.onecli && docker compose up -d`. Symptom if skipped: host log clean, agents fail all API calls.
+This must print `200`. If it can't connect while the host-side check passed, set `ONECLI_BIND_HOST` in `~/.onecli/.env` to the docker-bridge IP (or `0.0.0.0` on a host with a closed firewall) and run `cd ~/.onecli && docker compose up -d onecli`. Pass the same value in the environment for that first recreation if the file did not exist yet. Symptom if skipped: host health is clean, but NanoClaw cannot register or start agents.
 
 Finally, restart the NanoClaw service (per-install names — derive with `setup/lib/install-slug.sh`):
 
@@ -59,7 +69,9 @@ source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)
 ## 4. Rollback
 
 ```bash
-cd ~/.onecli && ONECLI_VERSION=<old-version> docker compose up -d
+cd ~/.onecli
+sed -i.bak -E 's#(image:[[:space:]]*ghcr.io/onecli/onecli:).*#\1<old-version>#' docker-compose.yml
+docker compose up -d onecli
 ```
 
 If the NanoClaw update itself is being rolled back, also pin `@onecli-sh/sdk` back to its previous version in `package.json` and run `pnpm install`. Vault data is unaffected in both directions.

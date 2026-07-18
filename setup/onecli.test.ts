@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { verifyGatewayV1 } from './onecli.js';
+import { gatewayV1Failure, verifyGatewayV1 } from './onecli.js';
 
 function fakeFetch(behavior: 'ok' | '404' | 'down'): typeof fetch {
   return (async () => {
@@ -25,5 +25,13 @@ describe('verifyGatewayV1', () => {
   });
   it('unreachable on connection failure', async () => {
     expect(await verifyGatewayV1('http://x', fakeFetch('down'))).toBe('unreachable');
+  });
+});
+
+describe('gatewayV1Failure', () => {
+  it('turns a permanent SDK incompatibility into an actionable setup failure', () => {
+    expect(gatewayV1Failure('incompatible')).toContain('docs/onecli-upgrades.md');
+    expect(gatewayV1Failure('ok')).toBeNull();
+    expect(gatewayV1Failure('unreachable')).toBeNull();
   });
 });

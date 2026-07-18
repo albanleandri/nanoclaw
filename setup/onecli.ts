@@ -264,17 +264,26 @@ export async function verifyGatewayV1(
   }
 }
 
-/**
- * Detect-and-warn helper: returns a status HINT (and logs) when the gateway is
- * pre-/v1, else null. Never fails the step or auto-upgrades — the agent owns
- * the upgrade via docs/onecli-upgrades.md.
- */
-function gatewayV1Hint(result: 'ok' | 'incompatible' | 'unreachable'): string | null {
+/** Return the actionable setup failure for a pre-/v1 gateway, else null. */
+export function gatewayV1Failure(result: 'ok' | 'incompatible' | 'unreachable'): string | null {
   if (result !== 'incompatible') return null;
   log.warn('OneCLI gateway lacks the /v1 API @onecli-sh/sdk 2.x requires', {
     pin: ONECLI_GATEWAY_VERSION,
   });
   return 'OneCLI gateway lacks the /v1 API @onecli-sh/sdk 2.x requires — upgrade it: docs/onecli-upgrades.md';
+}
+
+function failForIncompatibleGateway(url: string): never {
+  emitStatus('ONECLI', {
+    INSTALLED: true,
+    ONECLI_URL: url,
+    HEALTHY: true,
+    STATUS: 'failed',
+    ERROR: 'onecli_gateway_incompatible',
+    HINT: gatewayV1Failure('incompatible'),
+    LOG: 'logs/setup.log',
+  });
+  process.exit(1);
 }
 
 export async function pollHealth(url: string, timeoutMs: number): Promise<boolean> {
@@ -341,14 +350,14 @@ export async function run(args: string[]): Promise<void> {
       log.info('Wrote ONECLI_API_KEY to .env');
     }
     const healthy = await pollHealth(remoteUrl, 5000);
-    const v1Hint = healthy ? gatewayV1Hint(await verifyGatewayV1(remoteUrl)) : null;
+    const v1Status = healthy ? await verifyGatewayV1(remoteUrl) : 'unreachable';
+    if (v1Status === 'incompatible') failForIncompatibleGateway(remoteUrl);
     emitStatus('ONECLI', {
       INSTALLED: true,
       REMOTE: true,
       ONECLI_URL: remoteUrl,
       HEALTHY: healthy,
       STATUS: 'success',
-      ...(v1Hint ? { GATEWAY_HINT: v1Hint } : {}),
       LOG: 'logs/setup.log',
     });
     return;
@@ -382,14 +391,14 @@ export async function run(args: string[]): Promise<void> {
     writeEnvOnecliUrl(url);
     log.info('Reusing existing OneCLI', { url });
     const healthy = await pollHealth(url, 5000);
-    const v1Hint = healthy ? gatewayV1Hint(await verifyGatewayV1(url)) : null;
+    const v1Status = healthy ? await verifyGatewayV1(url) : 'unreachable';
+    if (v1Status === 'incompatible') failForIncompatibleGateway(url);
     emitStatus('ONECLI', {
       INSTALLED: true,
       REUSED: true,
       ONECLI_URL: url,
       HEALTHY: healthy,
       STATUS: 'success',
-      ...(v1Hint ? { GATEWAY_HINT: v1Hint } : {}),
       LOG: 'logs/setup.log',
     });
     return;
@@ -442,7 +451,8 @@ export async function run(args: string[]): Promise<void> {
   log.info('Wrote ONECLI_URL to .env', { url });
 
   const healthy = await pollHealth(url, 15000);
-  const v1Hint = healthy ? gatewayV1Hint(await verifyGatewayV1(url)) : null;
+  const v1Status = healthy ? await verifyGatewayV1(url) : 'unreachable';
+  if (v1Status === 'incompatible') failForIncompatibleGateway(url);
 
   emitStatus('ONECLI', {
     INSTALLED: true,
@@ -453,7 +463,6 @@ export async function run(args: string[]): Promise<void> {
     // The next step (auth) will surface a genuinely broken gateway via
     // `onecli secrets list`, so don't trigger rescue attempts from here.
     STATUS: 'success',
-    ...(v1Hint ? { GATEWAY_HINT: v1Hint } : {}),
     ...(healthy
       ? {}
       : {
