@@ -25,7 +25,7 @@ The sandbox provides a MITM proxy at `host.docker.internal:3128` that handles ne
 
 - **Docker Desktop v4.40+** with Sandbox support
 - **Anthropic API key** (the sandbox proxy manages injection)
-- For **Telegram**: a bot token from [@BotFather](https://t.me/BotFather) and your chat ID
+- For **Telegram**: a bot token from [@BotFather](https://telegram.me/BotFather) and your chat ID
 - For **WhatsApp**: a phone with WhatsApp installed
 
 Verify sandbox support:

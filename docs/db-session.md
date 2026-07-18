@@ -45,6 +45,14 @@ Phase E adds three host-written kinds:
 
 Their stable IDs are respectively `agent-task:<taskId>`, `agent-task-event:<taskId>:<eventSeq>`, and `agent-task-cancel:<taskId>`. Retry uses insert-if-absent semantics and rejects an ID reused with different content.
 
+Runtime timestamps are stored as UTC ISO-8601 instants with an explicit `Z`
+suffix (for example, `2026-07-18T20:15:30.123Z`). Scheduled inputs may carry an
+offset or a local wall-clock value at the API boundary, but they are normalized
+before storage. SQL due-time checks wrap stored scheduling values in
+`datetime(...)`; code must not compare timestamp strings lexicographically.
+Human `ncl` output renders complete UTC instants in the configured local
+timezone, while `ncl --json` preserves the stored ISO value.
+
 ```sql
 CREATE TABLE messages_in (
   id             TEXT PRIMARY KEY,

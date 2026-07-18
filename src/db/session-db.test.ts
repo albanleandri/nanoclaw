@@ -15,6 +15,9 @@ import {
   getInboundSourceSessionId,
   getOldestDuePendingTimestamp,
   migrateMessagesInTable,
+  markDelivered,
+  markDeliveryFailed,
+  retryWithBackoff,
   syncProcessingAcks,
 } from './session-db.js';
 
@@ -117,6 +120,7 @@ function makeDueMessageDb(): Database.Database {
       timestamp     TEXT NOT NULL,
       status        TEXT DEFAULT 'pending',
       process_after TEXT,
+      tries         INTEGER DEFAULT 0,
       trigger       INTEGER NOT NULL DEFAULT 1,
       content       TEXT NOT NULL
     );
@@ -197,5 +201,46 @@ describe('syncProcessingAcks', () => {
     ]);
     inDb.close();
     outDb.close();
+  });
+});
+
+describe('runtime timestamp storage', () => {
+  it('stores retry deadlines as ISO UTC instants', () => {
+    const db = makeDueMessageDb();
+    db.prepare(
+      "INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content) VALUES ('retry-1', 2, 'chat', ?, 'pending', 1, '{}')",
+    ).run(new Date().toISOString());
+
+    retryWithBackoff(db, 'retry-1', 30);
+
+    const row = db.prepare("SELECT tries, process_after FROM messages_in WHERE id = 'retry-1'").get() as {
+      tries: number;
+      process_after: string;
+    };
+    expect(row.tries).toBe(1);
+    expect(row.process_after).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    expect(Date.parse(row.process_after)).toBeGreaterThan(Date.now());
+    db.close();
+  });
+
+  it('stores delivery receipts as ISO UTC instants', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE delivered (
+      message_out_id TEXT PRIMARY KEY,
+      platform_message_id TEXT,
+      status TEXT NOT NULL,
+      delivered_at TEXT NOT NULL
+    )`);
+
+    markDelivered(db, 'delivered-1', 'platform-1');
+    markDeliveryFailed(db, 'failed-1');
+
+    const rows = db.prepare('SELECT status, delivered_at FROM delivered ORDER BY message_out_id').all() as Array<{
+      status: string;
+      delivered_at: string;
+    }>;
+    expect(rows.map((row) => row.status)).toEqual(['delivered', 'failed']);
+    expect(rows.every((row) => /^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.delivered_at))).toBe(true);
+    db.close();
   });
 });

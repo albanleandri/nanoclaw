@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
-import { translateClaudeSdkMessage } from './claude.js';
+import { CLAUDE_SDK_DISALLOWED_TOOLS, translateClaudeSdkMessage } from './claude.js';
+
+describe('Claude SDK tool surface', () => {
+  it('excludes desktop-only reporting tools in the headless runner', () => {
+    expect(CLAUDE_SDK_DISALLOWED_TOOLS).toContain('DesignSync');
+    expect(CLAUDE_SDK_DISALLOWED_TOOLS).toContain('ReportFindings');
+  });
+});
 
 describe('Claude SDK event translation', () => {
   it('normalizes init and result events while preserving activity', () => {

@@ -34,7 +34,7 @@ function log(msg: string): void {
 //   Code UI affordances; in a headless container they'd appear stuck.
 // - DesignSync / ReportFindings: desktop reporting surfaces with no headless
 //   receiver; including their schemas only consumes context.
-const SDK_DISALLOWED_TOOLS = [
+export const CLAUDE_SDK_DISALLOWED_TOOLS = [
   'CronCreate',
   'CronDelete',
   'CronList',
@@ -191,13 +191,13 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
 /**
  * PreToolUse hook: record the current tool + its declared timeout so the host
  * sweep can widen its stuck tolerance while Bash is running a long-declared
- * script. Defense-in-depth: if SDK_DISALLOWED_TOOLS slips through somehow,
+ * script. Defense-in-depth: if CLAUDE_SDK_DISALLOWED_TOOLS slips through somehow,
  * block the call here instead of letting the agent hang.
  */
 const preToolUseHook: HookCallback = async (input) => {
   const i = input as { tool_name?: string; tool_input?: Record<string, unknown> };
   const toolName = i.tool_name ?? '';
-  if (SDK_DISALLOWED_TOOLS.includes(toolName)) {
+  if (CLAUDE_SDK_DISALLOWED_TOOLS.includes(toolName)) {
     return {
       decision: 'block',
       stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
@@ -484,7 +484,7 @@ export class ClaudeProvider implements AgentProvider {
           ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
           : undefined,
         allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
-        disallowedTools: SDK_DISALLOWED_TOOLS,
+        disallowedTools: CLAUDE_SDK_DISALLOWED_TOOLS,
         env: this.env,
         model: this.model,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

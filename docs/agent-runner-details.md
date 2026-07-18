@@ -186,8 +186,17 @@ class ClaudeProvider implements AgentProvider {
 - PreCompact hook for transcript archiving
 - PreToolUse/PostToolUse hooks for tool-in-flight lifecycle and declared Bash
   timeout tracking
-- Full tool allowlist
+- NanoClaw tool allowlist with Claude UI-only/background scheduling surfaces
+  explicitly disallowed; headless-inapplicable `DesignSync` and
+  `ReportFindings` schemas are also excluded
 - `additionalDirectories` for multi-directory access
+
+New agent groups receive lean Claude settings: NanoClaw does not enable
+Claude's experimental agent-teams environment flag, and sets
+`disableWorkflows: true`, because agent-to-agent messaging and host-side
+orchestration already provide those functions. Existing group
+`.claude-shared/settings.json` files are preserved so operator choices are not
+silently rewritten.
 
 ### Token-efficient shell
 

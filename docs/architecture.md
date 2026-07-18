@@ -122,6 +122,11 @@ SQLite files: inbound allocation reads `messages_in`, while runner outbound
 allocation observes both tables. Use each row's timestamp and direction when
 reconstructing a cross-direction timeline.
 
+All runtime writers bind UTC ISO-8601 instants with an explicit `Z`; SQLite's
+timezoneless `datetime('now')` text is used only for read-time comparisons.
+Human CLI rendering localizes complete instants to the configured timezone,
+while JSON and database values remain UTC ISO strings.
+
 See [db.md](db.md) for invariants and
 [db-session.md](db-session.md) for complete session schemas.
 
