@@ -1,81 +1,98 @@
-# Branch & Fork Maintenance Guidelines
+# Branch and fork maintenance
 
-## Structure
+This repository follows upstream NanoClaw's registry-branch model while carrying
+reviewed fork-specific runtime and operator changes.
 
-**`nanocoai/nanoclaw`** (upstream) — core engine with skill definitions (`.claude/skills/`). No channel code on `main`.
+## Branch model
 
-**Channel forks** (`nanoclaw-whatsapp`, `nanoclaw-telegram`, `nanoclaw-slack`, etc.) — each fork = upstream + one channel's code applied. Users clone upstream, then merge a fork into their clone to add a channel.
+- **`upstream/main`** contains the shared engine, channel registry, default
+  Claude runtime, and host/container contracts.
+- **`upstream/channels`** contains optional channel adapters and their tests.
+  Channel installation skills copy selected files into a user's checkout; they
+  do not merge the whole branch.
+- **`upstream/providers`** contains optional provider implementations. Provider
+  installation skills use the same reviewed fetch-and-copy model.
+- Legacy channel fork repositories and `skill/*` feature branches belong to the
+  older merge-based distribution model. Do not use them as the source for new
+  installations or forward-merge work.
 
-**`skill/*` and `feat/*` branches on upstream** — add features unrelated to channels (e.g. `skill/compact`, `skill/apple-container`). Users merge these into their clone to add capabilities. Channel-specific skill branches that duplicate the forks (e.g. `skill/whatsapp`, `skill/telegram`) are legacy.
+Registry branches are maintained by forward-merging upstream `main` into them so
+their optional modules continue to build against the current core. Registry
+branches are never merged wholesale into a user's checkout or back into main.
 
-## How users add capabilities
+## This fork
 
-```
-user clones upstream main
-  ├── merges nanoclaw-whatsapp fork  → adds WhatsApp
-  ├── merges skill/compact branch    → adds /compact command
-  └── merges skill/apple-container   → switches to Apple Container
-```
+This flavor intentionally differs from stock upstream:
 
-## Merge directions
+- `origin` is the fork and `upstream` is `qwibitai/nanoclaw`.
+- Telegram is already installed and maintained in this tree. Other optional
+  channel adapters still come from the `channels` registry branch.
+- The provider-neutral runtime foundation and Codex runtime are already
+  installed. Additional optional providers may still come from the `providers`
+  registry branch.
+- Fork-specific runtime, capability, session-DB, and operator changes must be
+  preserved when adopting upstream patches. Review and port patches rather than
+  assuming a merge or cherry-pick is safe.
 
-```
-upstream main ──→ channel forks     (forward merge to keep forks caught up)
-upstream main ──→ skill branches    (forward merge to keep branches caught up)
-```
+The current installed capabilities and differences from upstream are summarized
+in the README's **This Fork vs Upstream** section.
 
-Forks and skill branches carry applied code changes. Users merge them into their own clones/forks to add capabilities. They are never merged back into upstream `main`.
+## Installing optional modules
 
-## Forward merge procedure
+Installation skills fetch a registry branch and copy only their declared files,
+for example:
 
 ```bash
-# In your local nanoclaw checkout
-git checkout main && git pull
-
-# For a fork:
-git fetch nanoclaw-whatsapp
-git checkout -B whatsapp-merge nanoclaw-whatsapp/main
-git merge main
-# Resolve conflicts (see below)
-# Remove upstream-only workflows (re-added by every merge since main has them):
-git rm .github/workflows/bump-version.yml .github/workflows/update-tokens.yml 2>/dev/null
-git push nanoclaw-whatsapp HEAD:main
-git checkout main && git branch -D whatsapp-merge
-
-# For a skill branch:
-git checkout -B skill/compact origin/skill/compact
-git merge main
-# Resolve conflicts (see below)
-git push origin skill/compact
-git checkout main && git branch -D skill/compact
+git fetch upstream channels
+git show upstream/channels:src/channels/<adapter>.ts > src/channels/<adapter>.ts
 ```
 
-## Conflict resolution
+Use the relevant `/add-<name>` skill rather than executing that example by hand:
+the skill also installs exact dependencies, updates registration, runs focused
+tests, and records any setup required by the adapter or provider. Some setup
+helpers resolve whether `origin` or `upstream` carries the registry branch so
+they also work in ordinary user forks.
 
-The same files conflict every time:
+## Maintaining registry branches
 
-| File | Resolution |
-|------|------------|
-| `package.json` | Take main's version + keep fork/branch-specific deps |
-| `pnpm-lock.yaml` | `git checkout main -- pnpm-lock.yaml && pnpm install` |
-| `.env.example` | Combine: main's entries + fork/branch-specific entries |
-| `repo-tokens/badge.svg` | Take main's version (auto-generated) |
+Registry-branch forward merges are upstream maintainer operations, not normal
+fork-update steps:
 
-Source code changes (e.g. `src/types.ts`, `src/index.ts`) usually auto-merge cleanly, but can conflict if both sides modify the same lines. **Always build and test after every forward merge** — auto-merged code can be silently wrong (e.g. referencing a renamed function or using a removed parameter) even when git reports no conflicts.
+```bash
+git fetch upstream
+git checkout -B channels upstream/channels
+git merge upstream/main
+# resolve conflicts, build, and test
+git push upstream HEAD:channels
+```
 
-## When to merge forward
+Use the same procedure for `providers`. Only push to upstream when explicitly
+authorized to maintain that repository.
 
-After any main change that touches shared files (`package.json`, `src/index.ts`, `CLAUDE.md`, etc.). Small frequent merges = trivial conflicts. Large infrequent merges = painful.
+Known mechanical conflict areas include:
 
-## Fork setup
+| File                    | Resolution                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `package.json`          | Keep main's dependencies plus exact registry-specific dependencies.            |
+| `pnpm-lock.yaml`        | Start from main's lockfile, install the registry dependencies, and regenerate. |
+| `.env.example`          | Preserve main entries and add only registry-specific variables.                |
+| `repo-tokens/badge.svg` | Keep main's generated version.                                                 |
 
-When creating a new channel fork:
+Always build and test after a forward merge. An automatic merge can still be
+wrong when an optional module calls a renamed function or relies on a changed
+contract.
 
-1. Fork `nanoclaw` to `nanoclaw-{channel}`
-2. Remove upstream-only workflows: `bump-version.yml`, `update-tokens.yml`
-3. Add channel code, deps, env vars
-4. Forward-merge main immediately to establish a clean baseline
+## Reviewing upstream for this fork
 
-## Dependencies
+Fetch first, inspect the commits and affected files, then classify each change:
 
-Forks and branches add their own deps on top of upstream's. When upstream adds or removes a dependency, verify that forks/branches still build after the next forward merge — transitive dependency changes can break downstream code.
+- **Adopt** when the same invariant and code path exist here.
+- **Adapt** when the behavior is valuable but this fork has refactored the path
+  or has stronger provider-neutral, capability, or session guarantees.
+- **Skip** when the component is not installed or the change conflicts with an
+  intentional fork difference.
+
+Prefer small ports with focused regressions. After a runtime change, run the
+affected host or Bun tests, both relevant typechecks, formatting, lint, and the
+full suite in proportion to risk. Update the README if any user-facing claim
+changes and record meaningful adoption work in the local handoff.

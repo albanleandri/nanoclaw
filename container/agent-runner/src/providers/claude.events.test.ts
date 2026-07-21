@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { CLAUDE_SDK_DISALLOWED_TOOLS, translateClaudeSdkMessage } from './claude.js';
+import { CLAUDE_SDK_DISALLOWED_TOOLS, classifyClaudeRateLimitEvent, translateClaudeSdkMessage } from './claude.js';
 
 describe('Claude SDK tool surface', () => {
   it('excludes desktop-only reporting tools in the headless runner', () => {
@@ -28,18 +28,60 @@ describe('Claude SDK event translation', () => {
     });
   });
 
-  it('classifies retry and quota events', () => {
+  it('classifies retry events and ignores informational rate-limit telemetry', () => {
     expect(translateClaudeSdkMessage({ type: 'system', subtype: 'api_retry' }).events[1]).toEqual({
       type: 'error',
       message: 'API retry',
       retryable: true,
     });
-    expect(translateClaudeSdkMessage({ type: 'system', subtype: 'rate_limit_event' }).events[1]).toEqual({
+    expect(
+      translateClaudeSdkMessage({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed', utilization: 0.42 },
+      }),
+    ).toEqual({ events: [{ type: 'activity' }], acknowledgesTurn: false });
+    expect(
+      translateClaudeSdkMessage({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed_warning', utilization: 0.91 },
+      }),
+    ).toEqual({ events: [{ type: 'activity' }], acknowledgesTurn: false });
+  });
+
+  it('classifies rejected rate windows separately from exhausted credits', () => {
+    expect(
+      translateClaudeSdkMessage({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+      }).events[1],
+    ).toEqual({
       type: 'error',
-      message: 'Rate limit',
+      message: 'Rate limit [five_hour]',
       retryable: false,
-      classification: 'quota',
+      classification: 'rate_limit',
     });
+    expect(
+      translateClaudeSdkMessage({
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'rejected', errorCode: 'credits_required' },
+      }).events[1],
+    ).toEqual({ type: 'error', message: 'Out of credits', retryable: false, classification: 'quota' });
+  });
+
+  it('normalizes seconds and milliseconds in rate-limit reset timestamps', () => {
+    const seconds = classifyClaudeRateLimitEvent({ status: 'rejected', resetsAt: 1_700_000_000 });
+    const milliseconds = classifyClaudeRateLimitEvent({ status: 'rejected', resetsAt: 1_700_000_000_000 });
+    expect(seconds).toEqual(milliseconds);
+    expect(seconds?.message).toContain('2023-11-14T22:13:20.000Z');
+  });
+
+  it('recognizes both SDK credit-exhaustion signals', () => {
+    expect(classifyClaudeRateLimitEvent({ status: 'rejected', errorCode: 'credits_required' })?.classification).toBe(
+      'quota',
+    );
+    expect(
+      classifyClaudeRateLimitEvent({ status: 'rejected', overageDisabledReason: 'out_of_credits' })?.classification,
+    ).toBe('quota');
   });
 
   it('keeps compaction as activity metadata and translates task progress', () => {

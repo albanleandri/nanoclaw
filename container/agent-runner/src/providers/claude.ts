@@ -21,6 +21,38 @@ function log(msg: string): void {
   console.error(`[claude-provider] ${msg}`);
 }
 
+export interface ClaudeSdkRateLimitInfo {
+  status?: string;
+  resetsAt?: number;
+  rateLimitType?: string;
+  utilization?: number;
+  errorCode?: string;
+  overageDisabledReason?: string;
+}
+
+/**
+ * Translate rejected Claude subscription limits into provider failure classes.
+ * Allowed and warning events are telemetry and must not end a healthy turn.
+ */
+export function classifyClaudeRateLimitEvent(
+  info: ClaudeSdkRateLimitInfo | undefined,
+): { message: string; classification: 'rate_limit' | 'quota' } | null {
+  if (info?.status !== 'rejected') return null;
+
+  const outOfCredits = info.errorCode === 'credits_required' || info.overageDisabledReason === 'out_of_credits';
+  const window = info.rateLimitType ? ` [${info.rateLimitType}]` : '';
+  let reset = '';
+  if (typeof info.resetsAt === 'number' && Number.isFinite(info.resetsAt)) {
+    const resetMs = info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt;
+    reset = ` (resets ${new Date(resetMs).toISOString()})`;
+  }
+
+  return {
+    message: `${outOfCredits ? 'Out of credits' : 'Rate limit'}${window}${reset}`,
+    classification: outOfCredits ? 'quota' : 'rate_limit',
+  };
+}
+
 // Deferred SDK builtins that either sidestep nanoclaw's own scheduling or
 // don't fit our async message-passing model (they're designed for Claude
 // Code's interactive UI and would hang here).
@@ -393,8 +425,23 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
     return { events, acknowledgesTurn: true };
   } else if (message.type === 'system' && message.subtype === 'api_retry') {
     events.push({ type: 'error', message: 'API retry', retryable: true });
-  } else if (message.type === 'system' && message.subtype === 'rate_limit_event') {
-    events.push({ type: 'error', message: 'Rate limit', retryable: false, classification: 'quota' });
+  } else if (message.type === 'rate_limit_event') {
+    const info = message.rate_limit_info as ClaudeSdkRateLimitInfo | undefined;
+    const blocked = classifyClaudeRateLimitEvent(info);
+    if (blocked) {
+      events.push({
+        type: 'error',
+        message: blocked.message,
+        retryable: false,
+        classification: blocked.classification,
+      });
+    } else if (info?.status === 'allowed_warning') {
+      const utilization =
+        typeof info.utilization === 'number' && Number.isFinite(info.utilization)
+          ? `${Math.round(info.utilization * 100)}%`
+          : 'high';
+      log(`rate-limit warning: ${info.rateLimitType ?? 'window'} at ${utilization} utilization`);
+    }
   } else if (message.type === 'system' && message.subtype === 'compact_boundary') {
     // Boundary metadata is not a provider result and must not surface as turn
     // output. The activity event above still records stream progress.
