@@ -120,6 +120,7 @@ async function* readStreamingEvents(
 
 export class OpenAICompatibleProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
+  readonly memoryDeliveryMode = 'per-logical-request' as const;
   private readonly options: ProviderOptions;
 
   constructor(options: ProviderOptions) {
@@ -163,6 +164,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
           let usage: ProviderUsage | undefined;
           let sideEffectBoundaryCrossed = false;
           const family = options.providerProfile!.apiFamily!;
+          const memoryContext = options.memory?.enabled ? options.memory.render() : '';
           const broker = options.providerProfile!.toolStrategy === 'native' ? options.protocolToolBroker : undefined;
           broker?.resetTurn?.();
           const continuationItems: unknown[] = [];
@@ -177,8 +179,13 @@ export class OpenAICompatibleProvider implements AgentProvider {
               );
               try {
                 const messages = [
-                  ...(input.systemContext?.instructions
-                    ? [{ role: 'system', content: input.systemContext.instructions }]
+                  ...(input.systemContext?.instructions || memoryContext
+                    ? [
+                        {
+                          role: 'system',
+                          content: [input.systemContext?.instructions, memoryContext].filter(Boolean).join('\n\n'),
+                        },
+                      ]
                     : []),
                   ...transcript,
                   { role: 'user', content: turn.prompt },

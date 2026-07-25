@@ -16,4 +16,20 @@ describe('createProvider', () => {
   it('throws for unknown name', () => {
     expect(() => createProvider('bogus' as ProviderName)).toThrow(/Unknown provider/);
   });
+
+  it('fails provider creation when enabled memory has no delivery implementation', () => {
+    expect(() =>
+      createProvider('mock', {
+        memory: { enabled: true, render: () => '<memory />' },
+      }),
+    ).toThrow('does not implement neutral memory delivery');
+  });
+
+  it('does not require a memory delivery implementation while memory is disabled', () => {
+    expect(
+      createProvider('mock', {
+        memory: { enabled: false, render: () => '<memory />' },
+      }),
+    ).toBeInstanceOf(MockProvider);
+  });
 });

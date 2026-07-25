@@ -21,7 +21,7 @@ export function resolveAvailableSharedResources(projectRoot: string): Map<string
   if (fs.existsSync(sharedResourcesRoot)) {
     for (const entry of fs.readdirSync(sharedResourcesRoot)) {
       try {
-        if (fs.statSync(path.join(sharedResourcesRoot, entry)).isDirectory()) {
+        if (fs.lstatSync(path.join(sharedResourcesRoot, entry)).isDirectory()) {
           available.set(entry, `/app/shared/${entry}`);
         }
       } catch {
@@ -35,6 +35,22 @@ export function resolveAvailableSharedResources(projectRoot: string): Map<string
   }
 
   return available;
+}
+
+export function hasSharedOkfRoot(projectRoot: string, resourceName: string): boolean {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(resourceName)) return false;
+  const root = path.join(projectRoot, 'groups', 'shared', resourceName);
+  try {
+    return (
+      fs.lstatSync(path.join(root, 'index.md')).isFile() &&
+      fs.lstatSync(path.join(root, 'system')).isDirectory() &&
+      fs.lstatSync(path.join(root, 'system', 'definition.md')).isFile()
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
+  }
 }
 
 /**

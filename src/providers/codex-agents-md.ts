@@ -4,8 +4,8 @@
  * AGENTS.md is Codex's project doc (its CLAUDE.md equivalent). Composed fresh
  * on every spawn by the codex provider contribution (see ./codex.ts) from:
  *   - the shared NanoClaw runtime contract
- *   - a pointer to the runner-scaffolded memory system (created container-side
- *     at boot via the `usesMemoryScaffold` capability — nothing is written here)
+ *   - a pointer to the runner-scaffolded memory system (created container-side;
+ *     private memory content is never read by the host)
  *   - a pointer to codex-native skills under `.agents/skills`
  *   - each enabled NanoClaw module's `*.instructions.md` fragment
  *   - MCP server `instructions` from container.json
@@ -40,21 +40,6 @@ const MEMORY_POINTER = [
   'Do not use `AGENTS.local.md` or `AGENTS.override.md` for memory.',
 ].join('\n\n');
 
-/**
- * Inline the group's current memory index into the composed doc. Recall must
- * not depend on the model choosing to read a file before its first reply —
- * with the map already in the system prompt, applying a stored preference is
- * one hop (read the relevant memory file), not three. The index is small
- * (hundreds of bytes); the 32KB fit logic above bounds the worst case.
- */
-function memoryIndexInline(groupDir: string): string {
-  const indexPath = path.join(groupDir, 'memory', 'index.md');
-  if (!fs.existsSync(indexPath)) return '';
-  const content = fs.readFileSync(indexPath, 'utf-8').trim();
-  if (!content) return '';
-  return ['Current memory index (paths relative to `/workspace/agent/memory/`):', content].join('\n\n');
-}
-
 const NATIVE_RUNTIME_SKILLS_POINTER = [
   'Selected NanoClaw runtime skills are available as Codex-native skills at `/workspace/agent/.agents/skills`.',
   'Each skill directory contains a `SKILL.md` with its trigger description plus any supporting files, and points to the read-only shared skill source under `/app/skills`.',
@@ -79,7 +64,7 @@ export function composeGroupAgentsMd(
   const configRow = options.containerConfig ? undefined : getContainerConfig(group.id);
   const containerConfig =
     options.containerConfig ?? (configRow ? configFromDb(configRow, group) : defaultContainerConfig(group));
-  const profile = buildAgentProfile(group, containerConfig);
+  const profile = containerConfig.agentProfile ?? buildAgentProfile(group, containerConfig);
   const instructionSections = collectInstructionSections({
     projectRoot,
     profile,
@@ -99,7 +84,7 @@ export function composeGroupAgentsMd(
   const runtimeContent = readRuntimeContract(instructionSections);
   if (runtimeContent) pushSection('NanoClaw Runtime Contract', runtimeContent);
 
-  pushSection('Memory System', MEMORY_POINTER, memoryIndexInline(groupDir));
+  pushSection('Memory System', MEMORY_POINTER);
   pushSection('Native Runtime Skills', NATIVE_RUNTIME_SKILLS_POINTER);
 
   for (const section of instructionSections) {

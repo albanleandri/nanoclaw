@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { closeDb, initTestDb, runMigrations } from './db/index.js';
+import { acquireAgentGroupMemoryFence, closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
 import { tryReserveContainerSlot, wakeContainerWithResult } from './container-runner.js';
 import type { Session } from './types.js';
 
@@ -29,6 +29,30 @@ describe('wakeContainerWithResult', () => {
       status: 'failed',
       error: 'Agent group not found: missing-agent-group',
     });
+  });
+
+  it('returns maintenance-held before reserving or spawning', async () => {
+    createAgentGroup({
+      id: 'held-agent',
+      name: 'Held Agent',
+      folder: 'held-agent',
+      agent_provider: null,
+      created_at: '2026-01-01',
+    });
+    acquireAgentGroupMemoryFence('held-agent', 'test', 'fence-token', '2026-01-01');
+    const session: Session = {
+      id: 'held-session',
+      agent_group_id: 'held-agent',
+      messaging_group_id: null,
+      thread_id: null,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: '2026-01-01',
+    };
+
+    await expect(wakeContainerWithResult(session)).resolves.toEqual({ status: 'maintenance-held' });
   });
 });
 

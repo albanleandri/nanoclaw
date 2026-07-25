@@ -56,6 +56,17 @@ describe('buildAgentProfile', () => {
     expect(profile.memory.workspacePath).toBe('/workspace/agent');
     expect(profile.memory.localMemoryFile).toBe('CLAUDE.local.md');
     expect(profile.memory.neutralMemoryRoot).toBe('/workspace/agent/memory');
+    expect(profile.memory).toMatchObject({
+      indexPath: 'index.md',
+      definitionPath: 'system/definition.md',
+      conversationsPath: '/workspace/agent/conversations',
+      mode: 'disabled',
+      access: 'none',
+      okfVersion: '0.1',
+      indexMaxBytes: 12 * 1024,
+      definitionMaxBytes: 8 * 1024,
+      renderedMaxBytes: 24 * 1024,
+    });
   });
 
   it('includes shared resources and CLI scope when configured', () => {

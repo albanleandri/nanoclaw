@@ -10,7 +10,16 @@
 # bind mount at runtime (see src/container-runner.ts). Source-only changes
 # never require an image rebuild.
 
+FROM debian:bookworm-slim AS memory-fs-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY native-memory-fs/memory-fs.c /tmp/memory-fs.c
+RUN gcc -std=c11 -O2 -Wall -Wextra -Werror /tmp/memory-fs.c -o /tmp/nanoclaw-memory-fs
+
 FROM node:22-slim
+
+COPY --from=memory-fs-builder /tmp/nanoclaw-memory-fs /usr/local/bin/nanoclaw-memory-fs
 
 # ---- Build-time arguments ----------------------------------------------------
 # CJK fonts add ~200MB. Opt in only if you render Chinese/Japanese/Korean text.

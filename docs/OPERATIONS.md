@@ -81,6 +81,152 @@ cd container/agent-runner && bun run test:coverage
 - Do not add a TypeScript build step to the agent container; Bun executes the
   bind-mounted source directly.
 
+## Neutral-memory writer ownership
+
+Inspect rollout state and effective access without reading memory bodies:
+
+```bash
+ncl memory status --agent-group-id <group-id>
+ncl memory writer --agent-group-id <group-id>
+```
+
+Validate an OKF tree through the isolated, networkless, read-only operator
+container. The report contains bounded paths and classifications, never file
+bodies. Validation uses the current reviewed base image rather than a
+potentially stale group-derived image, because it requires only the
+bind-mounted validator source and the base image's native safe-read helper:
+
+```bash
+ncl memory validate --agent-group-id <group-id>
+ncl memory validate --agent-group-id <group-id> --json
+```
+
+For an isolated local rollout rehearsal, the synthetic canary scripts create a
+route-less group, promote it only after validation, and add a non-writer
+session for mount-boundary checks. They are idempotent and must not be
+substituted for the migration workflow of a group containing real data:
+
+```bash
+pnpm exec tsx scripts/create-memory-canary.ts
+pnpm exec tsx scripts/promote-memory-canary.ts
+pnpm exec tsx scripts/add-memory-canary-reader.ts
+pnpm exec tsx scripts/send-memory-canary-message.ts --target writer '<probe>'
+pnpm exec tsx scripts/send-memory-canary-message.ts --target reader '<probe>'
+```
+
+For maintenance workflows, acquire a durable wake/spawn fence and preserve the
+returned token. Releasing the fence requires that exact token:
+
+```bash
+ncl memory fence --agent-group-id <group-id> --owner <workflow-label>
+ncl memory unfence --agent-group-id <group-id> --token <returned-token>
+```
+
+Fence and unfence are approval-gated when requested by an agent. A held fence
+leaves inbound and scheduled work durable and pending; inspect status before
+releasing a fence owned by another workflow.
+
+For an enabled group, exactly one session is the designated writer. Other
+sessions receive read-only nested mounts for `memory/` on both workspace
+aliases. To transfer ownership, first stop every container in the group, read
+the current version/writer from the status command, then run:
+
+```bash
+ncl groups memory writer transfer \
+  --id <group-id> \
+  --writer-session-id <new-session-id> \
+  --expected-writer-session-id <current-session-id> \
+  --expected-version <version>
+```
+
+The transfer is approval-gated for agent callers. It acquires a temporary
+durable maintenance fence, drains in-flight wakes, rejects any running/idle
+session, verifies the new session belongs to the group, performs an optimistic
+compare-and-swap update, and releases the fence. Omit
+`--expected-writer-session-id` only when status reports a null current writer.
+
+For a full legacy cutover, use the resumable migration commands instead of
+manually composing fences and state transitions:
+
+```bash
+ncl memory migrate-prepare --agent-group-id <group-id> \
+  --legacy-paths '["CLAUDE.local.md"]'
+ncl memory migrate-status --agent-group-id <group-id>
+ncl memory migrate-classify --agent-group-id <group-id> \
+  --report-path .memory-classification-<workflow-id>.json
+ncl memory migrate-validate --agent-group-id <group-id>
+ncl memory migrate-approve --agent-group-id <group-id> \
+  --workflow-id <workflow-id> --writer-session-id <session-id>
+ncl memory migrate-finish --agent-group-id <group-id>
+ncl memory migrate-smoke --agent-group-id <group-id> \
+  --report-path .memory-smoke-<workflow-id>.json
+```
+
+`migrate-prepare` defaults to the explicit `CLAUDE.local.md` manifest; pass
+`[]` to stage nothing. Do not place reports below the reserved
+`.nanoclaw-memory-migration/` staging tree. Classification JSON contains the
+ledger `workflow_id` and an `entries` array. Every staged source must have at
+least one `standing-instruction`, `private-memory`, or `omit` entry.
+Materialized entries include a safe workspace-relative `destination` and its
+`destination_sha256`; private-memory destinations must be below `memory/`.
+Omissions include a reason. Recreating a staged source path is allowed only
+when a hashed `standing-instruction` entry names that exact path. Approval
+rechecks the report and destination hashes, so later edits fail closed. Final
+smoke JSON contains the same `workflow_id` and `checks` with boolean `true`
+values for `recall`, `correction`, `clear`, `compact`, and `provider-switch`.
+The invoking coding harness produces both reports and treats staged bodies as
+untrusted data.
+
+Every mutation is approval-gated and rerunnable. Rollback requires the exact
+workflow ID:
+
+```bash
+ncl memory migrate-rollback --agent-group-id <group-id> \
+  --workflow-id <workflow-id>
+```
+
+Before approval rollback refuses overwrites and reverses recorded renames.
+After approval it reacquires the fence, stops containers, verifies the backup,
+retains the current workspace as `*.rollback-displaced-<workflow-id>`,
+restores prior workspace/control state, and resumes only recorded series.
+
+## Shared-resource reconciliation
+
+Shared resources are explicit grants. Every resource is read-only until one
+owner completes reconciliation; all non-owners remain read-only afterward.
+
+```bash
+ncl shared-resources status --name <resource>
+ncl shared-resources reconcile-prepare --name <resource> \
+  --owner-agent-group-id <group-id>
+ncl shared-resources reconcile-validate --name <resource> \
+  --report-path data/shared-resource-reconciliation/<resource>/classification.json
+ncl shared-resources reconcile-approve --name <resource> \
+  --expected-version <validated-version> --confirm <resource>
+```
+
+The classification report is bounded JSON containing `resource_name`,
+`pilot_markers_removed`, and an `entries` array. Every entry supplies `source`
+and one of `private-instruction`, `shared-evidence`, or `omit` as
+`classification`. Classified entries require `destination`; omitted entries
+require `reason`. The coding harness must compare legacy authorities and keep
+private group instructions outside the shared bundle. Approval rejects a
+changed report or missing pilot-marker attestation. Restart granted groups
+after approval so their new per-resource mount modes take effect.
+
+The reproducible image-level neutral-memory filesystem smoke mounts an empty
+writable directory at `/workspace/agent`, mounts this checkout read-only at
+`/repo`, and runs:
+
+```bash
+bun /repo/scripts/memory-container-smoke.ts
+```
+
+It uses the installed native helper to scaffold in shadow mode, records a
+synthetic fact, rerenders and recalls it, corrects it, then verifies the next
+render contains only the correction. It contains no live group data or
+provider credentials.
+
 ## Claude credential reliability
 
 - Set `CLAUDE_ONECLI_SECRET_ID` to the OneCLI secret containing the Claude

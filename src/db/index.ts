@@ -51,6 +51,8 @@ export * from './auxiliary-invocations.js';
 export * from './skill-provenance.js';
 export * from './provider-profiles.js';
 export * from './schedule-admin-grants.js';
+export * from './agent-group-memory-control.js';
+export * from './shared-resource-control.js';
 export {
   getContainerConfig,
   getAllContainerConfigs,

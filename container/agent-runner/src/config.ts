@@ -17,6 +17,15 @@ export interface RunnerAgentProfile {
     workspacePath: string;
     localMemoryFile: string;
     neutralMemoryRoot: string;
+    indexPath: string;
+    definitionPath: string;
+    conversationsPath: string;
+    mode: 'disabled' | 'shadow' | 'active';
+    access: 'none' | 'read-only' | 'read-write';
+    okfVersion: '0.1';
+    indexMaxBytes: number;
+    definitionMaxBytes: number;
+    renderedMaxBytes: number;
   };
   tools: {
     skills: string[] | 'all';

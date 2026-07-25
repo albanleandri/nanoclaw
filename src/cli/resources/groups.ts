@@ -1,9 +1,25 @@
+import { randomUUID } from 'crypto';
+
 import type { McpServerConfig } from '../../container-config.js';
-import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
+import {
+  buildAgentGroupImage,
+  drainContainerWakes,
+  isContainerRunning,
+  isContainerWakeInFlight,
+  killContainer,
+  wakeContainer,
+} from '../../container-runner.js';
 import { validatePackageName } from '../../package-names.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getSession } from '../../db/sessions.js';
+import { getSessionsByAgentGroup } from '../../db/sessions.js';
+import {
+  acquireAgentGroupMemoryFence,
+  getAgentGroupMemoryControl,
+  releaseAgentGroupMemoryFence,
+  transferAgentGroupMemoryWriter,
+} from '../../db/agent-group-memory-control.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import {
   getContainerConfig,
@@ -69,6 +85,108 @@ registerResource({
   // provided as `customOperations.delete` below.
   operations: { list: 'open', get: 'open', create: 'approval', update: 'approval' },
   customOperations: {
+    'memory status': {
+      access: 'open',
+      description:
+        'Show neutral-memory rollout state and effective writer ownership. Use --id <group-id>. This never reads memory bodies.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        const control = getAgentGroupMemoryControl(id);
+        if (!control) throw new Error(`Memory control not found for group: ${id}`);
+        const sessions = getSessionsByAgentGroup(id);
+        return {
+          ...control,
+          sessions: sessions.map((session) => ({
+            id: session.id,
+            status: session.status,
+            container_status: session.container_status,
+            memory_access:
+              control.mode === 'disabled'
+                ? 'none'
+                : control.writer_session_id === session.id
+                  ? 'read-write'
+                  : 'read-only',
+            active_container: isContainerRunning(session.id),
+            wake_in_flight: isContainerWakeInFlight(session.id),
+          })),
+        };
+      },
+    },
+    'memory writer transfer': {
+      access: 'approval',
+      description:
+        'Transfer neutral-memory writer ownership. Requires --id <group-id>, --writer-session-id <session-id>, and --expected-version <number>. Optionally pass --expected-writer-session-id for compare-and-swap protection. The operation fences wakes and requires every group container to be stopped.',
+      args: [
+        {
+          name: 'writer_session_id',
+          type: 'string',
+          description: 'Session that will become the sole private-memory writer.',
+          required: true,
+        },
+        {
+          name: 'expected_writer_session_id',
+          type: 'string',
+          description: 'Current writer session expected by the operator. Omit only when the current writer is null.',
+        },
+        {
+          name: 'expected_version',
+          type: 'number',
+          description: 'Current memory-control version for optimistic concurrency.',
+          required: true,
+        },
+      ],
+      handler: async (args) => {
+        const id = args.id as string;
+        const writerSessionId = args.writer_session_id as string;
+        const expectedWriterSessionId = (args.expected_writer_session_id as string | undefined) ?? null;
+        const expectedVersion = Number(args.expected_version);
+        if (!id) throw new Error('--id is required');
+        if (!writerSessionId) throw new Error('--writer-session-id is required');
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+          throw new Error('--expected-version must be a positive integer');
+        }
+
+        const fenceToken = randomUUID();
+        if (!acquireAgentGroupMemoryFence(id, 'ncl-memory-writer-transfer', fenceToken)) {
+          throw new Error(`Memory maintenance fence is already held for group: ${id}`);
+        }
+        let transferResult: ReturnType<typeof transferAgentGroupMemoryWriter> | undefined;
+        let transferError: unknown;
+        try {
+          const sessions = getSessionsByAgentGroup(id);
+          await drainContainerWakes(sessions.map((session) => session.id));
+          const busy = sessions.filter(
+            (session) =>
+              session.container_status !== 'stopped' ||
+              isContainerRunning(session.id) ||
+              isContainerWakeInFlight(session.id),
+          );
+          if (busy.length > 0) {
+            throw new Error(`All group containers must be stopped before writer transfer: ${busy[0].id}`);
+          }
+          if (writerSessionId === expectedWriterSessionId) {
+            throw new Error('New writer session must differ from the current writer');
+          }
+          transferResult = transferAgentGroupMemoryWriter(
+            id,
+            expectedVersion,
+            expectedWriterSessionId,
+            writerSessionId,
+          );
+          // eslint-disable-next-line no-catch-all/no-catch-all -- defer rethrow until the temporary fence is released
+        } catch (err) {
+          transferError = err;
+        }
+        if (!releaseAgentGroupMemoryFence(id, fenceToken)) {
+          throw new Error(`Failed to release memory maintenance fence for group: ${id}`, {
+            cause: transferError,
+          });
+        }
+        if (transferError) throw transferError;
+        return transferResult!;
+      },
+    },
     delete: {
       access: 'approval',
       description:

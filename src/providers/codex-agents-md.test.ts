@@ -102,14 +102,14 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     expect(doc).toContain('/workspace/agent/shared/knowledge');
   });
 
-  it('keeps the current memory index inline for first-hop recall', () => {
+  it('never reads private memory into the host-composed project document', () => {
     fs.mkdirSync(path.join(groupDir, 'memory'), { recursive: true });
-    fs.writeFileSync(path.join(groupDir, 'memory', 'index.md'), '- preferences/communication.md');
+    fs.writeFileSync(path.join(groupDir, 'memory', 'index.md'), '- PRIVATE_SENTINEL');
 
     composeGroupAgentsMd(group, groupDir);
 
     const doc = fs.readFileSync(path.join(groupDir, 'AGENTS.md'), 'utf-8');
-    expect(doc).toContain('Current memory index (paths relative to `/workspace/agent/memory/`):');
-    expect(doc).toContain('- preferences/communication.md');
+    expect(doc).toContain('Top memory index: `/workspace/agent/memory/index.md`.');
+    expect(doc).not.toContain('PRIVATE_SENTINEL');
   });
 });

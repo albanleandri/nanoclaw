@@ -9,8 +9,17 @@ import {
   materializeContainerJson,
   materializeSessionRuntimeJson,
 } from './container-config.js';
-import { closeDb, createAgentGroup, createContainerConfig, initTestDb, runMigrations } from './db/index.js';
-import type { AgentGroup, ContainerConfigRow } from './types.js';
+import {
+  closeDb,
+  createAgentGroup,
+  createContainerConfig,
+  createSession,
+  getAgentGroupMemoryControl,
+  initTestDb,
+  runMigrations,
+  transitionAgentGroupMemoryControl,
+} from './db/index.js';
+import type { AgentGroup, ContainerConfigRow, Session } from './types.js';
 
 const group: AgentGroup = {
   id: 'ag-profile-materialize',
@@ -72,6 +81,15 @@ describe('materializeContainerJson agent profile', () => {
         workspacePath: '/workspace/agent',
         localMemoryFile: 'CLAUDE.local.md',
         neutralMemoryRoot: '/workspace/agent/memory',
+        indexPath: 'index.md',
+        definitionPath: 'system/definition.md',
+        conversationsPath: '/workspace/agent/conversations',
+        mode: 'disabled',
+        access: 'none',
+        okfVersion: '0.1',
+        indexMaxBytes: 12 * 1024,
+        definitionMaxBytes: 8 * 1024,
+        renderedMaxBytes: 24 * 1024,
       },
       tools: {
         skills: ['calendar'],
@@ -125,6 +143,52 @@ describe('materializeContainerJson agent profile', () => {
     expect(written.runtimeStateKey).toBe('profile:p1:abc');
     expect(groupSnapshot.model).toBe('gpt-5-codex');
     expect(fs.statSync(runtime.path).mode & 0o777).toBe(0o600);
+  });
+
+  it('materializes session-specific memory mode and writer access without changing the group snapshot', () => {
+    createContainerConfig(configRow());
+    const writer: Session = {
+      id: 'memory-writer',
+      agent_group_id: group.id,
+      messaging_group_id: null,
+      thread_id: null,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: group.created_at,
+    };
+    const reader = { ...writer, id: 'memory-reader' };
+    createSession(writer);
+    createSession(reader);
+    const initial = getAgentGroupMemoryControl(group.id)!;
+    transitionAgentGroupMemoryControl(group.id, initial.version, {
+      mode: 'shadow',
+      migrationState: 'staging',
+      writerSessionId: writer.id,
+    });
+
+    const groupConfig = materializeContainerJson(group.id);
+    const writerRuntime = materializeSessionRuntimeJson(
+      path.join(GROUPS_DIR, group.folder, writer.id),
+      group,
+      groupConfig,
+      { provider: 'claude', runtimeStateKey: 'claude' },
+      undefined,
+      writer.id,
+    );
+    const readerRuntime = materializeSessionRuntimeJson(
+      path.join(GROUPS_DIR, group.folder, reader.id),
+      group,
+      groupConfig,
+      { provider: 'claude', runtimeStateKey: 'claude' },
+      undefined,
+      reader.id,
+    );
+
+    expect(groupConfig.agentProfile?.memory).toMatchObject({ mode: 'disabled', access: 'none' });
+    expect(writerRuntime.config.agentProfile?.memory).toMatchObject({ mode: 'shadow', access: 'read-write' });
+    expect(readerRuntime.config.agentProfile?.memory).toMatchObject({ mode: 'shadow', access: 'read-only' });
   });
 
   it('embeds an explicitly supplied compiled session runtime plan', () => {

@@ -19,3 +19,5 @@ import './auxiliary-routes.js';
 import './skills.js';
 import './audit-events.js';
 import './orchestration-runs.js';
+import './memory.js';
+import './shared-resources.js';

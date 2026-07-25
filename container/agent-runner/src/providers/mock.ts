@@ -7,15 +7,12 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
  */
 export class MockProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
+  readonly memoryDeliveryMode = 'unsupported' as const;
 
   private responseFactory: (prompt: string) => string;
   private quotaError: boolean;
 
-  constructor(
-    _options: ProviderOptions = {},
-    responseFactory?: (prompt: string) => string,
-    quotaError = false,
-  ) {
+  constructor(_options: ProviderOptions = {}, responseFactory?: (prompt: string) => string, quotaError = false) {
     this.responseFactory = responseFactory ?? ((prompt) => `Mock response to: ${prompt.slice(0, 100)}`);
     this.quotaError = quotaError;
   }

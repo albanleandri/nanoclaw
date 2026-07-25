@@ -66,4 +66,24 @@ describe('model-neutral audit', () => {
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'Use /workspace/group and bot_index');
     expect(runAudit(root).map((finding) => finding.pattern)).toEqual(['/workspace/group', 'bot_index']);
   });
+
+  it('reports private memory as metadata only even with details enabled', () => {
+    const root = tempDir();
+    const memoryDir = path.join(root, 'groups', 'private', 'memory');
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(path.join(memoryDir, 'index.md'), 'SECRET use Sonnet and /workspace/group');
+
+    const findings = runAudit(root, true);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        source: 'groups/private/memory/index.md',
+        category: 'memory-surface',
+        surface: 'private-memory',
+        pattern: 'private memory node',
+      }),
+    ]);
+    expect(findings[0]?.excerpt).toBeUndefined();
+    expect(JSON.stringify(findings)).not.toContain('SECRET');
+  });
 });

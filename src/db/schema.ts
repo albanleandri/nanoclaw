@@ -117,6 +117,58 @@ CREATE TABLE sessions (
 CREATE INDEX idx_sessions_agent_group ON sessions(agent_group_id);
 CREATE INDEX idx_sessions_lookup ON sessions(messaging_group_id, thread_id);
 
+-- Shared-resource ownership is independent of private-memory writer state.
+-- Grants remain in container_configs.shared_resources. Pilot/uncontrolled
+-- resources and every non-owner grant are mounted read-only.
+CREATE TABLE shared_resource_control (
+  resource_name TEXT PRIMARY KEY,
+  owner_agent_group_id TEXT REFERENCES agent_groups(id) ON DELETE RESTRICT,
+  reconciliation_state TEXT NOT NULL DEFAULT 'pilot'
+    CHECK (reconciliation_state IN ('pilot','reconciling','validated','reconciled')),
+  classification_report_path TEXT,
+  classification_report_sha256 TEXT,
+  validation_report_json TEXT,
+  approved_at TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+
+-- Group-scoped provider-neutral memory rollout, writer ownership, and
+-- maintenance fencing. Existing and new groups default to disabled/none.
+CREATE TABLE agent_group_memory_control (
+  agent_group_id          TEXT PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+  mode                    TEXT NOT NULL DEFAULT 'disabled'
+                          CHECK (mode IN ('disabled','shadow','active')),
+                          -- 'disabled' | 'shadow' | 'active'
+  migration_state         TEXT NOT NULL DEFAULT 'none'
+                          CHECK (migration_state IN ('none','staging','validated','migrated')),
+                          -- 'none' | 'staging' | 'validated' | 'migrated'
+  writer_session_id       TEXT REFERENCES sessions(id) ON DELETE RESTRICT,
+  maintenance_fence_owner TEXT,
+  maintenance_fence_token TEXT,
+  maintenance_fenced_at   TEXT,
+  version                 INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  last_transition_at      TEXT NOT NULL,
+  updated_at              TEXT NOT NULL,
+  CHECK (
+    (mode = 'disabled' AND migration_state = 'none') OR
+    (mode = 'shadow' AND migration_state IN ('staging','validated')) OR
+    (mode = 'active' AND migration_state = 'migrated')
+  ),
+  CHECK (mode <> 'active' OR writer_session_id IS NOT NULL),
+  CHECK (
+    (maintenance_fence_owner IS NULL AND maintenance_fence_token IS NULL AND maintenance_fenced_at IS NULL) OR
+    (maintenance_fence_owner IS NOT NULL AND maintenance_fence_token IS NOT NULL AND maintenance_fenced_at IS NOT NULL)
+  )
+);
+CREATE TRIGGER agent_group_memory_control_create
+AFTER INSERT ON agent_groups
+BEGIN
+  INSERT INTO agent_group_memory_control (
+    agent_group_id, mode, migration_state, writer_session_id, version, last_transition_at, updated_at
+  ) VALUES (NEW.id, 'disabled', 'none', NULL, 1, NEW.created_at, NEW.created_at);
+END;
+
 -- Pending interactive questions
 CREATE TABLE pending_questions (
   question_id    TEXT PRIMARY KEY,

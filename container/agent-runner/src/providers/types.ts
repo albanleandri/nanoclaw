@@ -1,5 +1,12 @@
 export interface AgentProvider {
   /**
+   * Provider-owned boundary where rendered neutral memory is delivered.
+   * Missing/unsupported declarations fail provider creation when memory is
+   * enabled.
+   */
+  readonly memoryDeliveryMode?: 'claude-session-start' | 'codex-new-thread' | 'per-logical-request' | 'unsupported';
+
+  /**
    * True if the provider's underlying SDK handles slash commands natively and
    * wants them passed through as raw text. When false, the poll-loop formats
    * slash commands like any other chat message.
@@ -66,6 +73,11 @@ export interface ProviderOptions {
   /** Optional request timeout override used by protocol adapters and deterministic tests. */
   requestTimeoutMs?: number;
   protocolToolBroker?: import('../tool-loop/types.js').ProtocolToolBroker;
+  memory?: {
+    enabled: boolean;
+    /** Render fresh bounded memory at the provider's declared boundary. */
+    render(): string;
+  };
 }
 
 export interface ProviderStateStore {

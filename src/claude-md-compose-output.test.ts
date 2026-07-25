@@ -120,7 +120,7 @@ describe('composeGroupClaudeMd', () => {
 
     expect(fs.readFileSync(path.join(groupDir, 'CLAUDE.md'), 'utf-8')).toBe(
       [
-        '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->',
+        '<!-- Composed at spawn — do not edit. Follow the runtime memory instructions for persistent content. -->',
         '@./.claude-fragments/mcp-search.md',
         '@./.claude-fragments/module-scheduling.md',
         '@./.claude-fragments/runtime-contract.md',
@@ -173,5 +173,53 @@ describe('composeGroupClaudeMd', () => {
     expect(fs.existsSync(path.join(second, '.claude-fragments', 'module-core.md'))).toBe(false);
     expect(fs.lstatSync(path.join(second, '.claude-fragments', 'module-scheduling.md')).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(path.join(projectRoot, 'groups', group.folder, 'CLAUDE.md'))).toBe(false);
+  });
+
+  it('composes the neutral-memory appendix from the materialized session profile', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/runtime/claude.md', 'legacy Claude memory');
+    writeFile('container/runtime/claude-neutral-memory.md', 'neutral memory authority');
+    const group: AgentGroup = {
+      id: 'ag-active-memory-compose',
+      name: 'Active Memory Compose',
+      folder: 'active-memory-compose-' + Date.now(),
+      agent_provider: 'claude',
+      created_at: now(),
+    };
+    const outputDir = path.join(projectRoot, 'sessions', 'active', 'provider-docs');
+    const containerConfig: ContainerConfig = {
+      mcpServers: {},
+      packages: { apt: [], npm: [] },
+      additionalMounts: [],
+      skills: [],
+      cliScope: 'disabled',
+      agentProfile: {
+        agentGroupId: group.id,
+        groupName: group.name,
+        assistantName: group.name,
+        memory: {
+          workspacePath: '/workspace/agent',
+          localMemoryFile: 'CLAUDE.local.md',
+          neutralMemoryRoot: '/workspace/agent/memory',
+          indexPath: 'index.md',
+          definitionPath: 'system/definition.md',
+          conversationsPath: '/workspace/agent/conversations',
+          mode: 'active',
+          access: 'read-write',
+          okfVersion: '0.1',
+          indexMaxBytes: 12 * 1024,
+          definitionMaxBytes: 8 * 1024,
+          renderedMaxBytes: 24 * 1024,
+        },
+        tools: { skills: [], mcpServers: {}, cliScope: 'disabled' },
+        resources: { sharedResources: [] },
+      },
+    };
+
+    composeGroupClaudeMd(group, { outputDir, containerConfig });
+
+    const runtime = fs.readFileSync(path.join(outputDir, '.claude-fragments', 'runtime-contract.md'), 'utf8');
+    expect(runtime).toContain('neutral memory authority');
+    expect(runtime).not.toContain('legacy Claude memory');
   });
 });

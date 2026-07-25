@@ -14,7 +14,9 @@ The session runtime file is mounted read-only at both
 `/workspace/agent/container.json` and `/workspace/group/container.json`. The
 group snapshot is not the authoritative configuration for a running session.
 
-The profile is intentionally derived state. There is no separate DB table or migration for it.
+The profile is intentionally derived state. Memory rollout authority is stored
+separately in `agent_group_memory_control`; the host projects that state into
+each session's derived profile.
 
 ## Responsibilities
 
@@ -46,6 +48,13 @@ An agent profile is the provider-neutral runtime description derived for that gr
 The profile is used by host-side composition code and is available to the
 runner for introspection. Existing top-level runtime fields remain the
 compatibility interface consumed by provider implementations.
+
+The group snapshot always describes neutral memory as disabled with no access.
+When a session runtime is materialized, the host projects the durable memory
+control row into `agentProfile.memory`: mode, OKF version, relative paths,
+fixed byte budgets, and effective access. Only the DB-designated writer
+session receives `read-write`; other enabled sessions receive `read-only`.
+The host never opens private memory bodies while building either profile.
 
 ### Provider adapter
 
@@ -84,11 +93,16 @@ NanoClaw still emits provider-native instruction files because providers load co
 | `groups/<folder>/container.json` | Group-level operator snapshot generated from central configuration.                                                                              |
 | `container.runtime.json`         | Effective session runtime config, including provider/profile selection, compiled capabilities, compatibility fields, and neutral `agentProfile`. |
 | `CLAUDE.md`                      | Session-private Claude project doc. Imports the neutral runtime core, Claude appendix, and enabled fragments.                                    |
-| `CLAUDE.local.md`                | Per-group Claude-compatible local memory/instructions.                                                                                           |
+| `CLAUDE.local.md`                | Per-group standing Claude instructions. For enabled neutral memory, durable facts and preferences belong under `memory/`, not here.              |
 | `AGENTS.md`                      | Session-private Codex project doc. Renders the neutral runtime core and compatible sections within Codex's project-doc cap.                      |
 | `.claude-fragments/`             | Generated Claude import fragments for skills, modules, and MCP instructions.                                                                     |
 
-`CLAUDE.md` and `AGENTS.md` are generated compatibility artifacts. Do not edit them directly. Put durable group-specific instructions in the provider-neutral workspace where possible, or in the provider-specific local file when the provider requires it.
+`CLAUDE.md` and `AGENTS.md` are generated compatibility artifacts. Do not edit
+them directly. Enabled neutral-memory sessions select an authority-safe
+provider appendix from the materialized session profile: standing Claude
+instructions may remain in `CLAUDE.local.md`, while durable facts and
+preferences go under `memory/`. Disabled Claude groups retain the legacy
+appendix until they migrate.
 
 ## Workspace Conventions
 
@@ -108,6 +122,23 @@ Shared resources are selected by `container_configs.shared_resources` and linked
 
 - `/app/shared/<resource>`
 - `/app/docs` for docs
+
+When neutral memory is enabled, `/workspace/agent/memory` is its canonical
+private root. Paths below it are schema data in `agentProfile.memory`; the Bun
+runner validates them and delegates descriptor-anchored filesystem operations
+to the image's native helper. The initial files are `index.md` and
+`system/definition.md`. Rendering is bounded to 12 KiB for the index, 8 KiB
+for the definition, and 24 KiB for the complete lower-trust envelope.
+
+Phase 3 enforces `read-only` access with nested bind mounts on both workspace
+aliases; it rejects unsafe roots and conflicting child mounts before spawn.
+The runner delivers freshly rendered context at provider-specific lifecycle
+boundaries: Claude new-session system context plus startup/clear/compact
+SessionStart hooks, new Codex threads, and each OpenAI-compatible logical
+request. Resume paths and
+retry/tool-loop iterations do not duplicate or re-render it. All migrated
+control rows default to `disabled/none`, so existing sessions retain their
+current behavior.
 
 ## Current Compatibility Rules
 

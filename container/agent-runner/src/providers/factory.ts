@@ -9,5 +9,9 @@ import { getProviderFactory } from './provider-registry.js';
 export type ProviderName = string;
 
 export function createProvider(name: ProviderName, options: ProviderOptions = {}): AgentProvider {
-  return getProviderFactory(name)(options);
+  const provider = getProviderFactory(name)(options);
+  if (options.memory?.enabled && (!provider.memoryDeliveryMode || provider.memoryDeliveryMode === 'unsupported')) {
+    throw new Error(`Provider does not implement neutral memory delivery: ${name}`);
+  }
+  return provider;
 }

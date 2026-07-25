@@ -177,6 +177,39 @@ CREATE INDEX idx_sessions_lookup     ON sessions(messaging_group_id, thread_id);
 - **Resolved by:** `resolveSession()` in `src/session-manager.ts`.
 - Creating a session also provisions the session folder and both session DBs via `initSessionFolder()` — see [db-session.md](db-session.md).
 
+### 1.8a `agent_group_memory_control`
+
+Group-scoped control-plane state for provider-neutral memory rollout,
+single-writer ownership, and maintenance fencing. Migration 033 backfills one
+`disabled/none` row per existing group, and an `agent_groups` insert trigger
+creates the same default transactionally for every future insertion path.
+
+```sql
+CREATE TABLE agent_group_memory_control (
+  agent_group_id          TEXT PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+  mode                    TEXT NOT NULL, -- disabled | shadow | active
+  migration_state         TEXT NOT NULL, -- none | staging | validated | migrated
+  writer_session_id       TEXT REFERENCES sessions(id) ON DELETE RESTRICT,
+  maintenance_fence_owner TEXT,
+  maintenance_fence_token TEXT,
+  maintenance_fenced_at   TEXT,
+  version                 INTEGER NOT NULL,
+  last_transition_at      TEXT NOT NULL,
+  updated_at              TEXT NOT NULL
+);
+```
+
+The table constrains legal mode/state combinations, requires a writer in
+`active/migrated`, and uses triggers to require the writer session to belong
+to the same agent group. Fence owner/token/time are either all null or all
+present. State transitions use optimistic `version` matching.
+
+The container wake path checks a non-null fence token before reserving
+capacity and immediately before process spawn. A held wake leaves work
+pending and returns `maintenance-held`.
+
+Access layer: `src/db/agent-group-memory-control.ts`.
+
 ### 1.9 `pending_questions`
 
 The `ask_user_question` MCP tool parks an interactive question here, and the container matches incoming `system` messages back to it by `questionId`.
@@ -346,7 +379,31 @@ CREATE TABLE container_configs (
 - **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts`, provider-native composers
 - **Writers:** `src/db/container-configs.ts`, setup/CLI, self-mod, backfill
 
-### 1.16 `provider_profiles`
+### 1.16 `shared_resource_control`
+
+Ownership and reconciliation state for shared resources. Grants remain in
+`container_configs.shared_resources`; this table does not replace or imply a
+grant.
+
+```sql
+CREATE TABLE shared_resource_control (
+  resource_name                TEXT PRIMARY KEY,
+  owner_agent_group_id         TEXT REFERENCES agent_groups(id),
+  reconciliation_state         TEXT NOT NULL, -- pilot | reconciling | validated | reconciled
+  classification_report_path   TEXT,
+  classification_report_sha256 TEXT,
+  validation_report_json       TEXT,
+  approved_at                  TEXT,
+  version                      INTEGER NOT NULL DEFAULT 1,
+  updated_at                   TEXT NOT NULL
+);
+```
+
+Absent/pilot control and all non-owner grants are mounted read-only. Only the
+explicit owner of a reconciled resource receives a writable resource mount.
+The whole `groups/shared` root is never mounted into an agent container.
+
+### 1.17 `provider_profiles`
 
 Local instances of installed provider descriptors. They contain endpoint/model selectors and a OneCLI secret reference, never a raw credential. See [providers.md](providers.md).
 
@@ -505,7 +562,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 029 | `029-orchestration-fallback.ts`           | Durable fallback compatibility/side-effect facts and append-only candidate decisions                                                                                 |
 | 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
 | 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                |
-| 032 | `032-user-role-global-uniqueness.ts`      | Deduplicate legacy global role grants and enforce one `(user_id, role, NULL)` row with a partial unique index                                                       |
+| 032 | `032-user-role-global-uniqueness.ts`      | Deduplicate legacy global role grants and enforce one `(user_id, role, NULL)` row with a partial unique index                                                        |
 
 Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 

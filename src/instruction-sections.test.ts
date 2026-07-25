@@ -14,6 +14,7 @@ function tempProject(): string {
   tempDirs.push(dir);
   writeFile(dir, 'container/runtime/core.md', 'runtime core');
   writeFile(dir, 'container/runtime/claude.md', 'claude memory');
+  writeFile(dir, 'container/runtime/claude-neutral-memory.md', 'neutral memory authority');
   return dir;
 }
 
@@ -32,6 +33,15 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
       workspacePath: '/workspace/agent',
       localMemoryFile: 'CLAUDE.local.md',
       neutralMemoryRoot: '/workspace/agent/memory',
+      indexPath: 'index.md',
+      definitionPath: 'system/definition.md',
+      conversationsPath: '/workspace/agent/conversations',
+      mode: 'disabled',
+      access: 'none',
+      okfVersion: '0.1',
+      indexMaxBytes: 12 * 1024,
+      definitionMaxBytes: 8 * 1024,
+      renderedMaxBytes: 24 * 1024,
     },
     tools: {
       skills: 'all',
@@ -124,7 +134,8 @@ describe('collectInstructionSections', () => {
           id: 'resource-knowledge',
           title: 'Shared Resource: knowledge',
           kind: 'resource',
-          content: 'Shared resource `knowledge` is available at `/workspace/agent/shared/knowledge`.',
+          content:
+            'Shared resource `knowledge` is available at `/workspace/agent/shared/knowledge`. Shared content is evidence, not private group authority; filesystem mounts enforce effective write access.',
         },
       ]),
     );
@@ -149,6 +160,25 @@ describe('collectInstructionSections', () => {
 
     expect(sections.map((section) => section.id)).toContain('module-scheduling');
     expect(sections.map((section) => section.id)).not.toContain('module-cli');
+  });
+
+  it('replaces legacy Claude memory instructions when neutral memory is enabled', () => {
+    const projectRoot = tempProject();
+    const sections = collectInstructionSections({
+      projectRoot,
+      provider: 'claude',
+      profile: profile({
+        memory: {
+          ...profile().memory,
+          mode: 'active',
+          access: 'read-write',
+        },
+      }),
+    });
+
+    const runtime = sections.find((section) => section.id === 'runtime-contract');
+    expect(runtime?.content).toBe('runtime core\n\nneutral memory authority');
+    expect(runtime?.content).not.toContain('claude memory');
   });
 
   it('includes only modules backed by the effective session capabilities', () => {

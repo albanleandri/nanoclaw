@@ -111,6 +111,8 @@ export interface ThreadParams {
   cwd: string;
   baseInstructions?: string;
   developerInstructions?: string;
+  /** Evaluated only when a new thread is actually created, never on resume. */
+  newThreadDeveloperInstructions?: () => string;
 }
 
 export interface TurnParams {
@@ -273,7 +275,6 @@ export async function startOrResumeCodexThread(
     approvalPolicy: CODEX_APPROVAL_POLICY,
     sandbox: CODEX_SANDBOX_MODE,
     baseInstructions: params.baseInstructions,
-    developerInstructions: params.developerInstructions,
     personality: 'friendly',
     sessionStartSource: 'startup',
     persistExtendedHistory: false,
@@ -294,6 +295,7 @@ export async function startOrResumeCodexThread(
 
   const resp = await sendCodexRequest(server, 'thread/start', {
     ...baseParams,
+    developerInstructions: params.newThreadDeveloperInstructions?.() ?? params.developerInstructions,
     experimentalRawEvents: false,
   });
   if (resp.error) throw new Error(`thread/start failed: ${resp.error.message}`);

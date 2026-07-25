@@ -74,6 +74,39 @@ describe('Codex app-server protocol', () => {
       }),
     ).resolves.toBe('fresh-thread');
     expect(writes.map((message) => message.method)).toEqual(['thread/resume', 'thread/start']);
+    expect(writes[0].params).not.toHaveProperty('developerInstructions');
+    expect(writes[1].params).toMatchObject({ developerInstructions: 'bounded' });
+  });
+
+  it('renders new-thread instructions only when a new thread is created', async () => {
+    let renders = 0;
+    const resumed = fakeServer((request) => ({
+      id: request.id!,
+      result: request.method === 'thread/resume' ? { thread: { id: 'existing' } } : {},
+    }));
+    await startOrResumeCodexThread(resumed.server, 'existing', {
+      cwd: '/workspace/agent',
+      newThreadDeveloperInstructions: () => {
+        renders += 1;
+        return 'fresh-memory';
+      },
+    });
+    expect(renders).toBe(0);
+    expect(resumed.writes[0].params).not.toHaveProperty('developerInstructions');
+
+    const fresh = fakeServer((request) => ({
+      id: request.id!,
+      result: { thread: { id: 'fresh' } },
+    }));
+    await startOrResumeCodexThread(fresh.server, undefined, {
+      cwd: '/workspace/agent',
+      newThreadDeveloperInstructions: () => {
+        renders += 1;
+        return 'fresh-memory';
+      },
+    });
+    expect(renders).toBe(1);
+    expect(fresh.writes[0].params).toMatchObject({ developerInstructions: 'fresh-memory' });
   });
 
   it('starts, steers, and interrupts a turn with correlated identifiers', async () => {

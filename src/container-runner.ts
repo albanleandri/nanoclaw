@@ -42,9 +42,11 @@ import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, stopContainer } from './contain
 import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { isAgentGroupMemoryMaintenanceHeld } from './db/agent-group-memory-control.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { resolveAvailableSharedResources } from './shared-resources.js';
+import { getSharedResourceControl } from './db/shared-resource-control.js';
 import { discoverSkillCatalog, selectSkillCatalog } from './skills/catalog.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
@@ -89,10 +91,18 @@ const activeContainers = new Map<string, { process: ChildProcess; containerName:
 export type WakeContainerResult =
   | { status: 'already-running' | 'started' }
   | { status: 'capacity' }
+  | { status: 'maintenance-held' }
   | { status: 'failed'; error: string };
 
 const wakePromises = new Map<string, Promise<WakeContainerResult>>();
 const wakeReservations = new Set<string>();
+
+class MemoryMaintenanceHeldError extends Error {
+  constructor() {
+    super('Agent group memory maintenance fence is held');
+    this.name = 'MemoryMaintenanceHeldError';
+  }
+}
 
 export function tryReserveContainerSlot(
   sessionId: string,
@@ -118,6 +128,17 @@ export function isContainerRunning(sessionId: string): boolean {
 
 export function getContainerStartedAtMs(sessionId: string): number | undefined {
   return activeContainers.get(sessionId)?.startedAtMs;
+}
+
+export function isContainerWakeInFlight(sessionId: string): boolean {
+  return wakePromises.has(sessionId) || wakeReservations.has(sessionId);
+}
+
+export async function drainContainerWakes(sessionIds: Iterable<string>): Promise<void> {
+  const pending = [...sessionIds]
+    .map((sessionId) => wakePromises.get(sessionId))
+    .filter((promise): promise is Promise<WakeContainerResult> => promise !== undefined);
+  await Promise.allSettled(pending);
 }
 
 interface RuntimeShadowLogger {
@@ -166,6 +187,13 @@ export async function wakeContainer(session: Session): Promise<boolean> {
 }
 
 export function wakeContainerWithResult(session: Session): Promise<WakeContainerResult> {
+  if (isAgentGroupMemoryMaintenanceHeld(session.agent_group_id)) {
+    log.info('Container wake held for memory maintenance', {
+      sessionId: session.id,
+      agentGroupId: session.agent_group_id,
+    });
+    return Promise.resolve({ status: 'maintenance-held' });
+  }
   if (activeContainers.has(session.id)) {
     log.debug('Container already running', { sessionId: session.id });
     return Promise.resolve({ status: 'already-running' });
@@ -187,6 +215,13 @@ export function wakeContainerWithResult(session: Session): Promise<WakeContainer
   const promise = spawnContainer(session)
     .then((): WakeContainerResult => ({ status: 'started' }))
     .catch((err): WakeContainerResult => {
+      if (err instanceof MemoryMaintenanceHeldError) {
+        log.info('Container spawn held for memory maintenance', {
+          sessionId: session.id,
+          agentGroupId: session.agent_group_id,
+        });
+        return { status: 'maintenance-held' };
+      }
       log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
       return { status: 'failed', error: err instanceof Error ? err.message : String(err) };
     })
@@ -267,6 +302,7 @@ async function spawnContainer(session: Session): Promise<void> {
     planConfig,
     effectiveProvider,
     sessionRuntimePlan,
+    session.id,
   );
   const containerConfig = runtime.config;
 
@@ -294,6 +330,13 @@ async function spawnContainer(session: Session): Promise<void> {
     contribution,
     agentIdentifier,
   );
+
+  // Recheck after asynchronous plan compilation and immediately before the
+  // external spawn. A maintenance fence acquired while this wake was in
+  // flight must prevent the container from crossing the process boundary.
+  if (isAgentGroupMemoryMaintenanceHeld(agentGroup.id)) {
+    throw new MemoryMaintenanceHeldError();
+  }
 
   log.info('Spawning container', { sessionId: session.id, agentGroup: agentGroup.name, containerName });
 
@@ -483,6 +526,63 @@ export function buildRtkStateMount(agentGroupId: string): VolumeMount {
   };
 }
 
+const MEMORY_MOUNT_DESTINATIONS = ['/workspace/agent/memory', '/workspace/group/memory'] as const;
+
+function normalizedContainerPath(value: string): string {
+  return value.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+}
+
+export function buildMemoryAccessMounts(
+  groupDir: string,
+  memory: import('./agent-profile.js').AgentMemoryProfile | undefined,
+  existingMounts: VolumeMount[] = [],
+): VolumeMount[] {
+  if (!memory || memory.mode === 'disabled') return [];
+  if (memory.access === 'read-write') return [];
+  if (memory.access !== 'read-only') {
+    throw new Error(`Enabled neutral memory has invalid access: ${memory.access}`);
+  }
+  if (memory.neutralMemoryRoot !== '/workspace/agent/memory') {
+    throw new Error(`Enabled neutral memory has invalid canonical root: ${memory.neutralMemoryRoot}`);
+  }
+
+  const memoryRoot = path.join(groupDir, 'memory');
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(memoryRoot);
+  } catch (err) {
+    throw new Error(`Read-only memory root is unavailable: ${memoryRoot}`, { cause: err });
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Read-only memory root is unsafe: ${memoryRoot}`);
+  }
+  const currentUid = process.getuid?.();
+  if (currentUid !== undefined && stat.uid !== 0 && stat.uid !== currentUid) {
+    throw new Error(`Read-only memory root has unsafe ownership: ${memoryRoot}`);
+  }
+  if ((stat.mode & 0o022) !== 0) {
+    throw new Error(`Read-only memory root has unsafe mode: ${memoryRoot}`);
+  }
+  if (fs.realpathSync(memoryRoot) !== path.resolve(memoryRoot)) {
+    throw new Error(`Read-only memory root resolves outside its canonical path: ${memoryRoot}`);
+  }
+
+  for (const mount of existingMounts) {
+    const destination = normalizedContainerPath(mount.containerPath);
+    for (const protectedRoot of MEMORY_MOUNT_DESTINATIONS) {
+      if (destination === protectedRoot || destination.startsWith(`${protectedRoot}/`)) {
+        throw new Error(`Mount conflicts with protected memory subtree: ${destination}`);
+      }
+    }
+  }
+
+  return MEMORY_MOUNT_DESTINATIONS.map((containerPath) => ({
+    hostPath: memoryRoot,
+    containerPath,
+    readonly: true,
+  }));
+}
+
 export { assertUniqueMountDestinations };
 
 function buildMounts(
@@ -534,10 +634,7 @@ function buildMounts(
   // Shared resources are opt-in per group. Symlinks land in the group workspace
   // so both /workspace/agent/shared and /workspace/group/shared work.
   syncSharedResourceSymlinks(groupDir, containerConfig);
-  const sharedResourcesDir = path.join(GROUPS_DIR, 'shared');
-  if (fs.existsSync(sharedResourcesDir)) {
-    mounts.push({ hostPath: sharedResourcesDir, containerPath: '/app/shared', readonly: false });
-  }
+  mounts.push(...buildSharedResourceMounts(agentGroup.id, containerConfig, projectRoot));
   const docsDir = path.join(projectRoot, 'docs');
   if (fs.existsSync(docsDir)) {
     mounts.push({ hostPath: docsDir, containerPath: '/app/docs', readonly: true });
@@ -586,6 +683,11 @@ function buildMounts(
     mounts.push(...providerContribution.mounts);
   }
 
+  // Enabled non-writer sessions receive a nested read-only overlay on both
+  // workspace aliases. Reject child mounts before adding the overlay so a
+  // later bind cannot punch a writable hole through the protected subtree.
+  mounts.push(...buildMemoryAccessMounts(groupDir, containerConfig.agentProfile?.memory, mounts));
+
   // Final nested overlays: each session must see its own effective provider
   // selection even though the group workspace (and its operator snapshot
   // container.json) is shared by every session.
@@ -596,6 +698,35 @@ function buildMounts(
   // this outage class.
   assertUniqueMountDestinations(mounts);
 
+  return mounts;
+}
+
+/**
+ * Compile one mount per explicit grant. Pilot/uncontrolled resources are
+ * read-only; only the approved owner of a reconciled resource receives write
+ * access. Mounting the shared root is forbidden because it bypasses grants.
+ */
+export function buildSharedResourceMounts(
+  agentGroupId: string,
+  containerConfig: import('./container-config.js').ContainerConfig,
+  projectRoot = process.cwd(),
+): VolumeMount[] {
+  const available = resolveAvailableSharedResources(projectRoot);
+  const mounts: VolumeMount[] = [];
+  const seen = new Set<string>();
+  for (const name of containerConfig.sharedResources ?? []) {
+    if (name === 'docs' || seen.has(name)) continue;
+    seen.add(name);
+    const containerPath = available.get(name);
+    if (!containerPath || !containerPath.startsWith('/app/shared/')) continue;
+    const control = getSharedResourceControl(name);
+    const writable = control?.reconciliation_state === 'reconciled' && control.owner_agent_group_id === agentGroupId;
+    mounts.push({
+      hostPath: path.join(projectRoot, 'groups', 'shared', name),
+      containerPath,
+      readonly: !writable,
+    });
+  }
   return mounts;
 }
 

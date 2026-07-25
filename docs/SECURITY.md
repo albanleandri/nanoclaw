@@ -49,6 +49,31 @@ The agent-group workspace is intentionally writable: it is the agent's durable
 memory and work area. Sessions for the same agent group share it. Different
 agent groups use different folders and provider-state roots.
 
+Neutral private-memory reads and scaffold creation use a small native helper
+inside the container rather than host path resolution. It walks from an
+absolute root using directory file descriptors, rejects symlinks and
+non-regular files, and enforces safe ownership plus `0700`-equivalent modes
+from the final memory root downward. Workspace ancestors remain writable by
+design but are never followed through symlinks. New directories/files use
+`0700`/`0600` modes and exclusive creation. Memory bodies remain
+outside central/session databases and ordinary logs. The host never reads or
+embeds them in provider project documents. The runner injects a bounded body
+only at the selected provider's safe lifecycle boundary and excludes it from
+persisted OpenAI-compatible transcript state. Enabled non-writer
+sessions receive read-only nested mounts on both workspace aliases. Launch
+fails before Docker if the source is missing, symlinked, unsafely owned or
+writable, non-canonical, or if another mount targets the protected subtree.
+Writer transfer fences wakes and requires all group sessions to be stopped.
+
+`ncl memory validate` resolves group metadata on the host but never opens a
+memory body there. It launches the reviewed runner validator in the selected
+agent image with no network, a read-only root filesystem, and only the group
+workspace plus runner source mounted read-only. The validator opens Markdown
+through the descriptor-anchored helper and emits at most 256 bounded,
+content-redacted path/classification findings. The model-neutral audit skips
+memory bodies even under `--details` and reports that tree as a distinct
+metadata-only, non-blocking surface.
+
 Optional `CONTAINER_CPU_LIMIT` and `CONTAINER_MEMORY_LIMIT` become Docker
 resource limits. They constrain resource use; they are not authorization
 controls.

@@ -26,6 +26,7 @@ function provider(
   apiFamily: 'responses' | 'chat-completions' = 'chat-completions',
   protocolToolBroker?: ProtocolToolBroker,
   requestTimeoutMs?: number,
+  memory?: { enabled: boolean; render(): string },
 ): OpenAICompatibleProvider {
   return new OpenAICompatibleProvider({
     model: 'test-model',
@@ -44,6 +45,7 @@ function provider(
     },
     protocolToolBroker,
     requestTimeoutMs,
+    memory,
   });
 }
 
@@ -89,6 +91,62 @@ describe('OpenAICompatibleProvider', () => {
         { role: 'user', content: 'again' },
       ]),
     );
+  });
+
+  it('renders memory once per logical request and never stores it in transcript state', async () => {
+    const bodies: any[] = [];
+    const store = memoryStore();
+    let renders = 0;
+    const fetchMock = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const query = provider(fetchMock, store, 'chat-completions', undefined, undefined, {
+      enabled: true,
+      render: () => `MEMORY-${++renders}`,
+    }).query({
+      prompt: 'first',
+      cwd: '/',
+      systemContext: { instructions: 'contract' },
+    });
+    const iterator = query.events[Symbol.asyncIterator]();
+    await nextOfType(iterator, 'result');
+    query.push('second');
+    await nextOfType(iterator, 'result');
+    query.end();
+    await iterator.next();
+
+    expect(renders).toBe(2);
+    expect(bodies[0].messages[0]).toEqual({ role: 'system', content: 'contract\n\nMEMORY-1' });
+    expect(bodies[1].messages[0]).toEqual({ role: 'system', content: 'contract\n\nMEMORY-2' });
+    expect(store.get('transcript-v1')).not.toContain('MEMORY-');
+  });
+
+  it('reuses one memory render across a transient retry', async () => {
+    const bodies: any[] = [];
+    let renders = 0;
+    const fetchMock = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1) return new Response('temporarily unavailable', { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const query = provider(fetchMock, memoryStore(), 'chat-completions', undefined, undefined, {
+      enabled: true,
+      render: () => `RETRY_MEMORY_${++renders}`,
+    }).query({ prompt: 'retry me', cwd: '/' });
+
+    await nextOfType(query.events[Symbol.asyncIterator](), 'result');
+
+    expect(renders).toBe(1);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].messages[0].content).toBe('RETRY_MEMORY_1');
+    expect(bodies[1].messages[0].content).toBe('RETRY_MEMORY_1');
   });
 
   it('replays bounded transcript state after provider recreation', async () => {
@@ -189,6 +247,7 @@ describe('OpenAICompatibleProvider', () => {
   it('executes a bounded tool call and returns its result to chat completions', async () => {
     const requests: any[] = [];
     let executions = 0;
+    let memoryRenders = 0;
     const broker: ProtocolToolBroker = {
       list: () => [
         {
@@ -222,11 +281,17 @@ describe('OpenAICompatibleProvider', () => {
       }
       return sse([{ choices: [{ delta: { content: '<message to="default">done</message>' } }] }]);
     }) as typeof fetch;
-    const instance = provider(fetchMock, memoryStore(), 'chat-completions', broker);
+    const instance = provider(fetchMock, memoryStore(), 'chat-completions', broker, undefined, {
+      enabled: true,
+      render: () => `TOOL_MEMORY_${++memoryRenders}`,
+    });
     const query = instance.query({ prompt: 'send it', cwd: '/' });
     const result = await nextOfType(query.events[Symbol.asyncIterator](), 'result');
     expect(result).toMatchObject({ text: '<message to="default">done</message>' });
     expect(executions).toBe(1);
+    expect(memoryRenders).toBe(1);
+    expect(requests[0].messages[0].content).toContain('TOOL_MEMORY_1');
+    expect(requests[1].messages[0].content).toContain('TOOL_MEMORY_1');
     expect(requests[0].tools[0].function.name).toBe('send_message');
     expect(requests[1].messages).toEqual(
       expect.arrayContaining([expect.objectContaining({ role: 'tool', tool_call_id: 'call-1' })]),

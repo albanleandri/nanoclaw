@@ -10,6 +10,7 @@ export type FindingCategory =
   | 'channel-specific'
   | 'historical/reference'
   | 'test-fixture'
+  | 'memory-surface'
   | 'blocker';
 
 export interface AuditFinding {
@@ -17,7 +18,7 @@ export interface AuditFinding {
   line?: number;
   pattern: string;
   category: FindingCategory;
-  surface: 'active-instruction' | 'generated-provider-doc' | 'shared-resource' | 'live-task';
+  surface: 'active-instruction' | 'generated-provider-doc' | 'shared-resource' | 'live-task' | 'private-memory';
   excerpt?: string;
 }
 
@@ -99,18 +100,49 @@ export function scanText(source: string, content: string, includeExcerpt = false
   return findings;
 }
 
-function walkTextFiles(root: string): string[] {
+function walkTextFiles(root: string, skipPrivateMemory = false): string[] {
   if (!fs.existsSync(root)) return [];
   const stat = fs.statSync(root);
   if (stat.isFile()) return TEXT_EXTENSIONS.has(path.extname(root).toLowerCase()) ? [root] : [];
   const files: string[] = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'downloads') continue;
+    if (skipPrivateMemory && entry.name === 'memory') continue;
     const fullPath = path.join(root, entry.name);
-    if (entry.isDirectory()) files.push(...walkTextFiles(fullPath));
+    if (entry.isDirectory()) files.push(...walkTextFiles(fullPath, skipPrivateMemory));
     else if (entry.isFile() && TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) files.push(fullPath);
   }
   return files;
+}
+
+function scanPrivateMemoryMetadata(projectRoot: string): AuditFinding[] {
+  const groupsRoot = path.join(projectRoot, 'groups');
+  if (!fs.existsSync(groupsRoot)) return [];
+  const findings: AuditFinding[] = [];
+  for (const group of fs.readdirSync(groupsRoot, { withFileTypes: true })) {
+    if (!group.isDirectory() || group.name === 'shared') continue;
+    const memoryRoot = path.join(groupsRoot, group.name, 'memory');
+    if (!fs.existsSync(memoryRoot)) continue;
+    const pending = [memoryRoot];
+    let count = 0;
+    while (pending.length > 0 && count < 4096) {
+      const current = pending.pop()!;
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        count++;
+        const fullPath = path.join(current, entry.name);
+        const source = path.relative(projectRoot, fullPath);
+        findings.push({
+          source,
+          pattern: entry.isSymbolicLink() ? 'private memory symlink' : 'private memory node',
+          category: 'memory-surface',
+          surface: 'private-memory',
+        });
+        if (entry.isDirectory() && !entry.isSymbolicLink()) pending.push(fullPath);
+        if (count >= 4096) break;
+      }
+    }
+  }
+  return findings;
 }
 
 function findInboundDbs(root: string): string[] {
@@ -154,7 +186,7 @@ export function runAudit(projectRoot: string, includeExcerpt = false): AuditFind
     path.join(projectRoot, 'groups'),
   ];
   const findings = roots
-    .flatMap(walkTextFiles)
+    .flatMap((root) => walkTextFiles(root, root === path.join(projectRoot, 'groups')))
     .sort()
     .flatMap((filePath) =>
       scanText(path.relative(projectRoot, filePath), fs.readFileSync(filePath, 'utf8'), includeExcerpt),
@@ -162,6 +194,7 @@ export function runAudit(projectRoot: string, includeExcerpt = false): AuditFind
   for (const dbPath of findInboundDbs(path.join(projectRoot, 'data', 'v2-sessions')).sort()) {
     findings.push(...scanTaskDb(dbPath, projectRoot, includeExcerpt));
   }
+  findings.push(...scanPrivateMemoryMetadata(projectRoot));
   return findings.sort(
     (a, b) => a.source.localeCompare(b.source) || (a.line ?? 0) - (b.line ?? 0) || a.pattern.localeCompare(b.pattern),
   );

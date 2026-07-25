@@ -15,6 +15,7 @@ import { buildAgentProfile, type AgentProfile } from './agent-profile.js';
 import { GROUPS_DIR } from './config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { getAgentGroupMemoryControl } from './db/agent-group-memory-control.js';
 import { collectInstructionSections, type InstructionSection } from './instruction-sections.js';
 import type { AgentGroup, ContainerConfigRow } from './types.js';
 import type { EffectiveProviderConfig, EffectiveProviderProfile } from './providers/effective-provider.js';
@@ -115,7 +116,7 @@ function instructionContent(projectRoot: string, section: InstructionSection): s
 }
 
 export function buildRequestSystemInstructions(group: AgentGroup, config: ContainerConfig): string {
-  const profile = buildAgentProfile(group, config);
+  const profile = config.agentProfile ?? buildAgentProfile(group, config);
   const sections = collectInstructionSections({
     projectRoot: process.cwd(),
     profile,
@@ -183,6 +184,7 @@ export function materializeSessionRuntimeJson(
   groupConfig: ContainerConfig,
   effective: EffectiveProviderConfig,
   sessionRuntimePlan?: SessionRuntimePlan,
+  sessionId = path.basename(sessionDir),
 ): { config: ContainerConfig; path: string } {
   const config: ContainerConfig = {
     ...groupConfig,
@@ -194,6 +196,9 @@ export function materializeSessionRuntimeJson(
     providerCapabilities: effective.capabilities,
     ...(sessionRuntimePlan ? { sessionRuntimePlan } : {}),
   };
+  const memoryControl = getAgentGroupMemoryControl(group.id);
+  if (!memoryControl) throw new Error(`Memory control not found for agent group: ${group.id}`);
+  config.agentProfile = buildAgentProfile(group, config, { memoryControl, sessionId });
   if (effective.profile && effective.profile.protocol !== 'native') {
     config.requestSystemInstructions = buildRequestSystemInstructions(group, config);
   }

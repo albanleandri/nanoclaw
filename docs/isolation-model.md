@@ -32,6 +32,21 @@ Multiple channels share the same agent (same workspace, memory, personality) but
 
 **Technical:** Multiple messaging groups are wired to the same agent group with `session_mode: 'shared'` (or `'per-thread'`). Each messaging group gets its own session, but they all run in the same agent group folder.
 
+When neutral OKF memory is enabled, these sessions still share one private
+memory tree, but they do not share write authority. The DB designates exactly
+one writer session. Its group workspace remains writable; every other session
+receives read-only nested bind mounts at both `/workspace/agent/memory` and
+the compatibility alias `/workspace/group/memory`. Non-writers can recall the
+same durable facts but cannot correct them directly. Other files in the shared
+group workspace remain concurrent and retain their existing last-writer-wins
+semantics.
+
+Writer transfer is an operator action. It temporarily fences new wakes,
+drains in-flight wakes, requires every session container in the group to be
+stopped, and then changes ownership with version/current-writer
+compare-and-swap checks. A running multi-session group is never transferred
+in place.
+
 ---
 
 ### 3. Separate Agent Groups
@@ -72,6 +87,10 @@ The key question: **Are you okay with any and every piece of information from on
 If the participants are the same across channels → same agent group is usually fine.
 
 If different people are involved → separate agent groups. Information will cross-pollinate through agent memory if you don't.
+
+Read-only writer enforcement prevents concurrent corruption; it is not a
+privacy boundary between sessions in the same agent group. Every session in
+that group can still read the shared private memory.
 
 ## Entity Model
 

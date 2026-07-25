@@ -34,6 +34,7 @@ import { createProvider, type ProviderName } from './providers/factory.js';
 import { runPollLoop } from './poll-loop.js';
 import { createProviderStateStore } from './db/session-state.js';
 import { buildProtocolToolBroker } from './runtime-bootstrap.js';
+import { initializeMemory, renderMemoryContext } from './memory/index.js';
 
 function log(msg: string): void {
   console.error(`[agent-runner] ${msg}`);
@@ -44,8 +45,16 @@ const CWD = '/workspace/agent';
 async function main(): Promise<void> {
   const config = loadConfig();
   const providerName = config.provider.toLowerCase() as ProviderName;
+  const memoryProfile = config.agentProfile?.memory;
 
   log(`Starting v2 agent-runner (provider: ${providerName})`);
+
+  const memory = initializeMemory(memoryProfile);
+  if (memoryProfile && memoryProfile.mode !== 'disabled') {
+    log(
+      `Memory initialized (mode: ${memoryProfile?.mode}, access: ${memoryProfile?.access}, index bytes: ${memory.indexBytes ?? 'unavailable'}, definition bytes: ${memory.definitionBytes ?? 'unavailable'}, warnings: ${memory.warnings.join(',') || 'none'})`,
+    );
+  }
 
   // Runtime-generated system-prompt addendum: agent identity (name) plus
   // the live destinations map. Provider-native project docs in the persistent
@@ -106,6 +115,12 @@ async function main(): Promise<void> {
     providerProfile: config.providerProfile,
     stateStore: createProviderStateStore(config.runtimeStateKey ?? providerName),
     protocolToolBroker: buildProtocolToolBroker(config),
+    memory: memoryProfile
+      ? {
+          enabled: memoryProfile.mode !== 'disabled',
+          render: () => renderMemoryContext(memoryProfile).context,
+        }
+      : undefined,
   });
 
   await runPollLoop({

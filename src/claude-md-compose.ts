@@ -27,7 +27,8 @@ import { buildAgentProfile } from './agent-profile.js';
 
 export { collectSkillInstructionFragments } from './instruction-sections.js';
 
-const COMPOSED_HEADER = '<!-- Composed at spawn — do not edit. Edit CLAUDE.local.md for per-group content. -->';
+const COMPOSED_HEADER =
+  '<!-- Composed at spawn — do not edit. Follow the runtime memory instructions for persistent content. -->';
 
 /**
  * Regenerate a Claude project doc from the neutral runtime core, Claude
@@ -51,7 +52,7 @@ export function composeGroupClaudeMd(
   const configRow = options.containerConfig ? undefined : getContainerConfig(group.id);
   const containerConfig =
     options.containerConfig ?? (configRow ? configFromDb(configRow, group) : defaultContainerConfig(group));
-  const profile = buildAgentProfile(group, containerConfig);
+  const profile = containerConfig.agentProfile ?? buildAgentProfile(group, containerConfig);
   const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
   const sectionBytes: Array<{ section: string; bytes: number }> = [];
 

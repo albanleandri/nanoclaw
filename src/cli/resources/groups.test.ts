@@ -17,6 +17,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
   isContainerRunning: vi.fn().mockReturnValue(false),
+  isContainerWakeInFlight: vi.fn().mockReturnValue(false),
+  drainContainerWakes: vi.fn().mockResolvedValue(undefined),
   getActiveContainerCount: vi.fn().mockReturnValue(0),
   killContainer: vi.fn(),
   buildAgentGroupImage: vi.fn().mockResolvedValue(undefined),
@@ -29,7 +31,15 @@ vi.mock('../../config.js', async () => {
 
 const TEST_DIR = '/tmp/nanoclaw-test-cli-groups';
 
-import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
+import {
+  initTestDb,
+  closeDb,
+  runMigrations,
+  createAgentGroup,
+  getAgentGroupMemoryControl,
+  getDb,
+  transitionAgentGroupMemoryControl,
+} from '../../db/index.js';
 import { createSession } from '../../db/sessions.js';
 import { dispatch } from '../dispatch.js';
 // Side-effect import: registers the `groups-*` commands (including delete).
@@ -260,6 +270,111 @@ describe('groups CLI package validation', () => {
       getDb().prepare('SELECT packages_npm FROM container_configs WHERE agent_group_id = ?').get('ag-packages'),
     ).toEqual({
       packages_npm: '[]',
+    });
+  });
+});
+
+describe('groups CLI neutral-memory ownership', () => {
+  beforeEach(() => {
+    const db = initTestDb();
+    runMigrations(db);
+    createAgentGroup({
+      id: 'ag-memory',
+      name: 'memory',
+      folder: 'memory',
+      agent_provider: null,
+      created_at: now(),
+    });
+    createSession({
+      id: 'writer-old',
+      agent_group_id: 'ag-memory',
+      messaging_group_id: null,
+      thread_id: null,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: now(),
+    });
+    createSession({
+      id: 'writer-new',
+      agent_group_id: 'ag-memory',
+      messaging_group_id: null,
+      thread_id: null,
+      agent_provider: null,
+      status: 'active',
+      container_status: 'stopped',
+      last_active: null,
+      created_at: now(),
+    });
+    transitionAgentGroupMemoryControl('ag-memory', 1, {
+      mode: 'shadow',
+      migrationState: 'staging',
+      writerSessionId: 'writer-old',
+    });
+  });
+
+  afterEach(closeDb);
+
+  it('reports memory access without reading workspace contents', async () => {
+    const response = await dispatch(
+      { id: 'memory-status', command: 'groups-memory-status', args: { id: 'ag-memory' } },
+      { caller: 'host' },
+    );
+
+    expect(response.ok).toBe(true);
+    expect((response as { ok: true; data: { sessions: Array<Record<string, unknown>> } }).data.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'writer-old', memory_access: 'read-write' }),
+        expect.objectContaining({ id: 'writer-new', memory_access: 'read-only' }),
+      ]),
+    );
+  });
+
+  it('transfers the writer only while all sessions are stopped', async () => {
+    const response = await dispatch(
+      {
+        id: 'memory-transfer',
+        command: 'groups-memory-writer-transfer',
+        args: {
+          id: 'ag-memory',
+          writer_session_id: 'writer-new',
+          expected_writer_session_id: 'writer-old',
+          expected_version: 2,
+        },
+      },
+      { caller: 'host' },
+    );
+
+    expect(response.ok).toBe(true);
+    expect(getAgentGroupMemoryControl('ag-memory')).toMatchObject({
+      writer_session_id: 'writer-new',
+      version: 3,
+      maintenance_fence_token: null,
+    });
+  });
+
+  it('rejects transfer while a group session is running and releases its temporary fence', async () => {
+    getDb().prepare("UPDATE sessions SET container_status = 'running' WHERE id = 'writer-new'").run();
+    const response = await dispatch(
+      {
+        id: 'memory-transfer-busy',
+        command: 'groups-memory-writer-transfer',
+        args: {
+          id: 'ag-memory',
+          writer_session_id: 'writer-new',
+          expected_writer_session_id: 'writer-old',
+          expected_version: 2,
+        },
+      },
+      { caller: 'host' },
+    );
+
+    expect(response.ok).toBe(false);
+    expect((response as { ok: false; error: { message: string } }).error.message).toContain('must be stopped');
+    expect(getAgentGroupMemoryControl('ag-memory')).toMatchObject({
+      writer_session_id: 'writer-old',
+      maintenance_fence_token: null,
     });
   });
 });

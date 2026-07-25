@@ -75,6 +75,15 @@ describe('migrations', () => {
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orchestration_runs'").get()).toEqual(
       { name: 'orchestration_runs' },
     );
+    expect(
+      db
+        .prepare(
+          `SELECT mode, migration_state AS migrationState
+           FROM agent_group_memory_control
+           WHERE agent_group_id = 'legacy-agent'`,
+        )
+        .get(),
+    ).toEqual({ mode: 'disabled', migrationState: 'none' });
     const attemptColumns = db.prepare('PRAGMA table_info(orchestration_step_attempts)').all() as Array<{
       name: string;
     }>;

@@ -252,20 +252,117 @@ recovery files survive container replacement and provider switches.
 `wakeContainerWithResult()` deduplicates concurrent wake requests per session.
 For a new container, the host:
 
-1. refreshes the session destination and default-routing projections;
-2. materializes the group snapshot;
-3. resolves provider/profile/runtime selection;
-4. compiles and records the session capability authorization;
-5. writes the per-session runtime JSON;
-6. validates mounts, resource limits, network arguments, and OneCLI gateway
+1. checks the group-scoped memory maintenance fence before reserving spawn
+   capacity;
+2. refreshes the session destination and default-routing projections;
+3. materializes the group snapshot;
+4. resolves provider/profile/runtime selection;
+5. compiles and records the session capability authorization;
+6. writes the per-session runtime JSON;
+7. validates mounts, resource limits, network arguments, and OneCLI gateway
    contribution into a deterministic launch plan;
-7. spawns Docker and considers startup successful only after the child emits
+8. rechecks the durable memory maintenance fence immediately before the
+   external process boundary;
+9. spawns Docker and considers startup successful only after the child emits
    `spawn`;
-8. tracks the concrete container instance and start time.
+10. tracks the concrete container instance and start time.
+
+Memory maintenance holds return a distinct `maintenance-held` wake result.
+Inbound and internal work remains durable and pending; a hold is neither a
+capacity failure nor a provider failure. The control row defaults every group
+to `disabled/none`, so this foundation does not enable or scaffold neutral
+memory by itself.
+
+The per-session runtime profile projects that control row into a neutral memory
+mode and effective access. At runner startup, enabled writer sessions use the
+image's `nanoclaw-memory-fs` helper to validate the canonical root and create
+missing OKF v0.1 scaffold files exclusively. Enabled read-only sessions never
+scaffold. The helper anchors traversal on directory descriptors, rejects
+symlinks, accepts regular files only, and enforces safe ownership/modes from
+the final memory root downward while allowing the intentionally writable
+workspace ancestors. It uses Linux `openat2` constraints with a component-wise
+`openat(O_NOFOLLOW)` fallback.
+
+The runner alone reads and renders memory bodies. It omits an oversized index,
+Unicode-safely truncates the definition, and wraps both in a bounded,
+explicitly lower-trust envelope. It logs only byte counts and diagnostic
+classifications. Provider delivery and filesystem-enforced non-writer
+read-only mounts are separate controls. Enabled context is delivered only at
+provider-safe boundaries: Claude new-session system context with a
+programmatic SessionStart hook (including compact), Codex new-thread creation,
+and once per OpenAI-compatible logical request. The host
+never reads or embeds private memory bodies, and all control rows still
+default to disabled.
+
+Explicit validation is also body-blind to the host. `ncl memory validate`
+resolves the group and image, then launches the same bind-mounted runner code
+in a networkless operator container with a read-only root and group mount.
+The thin validator uses the native safe-read helper, never mutates, and returns
+only bounded path/classification metadata for scaffold, version, type, node,
+link, reachability, duplicate-path, and always-loaded budget checks.
+
+`ncl memory migrate-prepare` drives the group-scoped maintenance window from a
+metadata-only ledger under ignored `data/memory-migrations/`. It fences every
+wake, inventories routes/sessions/live scheduled series, records and pauses
+only pending series, drains and stops containers, verifies a hashed tar backup,
+enters `shadow/staging`, and moves only explicitly named legacy paths. Regular
+files use same-filesystem renames; symlink objects are quarantined without
+following their targets; directories and special nodes stop the workflow.
+Every durable stage is rerunnable.
+
+The invoking coding harness treats staged bodies as untrusted and writes a
+source-to-destination JSON report. Every staged source is classified as a
+standing instruction, private memory, or an explained omission. Materialized
+destinations carry SHA-256 hashes, private-memory destinations are confined to
+`memory/`, and a staged source path may be reconstructed only by an exact,
+hashed standing-instruction entry. Unclassified or mismatched recreation fails
+closed. `migrate-classify` records only the report path, hash, and entry count;
+`migrate-validate` runs the isolated validator.
+`migrate-approve` requires the exact workflow ID and a group writer session
+before `active/migrated`. `migrate-finish` resumes only workflow-paused series
+and releases the exact fence; `migrate-smoke` records passing
+recall/correction/clear/compact/provider-switch checks. Pre-approval rollback
+reverses recorded renames without overwrite. Post-approval rollback reacquires
+the fence, stops containers, verifies and restores the backup while retaining
+the displaced workspace, restores the recorded control state, and resumes only
+the recorded series.
+
+For enabled non-writer sessions, launch-plan compilation validates the host
+memory root without reading its contents and overlays it read-only at both
+workspace aliases. Any additional or provider mount at or below either
+protected memory destination is rejected before Docker invocation, preventing
+a child bind from reopening a writable path. Writer sessions retain the
+writable group mount.
+
+Writer transfer uses the same durable maintenance fence as migration. After
+acquiring a temporary fence it drains in-flight wakes, requires every group
+session to be stopped, and updates the writer with version and expected-writer
+compare-and-swap checks. Status and transfer diagnostics contain control,
+session, and path classification data only.
+
+Shared-resource grants remain the explicit arrays in
+`container_configs.shared_resources`; there is no `all` sentinel and ownership
+does not reuse private-memory writer state. Launch compilation mounts each
+selected backing directory individually. Uncontrolled/pilot resources and
+non-owner grants are read-only. A central `shared_resource_control` row permits
+write access only for one owner group after the resource progresses through
+`pilot → reconciling → validated → reconciled`.
+
+`ncl shared-resources reconcile-prepare` writes a content-blind node/grant and
+legacy-authority inventory under ignored `data/`. The coding harness classifies
+each source as private instruction, shared evidence, or omitted, and places its
+bounded report under that directory. `reconcile-validate` hashes the report and
+runs the same thin validator in an isolated networkless container against the
+shared OKF root. `reconcile-approve` requires the exact version and resource
+name, verifies the report did not change and attests pilot markers were
+removed, then enables owner-only write access. Provider docs advertise only
+the granted path, evidence-tier semantics, and safe filesystem metadata; they
+never inline shared concept bodies.
 
 The image runs Bun source directly; there is no container `tsc` build step.
 `container/agent-runner/src` is bind-mounted at `/app/src`, so source changes
-take effect in newly spawned containers without rebuilding the image.
+take effect in newly spawned containers without rebuilding the image. Native
+helper changes do require `./container/build.sh`.
 
 Host sweep uses heartbeat age, processing-claim age, pending-message age,
 current tool timeout, and the current container instance's uptime to decide

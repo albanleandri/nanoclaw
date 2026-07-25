@@ -2,7 +2,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query as sdkQuery,
+  type HookCallback,
+  type PreCompactHookInput,
+  type SessionStartHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { TIMEZONE, formatLocalStamp } from '../timezone.js';
@@ -319,6 +324,40 @@ function createPreCompactHook(assistantName?: string): HookCallback {
   };
 }
 
+export function createMemorySessionStartHook(render: () => string): HookCallback {
+  return async (input) => {
+    const sessionStart = input as SessionStartHookInput;
+    if (sessionStart.source === 'resume') return {};
+    const additionalContext = render();
+    if (!additionalContext) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext,
+      },
+    };
+  };
+}
+
+/**
+ * The SDK's programmatic SessionStart hook is the primary memory boundary,
+ * but the headless streaming-query path has not consistently surfaced hook
+ * additionalContext on a runner-owned /clear. Put the same freshly rendered
+ * envelope in the new session's system append as a delivery backstop.
+ *
+ * Never append it to a resumed query: the existing Claude session already
+ * owns its startup context, and repeated injection would waste context.
+ */
+export function createClaudeSystemAppend(
+  instructions: string | undefined,
+  continuation: string | undefined,
+  memory: ProviderOptions['memory'],
+): string | undefined {
+  const memoryContext = !continuation && memory?.enabled ? memory.render() : '';
+  const append = [instructions, memoryContext].filter(Boolean).join('\n\n');
+  return append || undefined;
+}
+
 // ── Continuation rotation (cold-resume guard) ──
 
 /**
@@ -453,6 +492,7 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
 
 export class ClaudeProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
+  readonly memoryDeliveryMode = 'claude-session-start' as const;
 
   private assistantName?: string;
   private mcpServers: Record<string, McpServerConfig>;
@@ -460,6 +500,7 @@ export class ClaudeProvider implements AgentProvider {
   private additionalDirectories?: string[];
   private model?: string;
   private effort?: string;
+  private memory?: ProviderOptions['memory'];
 
   constructor(options: ProviderOptions = {}) {
     this.assistantName = options.assistantName;
@@ -467,6 +508,7 @@ export class ClaudeProvider implements AgentProvider {
     this.additionalDirectories = options.additionalDirectories;
     this.model = options.model;
     this.effort = options.effort;
+    this.memory = options.memory;
     this.env = {
       ...(options.env ?? {}),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW,
@@ -518,7 +560,7 @@ export class ClaudeProvider implements AgentProvider {
     const stream = new MessageStream((ack) => followUpAcks.push(ack));
     stream.push(input.prompt);
 
-    const instructions = input.systemContext?.instructions;
+    const systemAppend = createClaudeSystemAppend(input.systemContext?.instructions, input.continuation, this.memory);
 
     const sdkResult = sdkQuery({
       prompt: stream,
@@ -527,8 +569,8 @@ export class ClaudeProvider implements AgentProvider {
         additionalDirectories: this.additionalDirectories,
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
-        systemPrompt: instructions
-          ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
+        systemPrompt: systemAppend
+          ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemAppend }
           : undefined,
         allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
         disallowedTools: CLAUDE_SDK_DISALLOWED_TOOLS,
@@ -545,6 +587,9 @@ export class ClaudeProvider implements AgentProvider {
           PostToolUse: [{ hooks: [postToolUseHook] }],
           PostToolUseFailure: [{ hooks: [postToolUseHook] }],
           PreCompact: [{ hooks: [createPreCompactHook(this.assistantName)] }],
+          ...(this.memory?.enabled
+            ? { SessionStart: [{ hooks: [createMemorySessionStartHook(this.memory.render)] }] }
+            : {}),
         },
       },
     });

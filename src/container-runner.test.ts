@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertUniqueMountDestinations,
   buildGroupWorkspaceMounts,
+  buildMemoryAccessMounts,
   buildRtkStateMount,
   buildSessionClaudeDocMounts,
   buildSessionWorkspaceMounts,
@@ -213,6 +214,84 @@ describe('buildGroupWorkspaceMounts', () => {
       );
       expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/agent/container.json' }));
       expect(mounts).not.toContainEqual(expect.objectContaining({ containerPath: '/workspace/group/container.json' }));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildMemoryAccessMounts', () => {
+  const memoryProfile = {
+    workspacePath: '/workspace/agent',
+    localMemoryFile: 'CLAUDE.local.md',
+    neutralMemoryRoot: '/workspace/agent/memory',
+    indexPath: 'index.md',
+    definitionPath: 'system/definition.md',
+    conversationsPath: '/workspace/agent/conversations',
+    mode: 'shadow' as const,
+    access: 'read-only' as const,
+    okfVersion: '0.1' as const,
+    indexMaxBytes: 12 * 1024,
+    definitionMaxBytes: 8 * 1024,
+    renderedMaxBytes: 24 * 1024,
+  };
+
+  it('overlays both workspace aliases read-only for a non-writer session', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-memory-mounts-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'memory'), { mode: 0o700 });
+      expect(buildMemoryAccessMounts(tmp, memoryProfile)).toEqual([
+        {
+          hostPath: path.join(tmp, 'memory'),
+          containerPath: '/workspace/agent/memory',
+          readonly: true,
+        },
+        {
+          hostPath: path.join(tmp, 'memory'),
+          containerPath: '/workspace/group/memory',
+          readonly: true,
+        },
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('adds no overlay for disabled memory or the designated writer', () => {
+    expect(buildMemoryAccessMounts('/missing', { ...memoryProfile, mode: 'disabled', access: 'none' })).toEqual([]);
+    expect(buildMemoryAccessMounts('/missing', { ...memoryProfile, access: 'read-write' })).toEqual([]);
+  });
+
+  it('fails closed for missing, symlinked, or writable memory roots', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-memory-unsafe-'));
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-memory-target-'));
+    try {
+      expect(() => buildMemoryAccessMounts(tmp, memoryProfile)).toThrow('unavailable');
+      fs.symlinkSync(target, path.join(tmp, 'memory'));
+      expect(() => buildMemoryAccessMounts(tmp, memoryProfile)).toThrow('unsafe');
+      fs.rmSync(path.join(tmp, 'memory'));
+      fs.mkdirSync(path.join(tmp, 'memory'), { mode: 0o777 });
+      fs.chmodSync(path.join(tmp, 'memory'), 0o777);
+      expect(() => buildMemoryAccessMounts(tmp, memoryProfile)).toThrow('unsafe mode');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a later mount that could punch through the protected subtree', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-memory-collision-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'memory'), { mode: 0o700 });
+      expect(() =>
+        buildMemoryAccessMounts(tmp, memoryProfile, [
+          {
+            hostPath: '/host/override',
+            containerPath: '/workspace/agent/memory/system',
+            readonly: false,
+          },
+        ]),
+      ).toThrow('Mount conflicts with protected memory subtree');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

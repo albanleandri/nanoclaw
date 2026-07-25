@@ -259,7 +259,33 @@ JSON-RPC helpers (`spawnCodexAppServer`, `initializeCodexAppServer`, `startOrRes
   acknowledgement point.
 - Auto-approval handler for the app-server's permission requests
 - Stale-thread detection (`STALE_THREAD_RE` / `isSessionInvalid`)
-- Opt-in to the runner's persistent `memory/` scaffold (Codex has no native NanoClaw memory)
+- A static pointer to the neutral `memory/` convention. Private memory bodies
+  are supplied only by the runner when a new Codex thread is started; resume
+  requests do not duplicate them.
+
+### Neutral memory core
+
+At startup the runner reads only the session-specific `agentProfile.memory`
+projection. `disabled` is a strict no-op. An enabled designated writer may
+create the minimal OKF v0.1 scaffold; an enabled non-writer may only render an
+existing scaffold. All traversal and file opens go through the container
+image's descriptor-anchored `nanoclaw-memory-fs` helper.
+
+The renderer loads only `index.md` and `system/definition.md`, extracts a
+bounded subset of scalar frontmatter for labels, and emits a deterministic
+lower-trust envelope. It never logs bodies. Index overflow omits the complete
+body; definition overflow uses a valid UTF-8 prefix plus a visible notice.
+Providers receive a renderer callback rather than a startup snapshot. Claude
+renders on SDK `SessionStart` for startup, clear, and compact, but not resume.
+Codex renders only for `thread/start`, including stale-thread replacement.
+OpenAI-compatible profiles render once per logical request and reuse that
+body across retries and native tool iterations. Rendered bodies are not added
+to persisted provider transcripts.
+
+The same memory package contains the thin operator validator. It runs only
+through `ncl memory validate` in a separate networkless, read-only container,
+uses the native helper for file opens, and returns bounded redacted structural
+findings rather than context or file bodies.
 
 ### OpenCode Provider (illustrative, not shipped)
 

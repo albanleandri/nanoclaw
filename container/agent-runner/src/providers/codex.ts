@@ -74,19 +74,19 @@ function normalizeEffort(effort: string | undefined): CodexReasoningEffort | und
 
 export class CodexProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = false;
-  // Codex has no native NanoClaw memory — opt in to the runner's persistent
-  // memory/ scaffold (see memory-scaffold.ts).
-  readonly usesMemoryScaffold = true;
+  readonly memoryDeliveryMode = 'codex-new-thread' as const;
   private readonly mcpServers: Record<string, McpServerConfig>;
   private readonly model?: string;
   private readonly effort?: CodexReasoningEffort;
   private readonly runtime: CodexRuntimeDeps;
+  private readonly memory?: ProviderOptions['memory'];
 
   constructor(options: ProviderOptions = {}, runtime: CodexRuntimeDeps = defaultCodexRuntimeDeps) {
     this.mcpServers = options.mcpServers ?? {};
     this.model = options.model;
     this.runtime = runtime;
     this.effort = normalizeEffort(options.effort);
+    this.memory = options.memory;
   }
 
   isSessionInvalid(err: unknown): boolean {
@@ -136,6 +136,7 @@ export class CodexProvider implements AgentProvider {
           model: self.model,
           cwd: input.cwd,
           baseInstructions: input.systemContext?.instructions,
+          newThreadDeveloperInstructions: self.memory?.enabled ? self.memory.render : undefined,
         });
         activeThreadId = threadId;
 

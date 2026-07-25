@@ -30,6 +30,18 @@ export interface ContainerConfigRow {
   updated_at: string;
 }
 
+export interface SharedResourceControlRow {
+  resource_name: string;
+  owner_agent_group_id: string | null;
+  reconciliation_state: 'pilot' | 'reconciling' | 'validated' | 'reconciled';
+  classification_report_path: string | null;
+  classification_report_sha256: string | null;
+  validation_report_json: string | null;
+  approved_at: string | null;
+  version: number;
+  updated_at: string;
+}
+
 export type UnknownSenderPolicy = 'strict' | 'request_approval' | 'public';
 
 export interface MessagingGroup {
