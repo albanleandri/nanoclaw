@@ -29,6 +29,7 @@ The sandbox provides a MITM proxy at `host.docker.internal:3128` that handles ne
 - For **WhatsApp**: a phone with WhatsApp installed
 
 Verify sandbox support:
+
 ```bash
 docker sandbox version
 ```
@@ -57,6 +58,7 @@ docker sandbox network proxy shell-nanoclaw-workspace \
 Telegram does not need proxy bypass.
 
 Enter the sandbox:
+
 ```bash
 docker sandbox run shell-nanoclaw-workspace
 ```
@@ -194,35 +196,11 @@ bash container/build.sh
 ### Telegram
 
 ```bash
-# Apply the Telegram skill
-pnpm exec tsx scripts/apply-skill.ts .claude/skills/add-telegram
+# Install/configure the adapter with the current setup helper.
+TELEGRAM_BOT_TOKEN='<your-token-from-botfather>' bash setup/add-telegram.sh
 
-# Rebuild after applying the skill
-pnpm run build
-
-# Configure .env
-cat > .env << EOF
-TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
-ASSISTANT_NAME=nanoclaw
-ANTHROPIC_API_KEY=proxy-managed
-EOF
-chmod 600 .env
-
-# Register your chat
-pnpm exec tsx setup/index.ts --step register \
-  --jid "tg:<your-chat-id>" \
-  --name "My Chat" \
-  --trigger "@nanoclaw" \
-  --folder "telegram_main" \
-  --channel telegram \
-  --assistant-name "nanoclaw" \
-  --is-main \
-  --no-trigger-required
-```
-
-**To find your chat ID:** Send any message to your bot, then:
-```bash
-curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | python3 -m json.tool
+# Pair the chat by sending the displayed one-time code to the bot.
+pnpm run setup:step -- pair-telegram
 ```
 
 **Telegram in groups:** Disable Group Privacy in @BotFather (`/mybots` > Bot Settings > Group Privacy > Turn off), then remove and re-add the bot.
@@ -232,46 +210,25 @@ curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | 
 ### WhatsApp
 
 Make sure you configured proxy bypass in [Step 1](#step-1-create-the-sandbox) first.
+WhatsApp is not installed in this checkout by default.
 
 ```bash
-# Apply the WhatsApp skill
-pnpm exec tsx scripts/apply-skill.ts .claude/skills/add-whatsapp
+# Install the adapter and its current setup steps.
+bash setup/add-whatsapp.sh
 
-# Rebuild
-pnpm run build
-
-# Configure .env
-cat > .env << EOF
-ASSISTANT_NAME=nanoclaw
-ANTHROPIC_API_KEY=proxy-managed
-EOF
-chmod 600 .env
-
-# Authenticate (choose one):
-
-# QR code — scan with WhatsApp camera:
-pnpm exec tsx src/whatsapp-auth.ts
-
-# OR pairing code — enter code in WhatsApp > Linked Devices > Link with phone number:
-pnpm exec tsx src/whatsapp-auth.ts --pairing-code --phone <phone-number-no-plus>
-
-# Register your chat (JID = your phone number + @s.whatsapp.net)
-pnpm exec tsx setup/index.ts --step register \
-  --jid "<phone>@s.whatsapp.net" \
-  --name "My Chat" \
-  --trigger "@nanoclaw" \
-  --folder "whatsapp_main" \
-  --channel whatsapp \
-  --assistant-name "nanoclaw" \
-  --is-main \
-  --no-trigger-required
+# Link the device using the current QR/pairing setup step.
+pnpm run setup:step -- whatsapp-auth
 ```
 
-**Important:** The WhatsApp skill files (`src/channels/whatsapp.ts` and `src/whatsapp-auth.ts`) also need proxy patches — add `HttpsProxyAgent` for WebSocket connections and a proxy-aware version fetch. Then rebuild.
+**Important:** The installed WhatsApp adapter and authentication step
+(`src/channels/whatsapp.ts` and `setup/whatsapp-auth.ts`) also need proxy
+patches—add `HttpsProxyAgent` for WebSocket connections and a proxy-aware
+version fetch. Then rebuild.
 
 ### Both Channels
 
-Apply both skills, patch both for proxy support, combine the `.env` variables, and register each chat separately.
+Install both adapters with their current setup helpers, patch both for proxy
+support, and complete each pairing flow separately.
 
 ## Step 7: Run
 
@@ -296,6 +253,7 @@ Agent container → DinD bridge → Sandbox VM → host.docker.internal:3128 →
 ### Shared paths for DinD mounts
 
 Only the workspace directory is available for Docker-in-Docker bind mounts. Paths outside the workspace fail with "path not shared":
+
 - `/dev/null` → replace with an empty file in the project dir
 - `/usr/local/share/ca-certificates/` → copy cert to project dir
 - `/home/agent/` → clone to workspace instead
@@ -307,11 +265,13 @@ The workspace is mounted via virtiofs. Git's pack file handling can corrupt over
 ## Troubleshooting
 
 ### pnpm install fails with SELF_SIGNED_CERT_IN_CHAIN
+
 ```bash
 npm config set strict-ssl false
 ```
 
 ### Container build fails with proxy errors
+
 ```bash
 docker build \
   --build-arg http_proxy=$http_proxy \
@@ -320,19 +280,25 @@ docker build \
 ```
 
 ### Agent containers fail with "path not shared"
+
 All bind-mounted paths must be under the workspace directory. Check:
+
 - Is NanoClaw cloned into the workspace? (not `/home/agent/`)
 - Is the CA cert copied to the project root?
 - Has the empty `.env` shadow file been created?
 
 ### Agent containers can't reach Anthropic API
+
 Verify proxy env vars are forwarded to agent containers. Check container logs for `HTTP_PROXY=http://host.docker.internal:3128`.
 
 ### WhatsApp error 405
+
 The version fetch is returning a stale version. Make sure the proxy-aware `fetchWaVersionViaProxy` patch is applied — it fetches `sw.js` through `HttpsProxyAgent` and parses `client_revision`.
 
 ### WhatsApp "Connection failed" immediately
+
 Proxy bypass not configured. From the **host**, run:
+
 ```bash
 docker sandbox network proxy <sandbox-name> \
   --bypass-host web.whatsapp.com \
@@ -341,19 +307,24 @@ docker sandbox network proxy <sandbox-name> \
 ```
 
 ### Telegram bot doesn't receive messages
+
 1. Check the grammy proxy patch is applied (look for `HttpsProxyAgent` in `src/channels/telegram.ts`)
 2. Check Group Privacy is disabled in @BotFather if using in groups
 
 ### Git clone fails with "inflate: data stream error"
+
 Clone to a non-workspace path first, then move:
+
 ```bash
 cd ~ && git clone https://github.com/nanocoai/nanoclaw.git && mv nanoclaw /path/to/workspace/nanoclaw
 ```
 
 ### WhatsApp QR code doesn't display
+
 Run the auth command interactively inside the sandbox (not piped through `docker sandbox exec`):
+
 ```bash
 docker sandbox run shell-nanoclaw-workspace
 # Then inside:
-pnpm exec tsx src/whatsapp-auth.ts
+pnpm run setup:step -- whatsapp-auth
 ```

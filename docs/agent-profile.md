@@ -130,15 +130,16 @@ to the image's native helper. The initial files are `index.md` and
 `system/definition.md`. Rendering is bounded to 12 KiB for the index, 8 KiB
 for the definition, and 24 KiB for the complete lower-trust envelope.
 
-Phase 3 enforces `read-only` access with nested bind mounts on both workspace
-aliases; it rejects unsafe roots and conflicting child mounts before spawn.
+Enabled non-writer sessions enforce `read-only` access with nested bind mounts
+on both workspace aliases; launch compilation rejects unsafe roots and
+conflicting child mounts before spawn.
 The runner delivers freshly rendered context at provider-specific lifecycle
 boundaries: Claude new-session system context plus startup/clear/compact
 SessionStart hooks, new Codex threads, and each OpenAI-compatible logical
-request. Resume paths and
-retry/tool-loop iterations do not duplicate or re-render it. All migrated
-control rows default to `disabled/none`, so existing sessions retain their
-current behavior.
+request. Resume paths and retry/tool-loop iterations do not duplicate or
+re-render it. Database upgrades backfill existing groups, and every newly
+created group receives a control row defaulting to `disabled/none`; only an
+explicit validated migration advances a group to `active/migrated`.
 
 ## Current Compatibility Rules
 

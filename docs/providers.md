@@ -145,19 +145,19 @@ returns only bounded, source-attributed, untrusted excerpts.
 
 Enabled neutral OKF memory uses an explicit provider delivery contract:
 
-| Runtime           | Delivery boundary                                             | Deliberately excluded            |
-| ----------------- | ------------------------------------------------------------- | -------------------------------- |
+| Runtime           | Delivery boundary                                              | Deliberately excluded            |
+| ----------------- | -------------------------------------------------------------- | -------------------------------- |
 | Claude            | New-session system append plus SDK `SessionStart`/compact hook | resume                           |
-| Codex             | app-server `thread/start`, including stale-thread replacement | successful resume                |
-| OpenAI-compatible | once per logical request                                      | retry and tool-loop re-rendering |
+| Codex             | app-server `thread/start`, including stale-thread replacement  | successful resume                |
+| OpenAI-compatible | once per logical request                                       | retry and tool-loop re-rendering |
 
 The runner owns rendering and passes only a callback to adapters. Provider
 project-document composition consumes the same materialized session profile:
 enabled Claude sessions replace the legacy `CLAUDE.local.md` memory appendix
 with instructions that reserve that file for standing policy and designate
 `memory/` as the durable fact authority. Disabled sessions retain legacy
-behavior.
-creation fails closed when memory is enabled and an adapter has not declared a
+behavior. Provider creation fails closed when memory is enabled and an adapter
+has not declared a
 supported delivery mode. Rendered memory is context, not transcript state.
 
 ## Installing a native provider

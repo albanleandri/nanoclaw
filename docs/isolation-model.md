@@ -1,6 +1,10 @@
 # Channel Isolation Model
 
-NanoClaw decouples messaging channels from agent groups. When you connect a channel (Discord, Telegram, Slack, GitHub, etc.), you decide how it relates to your existing agents. There are three isolation levels.
+NanoClaw decouples messaging channels from agent groups. Telegram is installed
+in this checkout; references to Discord, Slack, GitHub, and other platforms
+below are topology examples and apply only when their adapters have been
+installed. For every installed channel, you decide how it relates to existing
+agents. There are three isolation levels.
 
 ## The Three Levels
 

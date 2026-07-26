@@ -415,7 +415,7 @@ matches the profile.
 
 - **Readers/writers:** `src/db/provider-profiles.ts`, provider CLI/setup, `src/providers/effective-provider.ts`
 
-### 1.17 `schedule_admin_grants`
+### 1.18 `schedule_admin_grants`
 
 Authorizes one agent group to administer task rows that remain owned by another group's session DB:
 
@@ -431,7 +431,10 @@ CREATE TABLE schedule_admin_grants (
 
 Recurring task rows are never duplicated into the administrator's session.
 
-### 1.18 `jobs`, `job_events`, and `agent_tasks`
+- **Readers/writers:** `src/db/schedule-admin-grants.ts`, scheduling actions,
+  CLI
+
+### 1.19 `jobs`, `job_events`, and `agent_tasks`
 
 `jobs` and `job_events` remain the shared durable lifecycle/event backbone. Migration 022 adds `agent_tasks`, a narrow ownership and correlation relation for `jobs.type='agent_task'`.
 
@@ -447,9 +450,7 @@ Task state is monotonic (`queued → running → succeeded|failed|cancelled`), e
 
 - **Readers/writers:** `src/db/agent-tasks.ts`, `src/jobs/agent-task-service.ts`, `src/jobs/agent-task-actions.ts`
 
-- **Readers/writers:** `src/db/schedule-admin-grants.ts`, scheduling actions, CLI
-
-### 1.19 Auxiliary routing and session search
+### 1.20 Auxiliary routing and session search
 
 Migration 023 adds `auxiliary_routes` and `auxiliary_invocations`.
 `auxiliary_routes` is keyed by agent group and typed role and enforces the
@@ -471,7 +472,7 @@ session/group.
 - **Readers/writers:** `src/auxiliary/`, `src/db/auxiliary-*.ts`,
   `src/session-search/`
 
-### 1.20 Skill provenance and capability audit
+### 1.21 Skill provenance and capability audit
 
 Migration 025 adds `skill_installations` and append-only
 `skill_provenance_events`. An installation records the effective skill source,
@@ -490,7 +491,7 @@ installed.
 - **Readers/writers:** `src/skills/`, `src/db/skill-provenance.ts`,
   `src/audit/`, skill/audit CLI resources
 
-### 1.21 Orchestration runs
+### 1.22 Orchestration runs
 
 Migration 027 adds `orchestration_runs`, `orchestration_step_attempts`, and
 append-only `orchestration_events`. The run stores the validated versioned
@@ -548,10 +549,18 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | mod | `module-approvals-title-options.ts`       | `ALTER TABLE pending_approvals` add `title`, `options_json` (`name: pending-approvals-title-options`)                                                                |
 | 008 | `008-dropped-messages.ts`                 | `unregistered_senders`                                                                                                                                               |
 | 009 | `009-drop-pending-credentials.ts`         | Drop the defunct `pending_credentials` table                                                                                                                         |
+| 010 | `010-engage-modes.ts`                     | Wiring engagement and ignored-message policy fields                                                                                                                  |
+| 011 | `011-pending-sender-approvals.ts`         | Pending unknown-sender approval state                                                                                                                                |
+| 012 | `012-channel-registration.ts`             | Unknown-channel registration approval state and durable deny timestamp                                                                                               |
+| 013 | `013-approval-render-metadata.ts`         | Approval rendering metadata                                                                                                                                          |
 | 014 | `014-container-configs.ts`                | `container_configs` — per-agent-group container runtime config                                                                                                       |
 | 015 | `015-cli-scope.ts`                        | `ALTER TABLE container_configs ADD COLUMN cli_scope`                                                                                                                 |
+| 016 | `016-durable-jobs.ts`                     | Durable job and job-event state                                                                                                                                      |
+| 017 | `017-screen-market-guided.ts`             | Guided stock-screen module state                                                                                                                                     |
+| 018 | `018-shared-resources.ts`                 | Shared-resource catalog and per-group grants                                                                                                                         |
 | 019 | `019-provider-profiles.ts`                | Provider profiles plus nullable group/session profile references                                                                                                     |
 | 020 | `020-schedule-admin-grants.ts`            | Generic schedule owner/admin grants                                                                                                                                  |
+| 021 | `021-provider-tool-verification.ts`       | Provider-profile tool verification state                                                                                                                             |
 | 022 | `022-agent-tasks.ts`                      | Durable cross-agent task ownership and correlation                                                                                                                   |
 | 023 | `023-auxiliary-routing.ts`                | Typed auxiliary routes and durable invocation relation                                                                                                               |
 | 024 | `024-session-search.ts`                   | Scoped session text metadata and FTS5 projection                                                                                                                     |
@@ -563,6 +572,8 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 030 | `030-orchestration-execution-sessions.ts` | Per-attempt execution-session ownership for isolated fallback dispatch and result correlation                                                                        |
 | 031 | `031-capability-audit-tenant-scope.ts`    | Rebuild `capability_audit_events` with `UNIQUE(agent_group_id, invocation_id, seq)` so invocation chains are isolated per agent group                                |
 | 032 | `032-user-role-global-uniqueness.ts`      | Deduplicate legacy global role grants and enforce one `(user_id, role, NULL)` row with a partial unique index                                                        |
+| 033 | `033-agent-group-memory-control.ts`       | Group-scoped neutral-memory mode, migration state, designated writer, maintenance fence, and default-row trigger                                                     |
+| 034 | `034-shared-resource-control.ts`          | Shared-resource reconciliation state and approved writer-owner control                                                                                               |
 
 Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 

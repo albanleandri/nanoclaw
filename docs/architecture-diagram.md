@@ -5,11 +5,8 @@
 ```mermaid
 flowchart TB
   subgraph Platforms["Messaging Platforms"]
-    P1[Discord]
-    P2[Telegram]
-    P3[Slack]
-    P4[GitHub / Linear]
-    P5[WhatsApp / iMessage / Teams / GChat / Matrix / Webex / Email]
+    P1[Telegram<br/>installed in this tree]
+    P2[Other adapters<br/>only when installed from channel skills/forks]
   end
 
   subgraph Host["Host Process (Node)"]
@@ -20,7 +17,7 @@ flowchart TB
     Runner["Container Runner<br/>(src/container-runner.ts)<br/>OneCLI ensureAgent + spawn"]
     Delivery["Delivery Poller<br/>(src/delivery.ts)<br/>1s active / 60s sweep"]
     Sweep["Host Sweep<br/>(src/host-sweep.ts)<br/>heartbeat, retry, recurrence"]
-    Central[("Central DB<br/>data/v2.db<br/>agent_groups<br/>messaging_groups<br/>messaging_group_agents<br/>sessions<br/>pending_approvals")]
+    Central[("Central DB<br/>data/v2.db<br/>identity + wiring + sessions<br/>providers + capabilities + audit<br/>memory/shared control + orchestration")]
   end
 
   subgraph OneCLI["OneCLI Gateway (@onecli-sh/sdk 2.2.1)"]
@@ -32,7 +29,7 @@ flowchart TB
     direction TB
     PollLoop["Poll Loop<br/>(container/agent-runner)"]
     Provider["Agent providers<br/>(Claude SDK, Codex app-server,<br/>verified OpenAI-compatible protocol loop)"]
-    MCP["MCP Tools<br/>send_message, send_file, edit_message,<br/>add_reaction, send_card, ask_user_question,<br/>schedule_task, create_agent,<br/>install_packages, add_mcp_server"]
+    MCP["Compiled NanoClaw tools<br/>messaging + scheduling + delegation<br/>session search + bounded shell<br/>approved self-mod and external MCP"]
     Skills["Container Skills<br/>(container/skills/)"]
     InDB[("inbound.db<br/>host writes<br/>messages_in (even seq)<br/>delivered + destinations<br/>session_routing")]
     OutDB[("outbound.db<br/>runner writes normally<br/>messages_out (odd runner / even stopped-host)<br/>processing_ack + session_state<br/>container_state")]
@@ -43,7 +40,7 @@ flowchart TB
     Folder["CLAUDE.md / AGENTS.md<br/>memory + work files<br/>container.json snapshot"]
   end
 
-  P1 & P2 & P3 & P4 & P5 --> Bridge
+  P1 & P2 --> Bridge
   Bridge --> Router
   Router --> Central
   Router --> SessMgr
@@ -60,7 +57,7 @@ flowchart TB
   OutDB --> Delivery
   Delivery --> Central
   Delivery --> Bridge
-  Bridge --> P1 & P2 & P3 & P4 & P5
+  Bridge --> P1 & P2
   Sweep --> InDB
   Sweep --> OutDB
   Sweep --> Central
@@ -102,7 +99,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  subgraph AgentA["Agent Group A (main)"]
+  subgraph AgentA["Agent Group A (illustrative installed routes)"]
     A_out["output:<br/>&lt;message to='slack'&gt;...&lt;/message&gt;<br/>&lt;message to='browser-agent'&gt;...&lt;/message&gt;<br/>&lt;internal&gt;scratchpad&lt;/internal&gt;"]
   end
 
@@ -133,9 +130,12 @@ erDiagram
   agent_groups ||--o{ messaging_group_agents : wired
   messaging_groups ||--o{ messaging_group_agents : wired
   agent_groups ||--o{ sessions : runs
+  agent_groups ||--|| agent_group_memory_control : governs
   messaging_groups ||--o{ sessions : context
   agent_groups ||--o{ agent_destinations : owns
   agent_groups ||--o{ pending_approvals : requests
+  agent_groups ||--|| container_configs : configures
+  agent_groups ||--o{ shared_resource_control : owns
 
   agent_groups {
     string id
@@ -188,15 +188,27 @@ erDiagram
     string status
     string container_status
   }
+  agent_group_memory_control {
+    string agent_group_id PK
+    string mode "disabled | shadow | active"
+    string migration_state "none | staging | validated | migrated"
+    string writer_session_id FK
+    string maintenance_fence_owner
+  }
+  shared_resource_control {
+    string resource_name PK
+    string state "pilot | reconciling | validated | reconciled"
+    string owner_agent_group_id FK
+  }
 ```
 
 ### Isolation Level Cheatsheet
 
-| Level                            | `session_mode`               | What's shared                     | Example                               |
-| -------------------------------- | ---------------------------- | --------------------------------- | ------------------------------------- |
-| 1. Shared session                | `agent-shared`               | Workspace + memory + conversation | Slack + GitHub webhooks in one thread |
-| 2. Same agent, separate sessions | `shared` / `per-thread`      | Workspace + memory only           | One agent across 3 Telegram chats     |
-| 3. Separate agent groups         | (different `agent_group_id`) | Nothing                           | Personal vs work channels             |
+| Level                            | `session_mode`               | What's shared                     | Example                                 |
+| -------------------------------- | ---------------------------- | --------------------------------- | --------------------------------------- |
+| 1. Shared session                | `agent-shared`               | Workspace + memory + conversation | Multiple installed routes in one thread |
+| 2. Same agent, separate sessions | `shared` / `per-thread`      | Workspace + memory only           | One agent across 3 Telegram chats       |
+| 3. Separate agent groups         | (different `agent_group_id`) | Nothing                           | Personal vs work channels               |
 
 ## Two-DB Split (why)
 

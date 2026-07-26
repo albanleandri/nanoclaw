@@ -2,7 +2,9 @@
 
 Orientation for the data model: the three databases, how they fit together, and the invariants that hold across them. For table-level schemas, follow the links below.
 
-- **[db-central.md](db-central.md)** — every table in `data/v2.db` (identity, wiring, approvals, Chat SDK state) plus the migration system.
+- **[db-central.md](db-central.md)** — every table in `data/v2.db`,
+  including identity, wiring, approvals, runtime configuration, memory/shared
+  control, jobs, audit, and orchestration, plus the migration system.
 - **[db-session.md](db-session.md)** — the per-session `inbound.db` + `outbound.db` pair, seq parity, and session folder layout.
 
 Related: [architecture.md](architecture.md) for the high-level design; [api-details.md](api-details.md) for inbound/outbound message content shapes; [isolation-model.md](isolation-model.md) for channel-to-agent wiring modes.
@@ -13,11 +15,11 @@ Related: [architecture.md](architecture.md) for the high-level design; [api-deta
 
 NanoClaw uses **three kinds of SQLite database**, all on the host filesystem:
 
-| DB                   | Location                                                     | Writer    | Readers                            | Purpose                                                  |
-| -------------------- | ------------------------------------------------------------ | --------- | ---------------------------------- | -------------------------------------------------------- |
-| **Central**          | `data/v2.db`                                                 | host      | host                               | Identity, permissions, routing, wiring — the admin plane |
-| **Session inbound**  | `data/v2-sessions/<agent_group_id>/<session_id>/inbound.db`  | host      | host (sync), container (read-only) | Host → container messages + routing projections          |
-| **Session outbound** | `data/v2-sessions/<agent_group_id>/<session_id>/outbound.db` | runner normally; stopped host for control acks | host (poll), runner | Runner → host messages + processing status |
+| DB                   | Location                                                     | Writer                                         | Readers                            | Purpose                                                  |
+| -------------------- | ------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------- | -------------------------------------------------------- |
+| **Central**          | `data/v2.db`                                                 | host                                           | host                               | Identity, permissions, routing, wiring — the admin plane |
+| **Session inbound**  | `data/v2-sessions/<agent_group_id>/<session_id>/inbound.db`  | host                                           | host (sync), container (read-only) | Host → container messages + routing projections          |
+| **Session outbound** | `data/v2-sessions/<agent_group_id>/<session_id>/outbound.db` | runner normally; stopped host for control acks | host (poll), runner                | Runner → host messages + processing status               |
 
 **Writer-side rule.** The host writes the central DB and every `inbound.db`;
 runner processes normally write `outbound.db`. This removes normal
@@ -40,13 +42,16 @@ data/
     <agent_group_id>/
       .claude-shared/                     ← shared Claude state for the agent group
       .codex-shared/                      ← shared Codex state when Codex is used
+      .rtk/                               ← provider-neutral shell analytics/recovery
       <session_id>/
         inbound.db                        ← host writes, container reads
         outbound.db                       ← container writes, host reads
         container.runtime.json            ← effective per-session runtime config
+        provider-docs/                    ← effective CLAUDE.md / AGENTS.md
         .heartbeat                        ← mtime touched by container
         inbox/<message_id>/               ← decoded user attachments
         outbox/<message_id>/              ← attachments the agent produced
+  memory-migrations/                      ← ignored workflow ledgers + backups
 ```
 
 An optional runner overlay lives at `groups/<folder>/agent-runner-src/`, not
@@ -70,18 +75,21 @@ Writable maintenance still requires an explicit writable path and should not use
 
 ## 3. Central vs. session: what goes where
 
-| Kind of data                   | Where                                    | Why                                                        |
-| ------------------------------ | ---------------------------------------- | ---------------------------------------------------------- |
-| Identities, roles, memberships | central                                  | Stable, cross-session, rarely written                      |
-| Channel wiring, routing rules  | central                                  | Admin plane                                                |
-| Destination ACL                | central (+ projection per session)       | Source of truth centrally; fast local lookup per session   |
-| Session registry (ids, status) | central                                  | Host orchestrates lifecycle                                |
-| Approvals & pending questions  | central                                  | Survive container restarts, admin-visible                  |
-| Dropped-message audit          | central                                  | Global ops view                                            |
-| Inbound messages, retry state  | session `inbound.db`                     | Per-session workload; host is sole writer                  |
-| Outbound messages, agent state | session `outbound.db`                    | Container is sole writer; host polls                       |
-| Delivery outcome               | session `inbound.db` (`delivered`)       | Host writes on success; container reads for edit targeting |
-| Processing status              | session `outbound.db` (`processing_ack`) | Container can't write to `inbound.db`                      |
+| Kind of data                      | Where                                    | Why                                                        |
+| --------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| Identities, roles, memberships    | central                                  | Stable, cross-session, rarely written                      |
+| Channel wiring, routing rules     | central                                  | Admin plane                                                |
+| Destination ACL                   | central (+ projection per session)       | Source of truth centrally; fast local lookup per session   |
+| Session registry (ids, status)    | central                                  | Host orchestrates lifecycle                                |
+| Runtime/provider configuration    | central                                  | Group/session selection and spawn policy                   |
+| Memory and shared control         | central                                  | Rollout state, writer ownership, maintenance fences        |
+| Jobs, tasks, audit, orchestration | central                                  | Durable cross-session coordination and diagnostics         |
+| Approvals & pending questions     | central                                  | Survive container restarts, admin-visible                  |
+| Dropped-message audit             | central                                  | Global ops view                                            |
+| Inbound messages, retry state     | session `inbound.db`                     | Per-session workload; host is sole writer                  |
+| Outbound messages, agent state    | session `outbound.db`                    | Container is sole writer; host polls                       |
+| Delivery outcome                  | session `inbound.db` (`delivered`)       | Host writes on success; container reads for edit targeting |
+| Processing status                 | session `outbound.db` (`processing_ack`) | Container can't write to `inbound.db`                      |
 
 Heuristic: if the value is a message, routing projection, or runtime ack, it goes per-session. Everything else is central.
 
@@ -114,27 +122,34 @@ These rules are enforced by convention in `src/session-manager.ts` and `containe
 
 ## 6. Readers & writers — at a glance
 
-| Table                    | DB       | Writer(s)                                                                                                      | Reader(s)                                                   |
-| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `agent_groups`           | central  | `src/db/agent-groups.ts`                                                                                       | session resolver, delivery, router                          |
-| `messaging_groups`       | central  | `src/db/messaging-groups.ts`, channel setup                                                                    | router, delivery, session resolver                          |
-| `messaging_group_agents` | central  | `src/db/messaging-groups.ts`                                                                                   | router                                                      |
-| `users`                  | central  | `src/modules/permissions/db/users.ts`, auth flows                                                              | permission checks                                           |
-| `user_roles`             | central  | `src/modules/permissions/db/user-roles.ts`                                                                     | `src/modules/permissions/access.ts`, all permission gates   |
-| `agent_group_members`    | central  | `src/modules/permissions/db/agent-group-members.ts`                                                            | membership checks                                           |
-| `user_dms`               | central  | `src/modules/permissions/user-dm.ts` (`ensureUserDm`)                                                          | approval + pairing delivery                                 |
-| `sessions`               | central  | `src/db/sessions.ts`, `src/session-manager.ts`                                                                 | delivery, sweep, container runner                           |
-| `pending_questions`      | central  | `src/db/sessions.ts` (via `ask_user_question`)                                                                 | container response matcher                                  |
-| `agent_destinations`     | central  | `src/modules/agent-to-agent/db/agent-destinations.ts`, `module-agent-to-agent-destinations` migration backfill | `writeDestinations()`, delivery ACL                         |
-| `pending_approvals`      | central  | `src/db/sessions.ts`, `src/modules/approvals/onecli-approvals.ts`                                              | admin-card delivery, sweep                                  |
-| `unregistered_senders`   | central  | `src/db/dropped-messages.ts`                                                                                   | ops tooling                                                 |
-| `chat_sdk_*`             | central  | `src/state-sqlite.ts`                                                                                          | Chat SDK bridge                                             |
-| `schema_version`         | central  | `src/db/migrations/index.ts`                                                                                   | migration runner                                            |
-| `messages_in`            | inbound  | `src/db/session-db.ts`                                                                                         | `container/agent-runner/src/db/messages-in.ts`              |
-| `delivered`              | inbound  | `src/db/session-db.ts` (`markDelivered`)                                                                       | container edit/reaction targeting                           |
-| `destinations`           | inbound  | `writeDestinations()` in `src/session-manager.ts`                                                              | container routing / ACL                                     |
-| `session_routing`        | inbound  | `writeSessionRouting()` in `src/session-manager.ts`                                                            | container `send_message` defaults                           |
-| `messages_out`           | outbound | `container/agent-runner/src/db/messages-out.ts`                                                                | `src/delivery.ts` poll loop; container edit/reaction lookup |
-| `processing_ack`         | outbound | `container/agent-runner/src/db/messages-in.ts`                                                                 | `src/host-sweep.ts` (`syncProcessingAcks`)                  |
-| `session_state`          | outbound | `container/agent-runner/src/db/session-state.ts`                                                               | container on startup                                        |
-| `container_state`        | outbound | runner provider hooks                                                                                          | `src/host-sweep.ts` stuck-work tolerance                    |
+| Table                        | DB       | Writer(s)                                                                                                      | Reader(s)                                                   |
+| ---------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `agent_groups`               | central  | `src/db/agent-groups.ts`                                                                                       | session resolver, delivery, router                          |
+| `messaging_groups`           | central  | `src/db/messaging-groups.ts`, channel setup                                                                    | router, delivery, session resolver                          |
+| `messaging_group_agents`     | central  | `src/db/messaging-groups.ts`                                                                                   | router                                                      |
+| `users`                      | central  | `src/modules/permissions/db/users.ts`, auth flows                                                              | permission checks                                           |
+| `user_roles`                 | central  | `src/modules/permissions/db/user-roles.ts`                                                                     | `src/modules/permissions/access.ts`, all permission gates   |
+| `agent_group_members`        | central  | `src/modules/permissions/db/agent-group-members.ts`                                                            | membership checks                                           |
+| `user_dms`                   | central  | `src/modules/permissions/user-dm.ts` (`ensureUserDm`)                                                          | approval + pairing delivery                                 |
+| `sessions`                   | central  | `src/db/sessions.ts`, `src/session-manager.ts`                                                                 | delivery, sweep, container runner                           |
+| `pending_questions`          | central  | `src/db/sessions.ts` (via `ask_user_question`)                                                                 | container response matcher                                  |
+| `agent_destinations`         | central  | `src/modules/agent-to-agent/db/agent-destinations.ts`, `module-agent-to-agent-destinations` migration backfill | `writeDestinations()`, delivery ACL                         |
+| `pending_approvals`          | central  | `src/db/sessions.ts`, `src/modules/approvals/onecli-approvals.ts`                                              | admin-card delivery, sweep                                  |
+| `unregistered_senders`       | central  | `src/db/dropped-messages.ts`                                                                                   | ops tooling                                                 |
+| `chat_sdk_*`                 | central  | `src/state-sqlite.ts`                                                                                          | Chat SDK bridge                                             |
+| `schema_version`             | central  | `src/db/migrations/index.ts`                                                                                   | migration runner                                            |
+| `container_configs`          | central  | `src/db/container-configs.ts`                                                                                  | runtime/profile materialization, CLI                        |
+| `provider_profiles`          | central  | `src/db/provider-profiles.ts`                                                                                  | provider resolution and verification                        |
+| `agent_group_memory_control` | central  | `src/db/agent-group-memory-control.ts`                                                                         | wake/spawn fence, runtime materialization, memory CLI       |
+| `shared_resource_control`    | central  | `src/db/shared-resource-control.ts`                                                                            | shared-resource mount resolution and reconciliation CLI     |
+| `jobs`, `agent_tasks`        | central  | `src/db/jobs.ts`, `src/db/agent-tasks.ts`                                                                      | job runner, delegation, delivery                            |
+| `capability_audit_events`    | central  | `src/audit/capability-events.ts`                                                                               | scoped audit CLI and orchestration correlation              |
+| `orchestration_*`            | central  | `src/orchestration/run-store.ts`                                                                               | orchestration engine, delivery, sweep                       |
+| `messages_in`                | inbound  | `src/db/session-db.ts`                                                                                         | `container/agent-runner/src/db/messages-in.ts`              |
+| `delivered`                  | inbound  | `src/db/session-db.ts` (`markDelivered`)                                                                       | container edit/reaction targeting                           |
+| `destinations`               | inbound  | `writeDestinations()` in `src/session-manager.ts`                                                              | container routing / ACL                                     |
+| `session_routing`            | inbound  | `writeSessionRouting()` in `src/session-manager.ts`                                                            | container `send_message` defaults                           |
+| `messages_out`               | outbound | `container/agent-runner/src/db/messages-out.ts`                                                                | `src/delivery.ts` poll loop; container edit/reaction lookup |
+| `processing_ack`             | outbound | `container/agent-runner/src/db/messages-in.ts`                                                                 | `src/host-sweep.ts` (`syncProcessingAcks`)                  |
+| `session_state`              | outbound | `container/agent-runner/src/db/session-state.ts`                                                               | container on startup                                        |
+| `container_state`            | outbound | runner provider hooks                                                                                          | `src/host-sweep.ts` stuck-work tolerance                    |

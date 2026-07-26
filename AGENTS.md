@@ -1,16 +1,19 @@
 # Agent working agreement for this repository
 
 ## Non-negotiables
+
 - Keep the agent-runner runtime on `@anthropic-ai/claude-agent-sdk`. Do not migrate orchestration to OpenAI Agents SDK, LangGraph, or another framework unless explicitly requested.
 - The agent-runner runs on **Bun** (inside the container). The host runs on **Node + pnpm**. Do not add a tsc build step to the container — agent-runner source is bind-mounted at `/app/src` at runtime.
 - Claude Code and Codex are development assistants for this repo; they are not the runtime stack.
 
 ## Environment
+
 - Primary development happens on a remote Linux machine over SSH, usually from a VS Code terminal.
 - Prefer Linux-safe commands, paths, and tooling.
 - Assume commands are run from the repository root unless stated otherwise.
 
 ## First steps for any task
+
 1. Read `README.md` and the handoff file. Prefer `docs/HANDOFF.local.md`; otherwise use `docs/HANDOFF.md`. Architecture is in `docs/architecture.md`; session-DB specifics in `docs/db.md`, `docs/db-session.md`, `docs/db-central.md`.
 2. Inspect the relevant package manifests and entrypoints before editing.
 3. Summarize the intended change before making large edits.
@@ -19,6 +22,7 @@
 ## Canonical commands
 
 **Host (Node + pnpm):**
+
 - `pnpm run dev` — start host with hot reload
 - `pnpm run build` — compile host TypeScript (`src/`)
 - `pnpm test` — host unit tests (vitest)
@@ -28,14 +32,17 @@
 - `pnpm run backup` — backup all databases
 
 **Agent-runner (Bun — separate package tree under `container/agent-runner/`):**
+
 - `cd container/agent-runner && bun install` — after editing agent-runner deps
 - `cd container/agent-runner && bun test` — agent-runner tests
 - `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` — container typecheck (from root)
 
 **Service (Linux systemd):**
+
 - `systemctl --user start|stop|restart nanoclaw`
 
 **SQLite read-only inspection:**
+
 - `pnpm exec tsx scripts/q.ts --readonly [--limit N] <db-path> "<SELECT ...>"` — preferred way to inspect repo SQLite databases without escalation. Read-only mode is scoped to `data/` and `groups/`, allows `SELECT`/`WITH`/read-only `PRAGMA`, enables SQLite `query_only`, rejects compound SQL, and caps output at 5,000 rows by default. Use this instead of `node -e` or writable DB helpers for database reads.
 
 ## Repository map
@@ -66,10 +73,13 @@
 
 - `setup/` — Step-based setup workflow and setup tests.
 - `scripts/` — Utility scripts: `backup.sh`, `restore.sh`, `q.ts` (DB query wrapper).
-- `docs/` — Architecture, DB schemas, migration guides, isolation model.
+- `docs/` — Current architecture, operations, provider/runtime, DB schema,
+  security, and isolation references; design/history material is labeled
+  separately.
 - `.env` — Local secrets (not committed). See `.env.example`.
 
 ## Workflow notes
+
 - Check both `package.json` files before changing runtime or build behavior: repo root and `container/agent-runner/package.json`.
 - The host and agent-runner communicate **only via session DBs** — no IPC, no shared modules, no stdin.
 - Container skills are loaded at session start — kill running containers after editing `container/skills/`.
@@ -81,6 +91,7 @@
 - Keep the tracked repo public-safe by default. Private/domain-specific content goes in ignored local files or a private submodule.
 
 ## Change rules
+
 - Do not silently change public interfaces.
 - Do not change deployment behavior, secrets handling, or service startup commands without documenting it.
 - When adding or changing a capability, update the relevant docs and operator notes in the same patch.
@@ -88,6 +99,7 @@
 - Prefer editing existing files over introducing new abstractions unless there is a clear benefit.
 
 ## Handoff protocol
+
 After each meaningful change, update the handoff file. Prefer `docs/HANDOFF.local.md` if it exists; otherwise update `docs/HANDOFF.md`.
 
 The tracked `docs/HANDOFF.md` should stay minimal and generic. Put sensitive, local, or domain-specific notes in `docs/HANDOFF.local.md` (intentionally ignored).

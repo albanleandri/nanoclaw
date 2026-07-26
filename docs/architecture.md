@@ -146,9 +146,14 @@ data/
         inbound.db
         outbound.db
         container.runtime.json
+        provider-docs/
+          CLAUDE.md
+          AGENTS.md
         .heartbeat
         inbox/
         outbox/
+
+  memory-migrations/           # ignored metadata ledgers and verified backups
 
 groups/
   <folder>/
@@ -156,6 +161,11 @@ groups/
     AGENTS.md
     CLAUDE.local.md
     .claude-fragments/
+    memory/
+      index.md
+      system/
+        index.md
+        definition.md
     container.json
     agent-runner-src/        # optional overlay
     ...durable work files
