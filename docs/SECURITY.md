@@ -8,6 +8,20 @@ external side effects.
 This document describes the current implementation, not a claim that
 containers make arbitrary model execution risk-free.
 
+## Optional private broker boundary
+
+Private broker synchronization, when installed from the private skills
+submodule, is an external deterministic system-service boundary. Raw responses,
+credentials, account identity, absolute values, and quantities remain
+inaccessible to NanoClaw and agents. Only a signature-verified sanitized
+relative-exposure database may be mounted, and that exact file is read-only.
+
+The scale-hiding guarantee is conditional: one real quantity or absolute
+portfolio anchor can permit inference from public prices and relative weights.
+Broker-relative workflows therefore refuse to store absolute anchors. The
+private operations reference defines the direct OS access and live-validation
+gates.
+
 ## Trust boundaries
 
 ```text

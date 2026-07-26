@@ -4,6 +4,15 @@ Canonical operational commands for both Codex and Claude Code live here.
 Run them from the repository root. The host uses Node + pnpm; the container
 runner uses Bun.
 
+## Optional private broker portfolio synchronization
+
+This checkout may provide a private `stock-market-investing` extension with a
+credentialed gateway and separate network-denied importer. It is not part of
+the NanoClaw host or Bun agent-runner. When present, follow
+`container/skills/custom/stock-market-investing/references/ibkr-private-sync-operations.md`.
+Do not improvise a same-user or agent-container fallback. An authorized agent
+may receive only the exact sanitized `portfolio-sync.db` file read-only.
+
 ## Build
 
 ```bash
