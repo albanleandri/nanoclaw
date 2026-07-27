@@ -182,7 +182,15 @@ export function clearStaleProcessingAcks(): void {
   getOutboundDb().prepare("DELETE FROM processing_ack WHERE status = 'processing'").run();
 }
 
-/** For tests — creates in-memory DBs with the session schemas. */
+/**
+ * For tests — creates in-memory DBs with the session schemas.
+ *
+ * This DDL mirrors the host's authoritative schema in src/db/schema.ts. The
+ * two copies are kept honest by contracts/session-db-schema.json, which both
+ * sides assert against (schema-conformance.test.ts here, and
+ * src/db/session-schema-conformance.test.ts on the host). If you change a
+ * table here, change it there and in the contract file too.
+ */
 export function initTestSessionDb(): { inbound: Database; outbound: Database } {
   _testMode = true;
   _inbound = new Database(':memory:');
@@ -203,6 +211,7 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       channel_type   TEXT,
       thread_id      TEXT,
       content        TEXT NOT NULL,
+      source_session_id TEXT,
       orchestration_run_id TEXT,
       on_wake        INTEGER NOT NULL DEFAULT 0
     );
@@ -219,6 +228,12 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       channel_type    TEXT,
       platform_id     TEXT,
       agent_group_id  TEXT
+    );
+    CREATE TABLE session_routing (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      channel_type TEXT,
+      platform_id  TEXT,
+      thread_id    TEXT
     );
   `);
 

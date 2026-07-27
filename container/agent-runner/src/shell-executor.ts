@@ -127,13 +127,23 @@ export async function rewriteWithRtk(command: string): Promise<RewriteResult> {
   throw new Error(`RTK rewrite failed with exit code ${result.exitCode}${reason ? `: ${reason}` : ''}`);
 }
 
+/** Working directory for agent shell commands inside the container. */
+export const AGENT_WORKSPACE = '/workspace/agent';
+
+/**
+ * `cwd` defaults to the container workspace and is only ever passed explicitly
+ * by tests, which need a directory that exists on the host in order to
+ * exercise the real capture path (truncation accounting, the SIGTERM→SIGKILL
+ * escalation, and the detached process-group kill).
+ */
 export async function executeCommand(
   command: string,
   timeoutMs: number,
   maxOutputBytes: number,
+  cwd: string = AGENT_WORKSPACE,
 ): Promise<ProcessResult> {
   return captureProcess('/bin/bash', ['-lc', command], {
-    cwd: '/workspace/agent',
+    cwd,
     timeoutMs,
     maxOutputBytes,
     detached: true,

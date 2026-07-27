@@ -1,0 +1,47 @@
+{
+  "$comment": "Canonical shape of the two session DBs that are the ONLY channel between the host and the agent-runner (see AGENTS.md). The host owns the authoritative DDL in src/db/schema.ts; the container reproduces it in initTestSessionDb() for its Bun tests. Both sides assert against this file (src/db/session-schema-conformance.test.ts and container/agent-runner/src/db/schema-conformance.test.ts) so the two copies cannot drift apart unnoticed. Update this file only alongside a real schema change on both sides.",
+  "inbound": {
+    "$comment": "Host writes, container opens read-only.",
+    "delivered": ["delivered_at", "message_out_id", "platform_message_id", "status"],
+    "destinations": ["agent_group_id", "channel_type", "display_name", "name", "platform_id", "type"],
+    "messages_in": [
+      "channel_type",
+      "content",
+      "id",
+      "kind",
+      "on_wake",
+      "orchestration_run_id",
+      "platform_id",
+      "process_after",
+      "recurrence",
+      "seq",
+      "series_id",
+      "source_session_id",
+      "status",
+      "thread_id",
+      "timestamp",
+      "tries",
+      "trigger"
+    ],
+    "session_routing": ["channel_type", "id", "platform_id", "thread_id"]
+  },
+  "outbound": {
+    "$comment": "Container writes, host opens read-only.",
+    "container_state": ["current_tool", "id", "tool_declared_timeout_ms", "tool_started_at", "updated_at"],
+    "messages_out": [
+      "channel_type",
+      "content",
+      "deliver_after",
+      "id",
+      "in_reply_to",
+      "kind",
+      "platform_id",
+      "recurrence",
+      "seq",
+      "thread_id",
+      "timestamp"
+    ],
+    "processing_ack": ["message_id", "status", "status_changed"],
+    "session_state": ["key", "updated_at", "value"]
+  }
+}

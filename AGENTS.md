@@ -84,6 +84,7 @@
 
 - Check both `package.json` files before changing runtime or build behavior: repo root and `container/agent-runner/package.json`.
 - The host and agent-runner communicate **only via session DBs** — no IPC, no shared modules, no stdin.
+- Because they share no modules, the session-DB schema is written twice: authoritatively in `src/db/schema.ts`, and again in the container's `initTestSessionDb()`. Both are pinned to `contracts/session-db-schema.json` by conformance tests on each side. Change a session-DB table in all three places in the same patch.
 - Container skills are loaded at session start — kill running containers after editing `container/skills/`.
 - `src/` changes require `pnpm run build` before the service picks them up.
 - Agent-runner source changes don't require a container rebuild — it's bind-mounted at `/app/src` at runtime.

@@ -12,11 +12,15 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts', 'src/**/*.d.ts'],
       reporter: ['text', 'lcov'],
+      // Ratchet, not a target: set just under the measured values so coverage
+      // cannot regress silently. Raise when it genuinely improves; lower only
+      // deliberately. Mirrored for the agent-runner in
+      // container/agent-runner/scripts/check-coverage.ts.
       thresholds: {
-        statements: 60,
-        branches: 54,
-        functions: 66,
-        lines: 62,
+        statements: 64,
+        branches: 58,
+        functions: 70,
+        lines: 67,
       },
     },
   },

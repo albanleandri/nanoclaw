@@ -15,14 +15,6 @@ const protocolToolContract = JSON.parse(
 
 beforeEach(() => {
   initTestSessionDb();
-  getInboundDb().exec(
-    `CREATE TABLE session_routing (
-      id INTEGER PRIMARY KEY,
-      channel_type TEXT,
-      platform_id TEXT,
-      thread_id TEXT
-    )`,
-  );
   getInboundDb()
     .prepare(
       `INSERT OR REPLACE INTO session_routing (id, channel_type, platform_id, thread_id)

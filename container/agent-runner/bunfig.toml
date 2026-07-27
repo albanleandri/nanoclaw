@@ -1,0 +1,9 @@
+[test]
+# Emit lcov so `scripts/check-coverage.ts` can enforce a PROJECT-WIDE floor.
+# bunfig's own `coverageThreshold` is applied per file, which makes it unusable
+# as a global ratchet here (any value > 0 fails on the wholly-uncovered files;
+# 0 gates nothing), so the real gate lives in that script — see the
+# `test:coverage` script in package.json.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coverageSkipTestFiles = true

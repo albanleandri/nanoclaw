@@ -7,7 +7,7 @@
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "test:coverage": "bun test --coverage"
+    "test:coverage": "bun test --coverage && bun run scripts/check-coverage.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.197",
