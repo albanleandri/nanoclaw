@@ -1,12 +1,13 @@
 import { createAuxiliaryInvocation, completeAuxiliaryInvocation } from '../db/auxiliary-invocations.js';
 import { updateJobStatus } from '../db/jobs.js';
 import type { EffectiveRuntimeSelection } from '../providers/runtime-descriptor.js';
+import type { Session } from '../types.js';
 import { resolveAuxiliaryRoute, type AuxiliaryResolution } from './resolve-route.js';
 import {
   validateAuxiliaryRequest,
+  type AuxiliaryInvocationInput,
   type AuxiliaryRequest,
   type AuxiliaryResult,
-  type AuxiliaryTarget,
 } from './types.js';
 
 export type AuxiliaryExecutor = (
@@ -18,30 +19,30 @@ export type AuxiliaryExecutor = (
 /**
  * Durable auxiliary-invocation executor.
  *
- * STATUS: staged scaffolding — NOT yet wired to any production caller. The
- * `ncl auxiliary-routes` config surface (migration 023, src/db/auxiliary-routes)
- * is live, but nothing dispatches an invocation through this function outside
- * tests. See docs/db-central.md §1.19.
+ * STATUS: staged scaffolding — no production caller dispatches through this
+ * yet. The `ncl auxiliary-routes` config surface (migration 023,
+ * src/db/auxiliary-routes) is live. See docs/db-central.md §1.20.
  *
- * ⚠ SECURITY PRECONDITION before exposing this to a container-facing delivery
- * action or MCP tool: `request.sourceAgentGroupId` / `sourceSessionId` and the
- * `target` override are trusted verbatim here (validateAuxiliaryRequest only
- * checks they are non-empty). A container could otherwise impersonate another
- * group or override its configured route. Stamp source from the trusted session
- * and drop the caller-supplied `target` at the wiring boundary first.
+ * TRUST BOUNDARY: source identity is stamped from the `session` the host
+ * already trusts, never taken from the caller — `AuxiliaryInvocationInput` has
+ * no source field to spoof. The target likewise comes only from the
+ * operator-configured route for that session's group and role; there is no
+ * caller-supplied target override. Both properties are structural, so wiring
+ * this to a container-facing delivery action or MCP tool cannot reintroduce
+ * group impersonation or route override by forgetting a check at the call site.
  */
 export async function executeAuxiliaryInvocation(input: {
-  request: AuxiliaryRequest;
+  invocation: AuxiliaryInvocationInput;
+  session: Pick<Session, 'id' | 'agent_group_id'>;
   currentRuntime: EffectiveRuntimeSelection;
-  target?: AuxiliaryTarget;
   executor: AuxiliaryExecutor;
 }): Promise<AuxiliaryResult> {
-  const request = validateAuxiliaryRequest(input.request);
-  const resolution = resolveAuxiliaryRoute({
-    request,
-    currentRuntime: input.currentRuntime,
-    target: input.target,
+  const request = validateAuxiliaryRequest({
+    ...input.invocation,
+    sourceAgentGroupId: input.session.agent_group_id,
+    sourceSessionId: input.session.id,
   });
+  const resolution = resolveAuxiliaryRoute({ request, currentRuntime: input.currentRuntime });
   const persisted = createAuxiliaryInvocation(request, resolution.target);
   if (
     persisted.job.status === 'succeeded' ||

@@ -518,6 +518,20 @@ groups and the normal destination ACL before use. Progress and terminal
 delivery revalidate the persisted route against the source session, so an
 outbound action or stale job row cannot select an arbitrary channel.
 
+`/screen-market` is the first guided host-owned job path. Its wizard state
+lives in the migration-017 tables (`src/modules/stock-screen-guided/`) and the
+host-side flow is gated behind `SCREEN_MARKET_GUIDED_HOST`, which defaults to
+false — the tables exist in every install but the guided prompts stay off
+until an operator enables them.
+
+Auxiliary invocations (`auxiliary_routes`, `auxiliary_invocations`, migration
+023) are staged scaffolding: the `ncl auxiliary-routes` config surface is live,
+but no production caller dispatches through `executeAuxiliaryInvocation` yet.
+Its trust boundary is structural — source identity is stamped from the trusted
+session and the target comes only from the operator-configured route, so there
+is no caller-supplied field for a container to spoof a group or override its
+route with.
+
 ## Security invariants
 
 - One writer per SQLite file.

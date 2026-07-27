@@ -23,15 +23,26 @@ export interface ModelUsage {
   source: 'provider' | 'estimated' | 'unknown';
 }
 
-export interface AuxiliaryRequest {
+/**
+ * What a caller may ask for. Deliberately carries NO source identity and NO
+ * target: `sourceAgentGroupId`/`sourceSessionId` are stamped from the trusted
+ * session and the target is read from the operator-configured route, so a
+ * container-facing caller has no field with which to impersonate another group
+ * or override its route. See executeAuxiliaryInvocation.
+ */
+export interface AuxiliaryInvocationInput {
   invocationId: string;
   role: AuxiliaryRole;
   objective: string;
   context: string;
-  sourceAgentGroupId: string;
-  sourceSessionId: string;
   maxOutputTokens?: number;
   timeoutMs: number;
+}
+
+/** Internal stamped request. Only the service constructs this. */
+export interface AuxiliaryRequest extends AuxiliaryInvocationInput {
+  sourceAgentGroupId: string;
+  sourceSessionId: string;
 }
 
 export interface AuxiliaryResult {

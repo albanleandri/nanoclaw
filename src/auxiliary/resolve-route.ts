@@ -46,12 +46,19 @@ function resolveGroupRuntime(
   return resolveEffectiveRuntimeSelection(effective);
 }
 
+/**
+ * Resolve the auxiliary target for a stamped request.
+ *
+ * The target is read ONLY from the operator-configured `auxiliary_routes` row
+ * for the request's (stamped) source group and role. There is deliberately no
+ * caller-supplied target override: an override would let a container select an
+ * arbitrary provider profile or bypass its configured route.
+ */
 export function resolveAuxiliaryRoute(input: {
   request: AuxiliaryRequest;
   currentRuntime: EffectiveRuntimeSelection;
-  target?: AuxiliaryTarget;
 }): AuxiliaryResolution {
-  const target = input.target ?? getAuxiliaryRoute(input.request.sourceAgentGroupId, input.request.role);
+  const target = getAuxiliaryRoute(input.request.sourceAgentGroupId, input.request.role);
   if (target.kind === 'disabled') throw new Error(`Auxiliary role is disabled: ${input.request.role}`);
   if (target.kind === 'main') {
     return { target, runtime: input.currentRuntime, plan: restrictedPlan(input.currentRuntime) };

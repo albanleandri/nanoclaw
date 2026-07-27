@@ -34,6 +34,7 @@
     "service:restart": "bash scripts/service-restart.sh",
     "service:status": "bash scripts/service-status.sh",
     "backup": "bash scripts/backup.sh",
+    "smoke:rtk-shell": "bash scripts/rtk-shell-smoke.sh",
     "audit:model-neutral": "tsx scripts/model-neutral-audit.ts"
   },
   "dependencies": {

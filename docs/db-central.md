@@ -459,9 +459,12 @@ targets. `auxiliary_invocations` relates a `jobs.type='auxiliary_invocation'`
 row to its resolved target/runtime, optional isolated session, and normalized
 usage. Note: the route **config** surface (`ncl auxiliary-routes`) is live, but
 the invocation **execution** path (`executeAuxiliaryInvocation` in
-`src/auxiliary/service.ts`) is staged scaffolding with no production caller yet —
-see the security precondition documented on that function before wiring it to a
-container-facing path.
+`src/auxiliary/service.ts`) is staged scaffolding with no production caller yet.
+Its trust boundary is enforced by the function's shape rather than by call-site
+discipline: `AuxiliaryInvocationInput` carries no source identity and no target,
+so `sourceAgentGroupId`/`sourceSessionId` can only be stamped from the trusted
+session and the target can only come from this table's configured route for that
+session's group and role.
 
 Migration 024 adds `session_search_documents` plus the external-content
 `session_search_fts` FTS5 table and synchronization triggers. Documents are

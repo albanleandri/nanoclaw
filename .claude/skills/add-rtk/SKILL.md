@@ -1,11 +1,15 @@
 ---
 name: add-rtk
-description: Install rtk token-compression proxy into agent containers. Routes Bash tool calls through rtk for 60–90% token savings on dev commands (git, cargo, pytest, docker, kubectl, etc.).
+description: Install rtk token-compression proxy into agent containers. Routes Bash tool calls through rtk to compress output of dev commands (git, cargo, pytest, docker, kubectl, etc.).
 ---
 
 # Add rtk
 
-Install [rtk](https://github.com/rtk-ai/rtk) — a CLI proxy delivering 60–90% token savings on common dev commands (git, cargo, pytest, docker, kubectl, etc.) — and wire it transparently into agent containers via the Claude Code `PreToolUse` hook.
+Install [rtk](https://github.com/rtk-ai/rtk) — a CLI proxy that compresses the output of common dev commands (git, cargo, pytest, docker, kubectl, etc.) — and wire it transparently into agent containers via the Claude Code `PreToolUse` hook.
+
+Upstream advertises 60–90% token savings on those commands. That figure is
+rtk's own published claim, not a NanoClaw measurement. Measure your own
+workload with `rtk gain` before repeating a number in operator-facing docs.
 
 ## What this sets up
 

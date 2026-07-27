@@ -247,6 +247,22 @@ synthetic fact, rerenders and recalls it, corrects it, then verifies the next
 render contains only the correction. It contains no live group data or
 provider credentials.
 
+The provider-neutral shell smoke belongs to the same release acceptance pass:
+
+```bash
+pnpm run smoke:rtk-shell
+```
+
+It runs `scripts/rtk-shell-container-smoke.ts` inside this install's agent
+image and verifies that `run_shell` is registered, is audited under the
+`runtime.shell` capability, is exposed only when that capability is granted,
+round-trips stdout through real RTK rewriting, and propagates a non-zero exit
+code. Claude and Codex reach the tool through the same `mcp:nanoclaw`
+entrypoint, so this covers both runtimes without a provider call, credentials,
+or cost. The wrapper creates its own world-traversable temporary workspace
+because the image runs as `node` and the shell executor spawns in
+`/workspace/agent`.
+
 ## Claude credential reliability
 
 - Set `CLAUDE_ONECLI_SECRET_ID` to the OneCLI secret containing the Claude

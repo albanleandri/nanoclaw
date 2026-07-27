@@ -29,6 +29,8 @@
 - `pnpm run lint` / `pnpm run format:check` / `pnpm run format`
 - `pnpm run typecheck`
 - `./container/build.sh` — rebuild agent container image
+- `pnpm run smoke:rtk-shell` — release-acceptance smoke for the `run_shell` MCP
+  tool inside the agent image (no provider call, no credentials)
 - `pnpm run backup` — backup all databases
 
 **Agent-runner (Bun — separate package tree under `container/agent-runner/`):**
