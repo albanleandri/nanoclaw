@@ -92,3 +92,29 @@ export function transitionSharedResourceControl(
   if (result.changes !== 1) throw new Error(`Shared-resource reconciliation conflict: ${resourceName}`);
   return getSharedResourceControl(resourceName)!;
 }
+
+export function transferSharedResourceOwner(
+  resourceName: string,
+  expectedVersion: number,
+  expectedOwnerAgentGroupId: string,
+  newOwnerAgentGroupId: string,
+  now = new Date().toISOString(),
+): SharedResourceControl {
+  const group = getDb().prepare('SELECT 1 FROM agent_groups WHERE id = ?').get(newOwnerAgentGroupId);
+  if (!group) throw new Error(`Shared-resource owner group not found: ${newOwnerAgentGroupId}`);
+  const result = getDb()
+    .prepare(
+      `UPDATE shared_resource_control
+       SET owner_agent_group_id = ?,
+           approved_at = ?,
+           version = version + 1,
+           updated_at = ?
+       WHERE resource_name = ?
+         AND version = ?
+         AND reconciliation_state = 'reconciled'
+         AND owner_agent_group_id = ?`,
+    )
+    .run(newOwnerAgentGroupId, now, now, resourceName, expectedVersion, expectedOwnerAgentGroupId);
+  if (result.changes !== 1) throw new Error(`Shared-resource owner transfer conflict: ${resourceName}`);
+  return getSharedResourceControl(resourceName)!;
+}

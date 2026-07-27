@@ -4,7 +4,11 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildMemoryValidatorContainerArgs, selectSharedMemoryRoot } from './memory-operator.js';
+import {
+  buildMemoryValidatorContainerArgs,
+  selectSharedMemoryRoot,
+  validateGenericSharedResource,
+} from './memory-operator.js';
 
 const temporary: string[] = [];
 
@@ -55,5 +59,50 @@ describe('memory validator operator container', () => {
     fs.rmSync(path.join(resource, 'knowledge'), { recursive: true });
     fs.symlinkSync('/tmp', path.join(resource, 'knowledge'));
     expect(() => selectSharedMemoryRoot(resource)).toThrow('Shared OKF root must be a real directory');
+  });
+
+  it('identifies an ordinary shared data directory as non-OKF', () => {
+    const resource = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-generic-root-'));
+    temporary.push(resource);
+    fs.writeFileSync(path.join(resource, 'data.db'), 'test');
+    expect(selectSharedMemoryRoot(resource)).toBeUndefined();
+  });
+
+  it('validates nested ordinary files without invoking the OKF validator', () => {
+    const resource = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-generic-valid-'));
+    temporary.push(resource);
+    fs.mkdirSync(path.join(resource, 'nested'));
+    fs.writeFileSync(path.join(resource, 'root.db'), 'data');
+    fs.writeFileSync(path.join(resource, 'nested', 'memo.txt'), 'memo');
+
+    expect(validateGenericSharedResource(resource)).toEqual({
+      ok: true,
+      format: 'generic-filesystem',
+      node_count: 3,
+      findings: [],
+    });
+  });
+
+  it('reports symlinks without following them', () => {
+    const resource = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-generic-link-'));
+    temporary.push(resource);
+    fs.symlinkSync('/tmp', path.join(resource, 'escape'));
+
+    expect(validateGenericSharedResource(resource)).toEqual({
+      ok: false,
+      format: 'generic-filesystem',
+      node_count: 1,
+      findings: [{ path: 'escape', problem: 'symbolic-link' }],
+    });
+  });
+
+  it('fails closed above the 5,000-node inventory bound', () => {
+    const resource = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-generic-large-'));
+    temporary.push(resource);
+    for (let index = 0; index < 5001; index += 1) {
+      fs.writeFileSync(path.join(resource, `node-${index}`), '');
+    }
+
+    expect(() => validateGenericSharedResource(resource)).toThrow('exceeds 5,000 nodes');
   });
 });

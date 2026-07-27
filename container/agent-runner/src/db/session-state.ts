@@ -34,6 +34,22 @@ function deleteValue(key: string): void {
   getOutboundDb().prepare('DELETE FROM session_state WHERE key = ?').run(key);
 }
 
+const AUTH_FAILURE_NOTICE_KEY = 'runtime:auth-failure-notice';
+
+export function shouldNotifyAuthFailure(now = Date.now(), cooldownMs = 24 * 60 * 60 * 1000): boolean {
+  const previous = getValue(AUTH_FAILURE_NOTICE_KEY);
+  if (previous !== undefined) {
+    const previousMs = Date.parse(previous);
+    if (!Number.isNaN(previousMs) && now - previousMs < cooldownMs) return false;
+  }
+  setValue(AUTH_FAILURE_NOTICE_KEY, new Date(now).toISOString());
+  return true;
+}
+
+export function clearAuthFailureNotice(): void {
+  deleteValue(AUTH_FAILURE_NOTICE_KEY);
+}
+
 export function createProviderStateStore(runtimeStateKey: string): {
   get(key: string): string | undefined;
   set(key: string, value: string): void;

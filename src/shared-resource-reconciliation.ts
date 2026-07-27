@@ -10,6 +10,7 @@ import { getSessionsByAgentGroup } from './db/sessions.js';
 import {
   ensureSharedResourceControl,
   getSharedResourceControl,
+  transferSharedResourceOwner,
   transitionSharedResourceControl,
 } from './db/shared-resource-control.js';
 import { runSharedMemoryValidatorContainer } from './memory-operator.js';
@@ -219,4 +220,38 @@ export function sharedResourceReconciliationStatus(resourceName: string): unknow
           : 'read-only',
     })),
   };
+}
+
+export function transferSharedResourceReconciliationOwner(
+  resourceName: string,
+  newOwnerAgentGroupId: string,
+  expectedOwnerAgentGroupId: string,
+  expectedVersion: number,
+  confirmation: string,
+): unknown {
+  const name = safeName(resourceName);
+  const current = getSharedResourceControl(name);
+  if (!current || current.reconciliation_state !== 'reconciled' || !current.owner_agent_group_id) {
+    throw new Error('Shared resource is not reconciled');
+  }
+  if (confirmation !== name) throw new Error('Owner-transfer confirmation does not match resource name');
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    throw new Error('Expected version must be a positive integer');
+  }
+  if (current.version !== expectedVersion || current.owner_agent_group_id !== expectedOwnerAgentGroupId) {
+    throw new Error('Shared-resource owner transfer precondition changed');
+  }
+  const grants = grantedGroups(name);
+  if (!grants.includes(newOwnerAgentGroupId)) {
+    throw new Error('New owner must already have an explicit resource grant');
+  }
+  if (newOwnerAgentGroupId === expectedOwnerAgentGroupId) {
+    throw new Error('New owner must differ from the current owner');
+  }
+  requireGrantedGroupsStopped(grants);
+  const reportPath = path.join(DATA_DIR, current.classification_report_path!);
+  if (hashFile(reportPath) !== current.classification_report_sha256) {
+    throw new Error('Classification report changed after reconciliation');
+  }
+  return transferSharedResourceOwner(name, expectedVersion, expectedOwnerAgentGroupId, newOwnerAgentGroupId);
 }

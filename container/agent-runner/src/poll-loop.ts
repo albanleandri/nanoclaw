@@ -3,10 +3,12 @@ import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } 
 import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
+  clearAuthFailureNotice,
   clearContinuation,
   clearProviderState,
   migrateLegacyContinuation,
   setContinuation,
+  shouldNotifyAuthFailure,
 } from './db/session-state.js';
 import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import {
@@ -595,6 +597,11 @@ export async function processQuery(
         writeUsageLimitNotification(routing);
         break;
       } else if (event.type === 'error' && event.classification === 'auth') {
+        if (initialBatchResolved) {
+          log('Ignoring late authentication error from an already-completed persistent query');
+          query.end();
+          break;
+        }
         const error = {
           classification: event.classification,
           retryable: event.retryable,
@@ -659,6 +666,7 @@ export async function processQuery(
             break;
           }
 
+          clearAuthFailureNotice();
           const { sent, hasUnwrapped } = dispatchResultText(event.text, routing);
           if (sent === 0 && event.isError === true) {
             deliverErrorResult(event.text, routing);
@@ -677,6 +685,8 @@ export async function processQuery(
                 `Please re-send your response with the correct wrapping.</system>`,
             );
           }
+        } else {
+          clearAuthFailureNotice();
         }
       }
     }
@@ -762,6 +772,10 @@ function isBareProviderUsageLimitError(text: string): boolean {
 }
 
 function writeAuthErrorNotification(routing: RoutingContext): void {
+  if (!shouldNotifyAuthFailure()) {
+    log('Authentication failure notification suppressed by session cooldown');
+    return;
+  }
   writeMessageOut({
     id: generateId(),
     kind: 'chat',
@@ -783,7 +797,7 @@ function isBareProviderAuthError(text: string): boolean {
   const trimmed = stripInternalTags(text).trim();
   return (
     /^api error:/i.test(trimmed) &&
-    /(401|unauthorized|authentication[_ ]error|invalid x-api-key|invalid bearer token|oauth token (has )?expired|could not resolve authentication)/i.test(
+    /(401|unauthorized|authentication[_ ]error|invalid x-api-key|invalid bearer token|oauth(?: access)? token (has )?expired|could not resolve authentication)/i.test(
       trimmed,
     )
   );

@@ -725,6 +725,79 @@ describe('auth error notification', () => {
     expect(outMessages[0].thread_id).toBe('thread-7');
   });
 
+  it('recognizes the OAuth access-token expiry wording returned by Anthropic', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const provider = new MockProvider({}, () => 'API Error: 401 OAuth access token has expired. Re-authenticate.');
+    const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const content = JSON.parse(outMessages[0].content) as { text: string };
+    expect(content.text).toContain("couldn't reach Claude");
+    expect(content.text).not.toContain('OAuth access token has expired');
+  });
+
+  it('suppresses a late auth error after the initial persistent turn completed', async () => {
+    insertWithRouting('m1');
+    const messages = getPendingMessages();
+    const routing = extractRouting(messages);
+    const query: AgentQuery = {
+      push() {},
+      end() {},
+      abort() {},
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'result', text: '<message to="default">done</message>' };
+          yield { type: 'error', message: '401 Unauthorized', retryable: true, classification: 'auth' };
+        },
+      },
+    };
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    const authMessages = getUndeliveredMessages().filter((message) =>
+      (JSON.parse(message.content) as { text: string }).text.toLowerCase().includes('authentication'),
+    );
+    expect(authMessages).toHaveLength(0);
+  });
+
+  it('deduplicates auth notices across queries and resets after an empty successful result', async () => {
+    insertWithRouting('m1');
+    const routing = extractRouting(getPendingMessages());
+    const authQuery = (): AgentQuery => ({
+      push() {},
+      end() {},
+      abort() {},
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'error', message: '401 Unauthorized', retryable: true, classification: 'auth' };
+        },
+      },
+    });
+    const successQuery: AgentQuery = {
+      push() {},
+      end() {},
+      abort() {},
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'result' };
+        },
+      },
+    };
+
+    await processQuery(authQuery(), routing, ['m1'], 'mock');
+    await processQuery(authQuery(), routing, ['m2'], 'mock');
+    expect(getUndeliveredMessages()).toHaveLength(1);
+
+    await processQuery(successQuery, routing, ['m3'], 'mock');
+    await processQuery(authQuery(), routing, ['m4'], 'mock');
+    expect(getUndeliveredMessages()).toHaveLength(2);
+  });
+
   it('does not surface an auth notification on a normal wrapped result', async () => {
     insertWithRouting('m1');
     const messages = getPendingMessages();

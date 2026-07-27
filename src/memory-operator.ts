@@ -63,7 +63,7 @@ function safeResourceName(resourceName: string): string {
   return resourceName;
 }
 
-export function selectSharedMemoryRoot(resourceDir: string): '' | 'knowledge' {
+export function selectSharedMemoryRoot(resourceDir: string): '' | 'knowledge' | undefined {
   const rootIndex = path.join(resourceDir, 'index.md');
   try {
     const stat = fs.lstatSync(rootIndex);
@@ -74,7 +74,13 @@ export function selectSharedMemoryRoot(resourceDir: string): '' | 'knowledge' {
 
   const nestedRoot = path.join(resourceDir, 'knowledge');
   const nestedIndex = path.join(nestedRoot, 'index.md');
-  const rootStat = fs.lstatSync(nestedRoot);
+  let rootStat: fs.Stats;
+  try {
+    rootStat = fs.lstatSync(nestedRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
   if (
     rootStat.isSymbolicLink() ||
     !rootStat.isDirectory() ||
@@ -87,6 +93,30 @@ export function selectSharedMemoryRoot(resourceDir: string): '' | 'knowledge' {
     throw new Error('Shared OKF root must be a real directory with a regular index');
   }
   return 'knowledge';
+}
+
+export function validateGenericSharedResource(resourceDir: string): {
+  ok: boolean;
+  format: 'generic-filesystem';
+  node_count: number;
+  findings: Array<{ path: string; problem: string }>;
+} {
+  let nodeCount = 0;
+  const findings: Array<{ path: string; problem: string }> = [];
+  const walk = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory).sort()) {
+      nodeCount += 1;
+      if (nodeCount > 5000) throw new Error('Shared resource validation exceeds 5,000 nodes');
+      const absolute = path.join(directory, entry);
+      const stat = fs.lstatSync(absolute);
+      const relative = path.relative(resourceDir, absolute);
+      if (stat.isSymbolicLink()) findings.push({ path: relative, problem: 'symbolic-link' });
+      else if (stat.isDirectory()) walk(absolute);
+      else if (!stat.isFile()) findings.push({ path: relative, problem: 'special-file' });
+    }
+  };
+  walk(resourceDir);
+  return { ok: findings.length === 0, format: 'generic-filesystem', node_count: nodeCount, findings };
 }
 
 export async function runMemoryValidatorContainer(
@@ -137,6 +167,9 @@ export async function runSharedMemoryValidatorContainer(
   const args = buildMemoryValidatorContainerArgs(resourceDir, runnerSource, image);
   const rootIndex = args.lastIndexOf('/workspace/agent/memory');
   const relativeRoot = selectSharedMemoryRoot(resourceDir);
+  if (relativeRoot === undefined) {
+    return validateGenericSharedResource(resourceDir);
+  }
   args[rootIndex] = relativeRoot ? `/workspace/agent/${relativeRoot}` : '/workspace/agent';
   const execute = deps.execute ?? ((executable, argv, options) => execFileAsync(executable, argv, options));
   const { stdout } = await execute('docker', args, {

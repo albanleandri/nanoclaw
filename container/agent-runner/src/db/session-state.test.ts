@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { getOutboundDb, initTestSessionDb } from './connection.js';
 import {
+  clearAuthFailureNotice,
   clearProviderState,
   createProviderStateStore,
   clearContinuation,
   getContinuation,
   migrateLegacyContinuation,
   setContinuation,
+  shouldNotifyAuthFailure,
 } from './session-state.js';
 
 beforeEach(() => {
@@ -60,6 +62,27 @@ describe('session-state — profile provider data', () => {
     clearProviderState('profile:first');
     expect(first.get('transcript')).toBeUndefined();
     expect(second.get('transcript')).toBe('two');
+  });
+});
+
+describe('session-state — authentication notification cooldown', () => {
+  test('notifies once within the cooldown and notifies again at the boundary', () => {
+    const start = Date.parse('2026-07-27T00:00:00.000Z');
+    const cooldown = 60_000;
+
+    expect(shouldNotifyAuthFailure(start, cooldown)).toBe(true);
+    expect(shouldNotifyAuthFailure(start + cooldown - 1, cooldown)).toBe(false);
+    expect(shouldNotifyAuthFailure(start + cooldown, cooldown)).toBe(true);
+  });
+
+  test('clear resets the cooldown immediately', () => {
+    const now = Date.parse('2026-07-27T00:00:00.000Z');
+    expect(shouldNotifyAuthFailure(now)).toBe(true);
+    expect(shouldNotifyAuthFailure(now + 1)).toBe(false);
+
+    clearAuthFailureNotice();
+
+    expect(shouldNotifyAuthFailure(now + 1)).toBe(true);
   });
 });
 

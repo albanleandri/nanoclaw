@@ -2,6 +2,7 @@ import {
   approveSharedResourceReconciliation,
   prepareSharedResourceReconciliation,
   sharedResourceReconciliationStatus,
+  transferSharedResourceReconciliationOwner,
   validateSharedResourceReconciliation,
 } from '../../shared-resource-reconciliation.js';
 import { registerResource } from '../crud.js';
@@ -65,6 +66,41 @@ registerResource({
       handler: async (args) =>
         approveSharedResourceReconciliation(
           required(args, 'name'),
+          Number(args.expected_version),
+          required(args, 'confirm'),
+        ),
+    },
+    'owner-transfer': {
+      access: 'approval',
+      description:
+        'Transfer reconciled write ownership to another granted group. Requires all granted-group containers stopped and compare-and-swap owner/version inputs.',
+      args: [
+        { name: 'name', type: 'string', description: 'Shared resource name.', required: true },
+        {
+          name: 'new_owner_agent_group_id',
+          type: 'string',
+          description: 'Granted group that will become the sole writer.',
+          required: true,
+        },
+        {
+          name: 'expected_owner_agent_group_id',
+          type: 'string',
+          description: 'Current owner expected by the operator.',
+          required: true,
+        },
+        {
+          name: 'expected_version',
+          type: 'number',
+          description: 'Current control version for optimistic concurrency.',
+          required: true,
+        },
+        { name: 'confirm', type: 'string', description: 'Exact resource name confirmation.', required: true },
+      ],
+      handler: async (args) =>
+        transferSharedResourceReconciliationOwner(
+          required(args, 'name'),
+          required(args, 'new_owner_agent_group_id'),
+          required(args, 'expected_owner_agent_group_id'),
           Number(args.expected_version),
           required(args, 'confirm'),
         ),

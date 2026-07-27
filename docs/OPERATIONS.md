@@ -203,6 +203,9 @@ restores prior workspace/control state, and resumes only recorded series.
 
 Shared resources are explicit grants. Every resource is read-only until one
 owner completes reconciliation; all non-owners remain read-only afterward.
+OKF knowledge resources use the isolated OKF validator. Ordinary shared data
+directories use bounded structural validation that rejects symlinks, special
+files, and inventories larger than 5,000 nodes.
 
 ```bash
 ncl shared-resources status --name <resource>
@@ -212,6 +215,10 @@ ncl shared-resources reconcile-validate --name <resource> \
   --report-path data/shared-resource-reconciliation/<resource>/classification.json
 ncl shared-resources reconcile-approve --name <resource> \
   --expected-version <validated-version> --confirm <resource>
+ncl shared-resources owner-transfer --name <resource> \
+  --new-owner-agent-group-id <new-owner-id> \
+  --expected-owner-agent-group-id <current-owner-id> \
+  --expected-version <current-version> --confirm <resource>
 ```
 
 The classification report is bounded JSON containing `resource_name`,
@@ -222,6 +229,10 @@ require `reason`. The coding harness must compare legacy authorities and keep
 private group instructions outside the shared bundle. Approval rejects a
 changed report or missing pilot-marker attestation. Restart granted groups
 after approval so their new per-resource mount modes take effect.
+Reconciled ownership can be transferred between already-granted groups without
+reclassifying the resource. Transfer remains approval-gated, rechecks the
+classification-report hash, requires every granted-group container to be
+stopped, and uses current owner plus version as compare-and-swap guards.
 
 The reproducible image-level neutral-memory filesystem smoke mounts an empty
 writable directory at `/workspace/agent`, mounts this checkout read-only at
@@ -254,5 +265,9 @@ provider credentials.
 - If the provider returns a classified quota/auth error, or a recognized bare
   429/401 result, the runner writes a short user-facing notification instead
   of failing silently.
+- Authentication notices are limited to one per session per 24 hours. A
+  successful provider result clears the cooldown. Late authentication errors
+  from an already-completed persistent query are ignored so they cannot be
+  correlated to an old user message.
 - NanoClaw does not maintain a host-side provider cooldown. Later messages are
   processed normally and may receive another provider error.

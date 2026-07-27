@@ -12,6 +12,7 @@ import {
   getSharedResourceControl,
   initTestDb,
   runMigrations,
+  transferSharedResourceOwner,
   transitionSharedResourceControl,
 } from './index.js';
 
@@ -100,5 +101,38 @@ describe('shared resource ownership', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('transfers reconciled ownership with owner and version compare-and-swap protection', () => {
+    ensureSharedResourceControl('trading-data');
+    const reconciling = transitionSharedResourceControl('trading-data', 1, 'pilot', {
+      state: 'reconciling',
+      ownerAgentGroupId: 'owner',
+    });
+    const validated = transitionSharedResourceControl('trading-data', reconciling.version, 'reconciling', {
+      state: 'validated',
+      ownerAgentGroupId: 'owner',
+    });
+    const reconciled = transitionSharedResourceControl('trading-data', validated.version, 'validated', {
+      state: 'reconciled',
+      ownerAgentGroupId: 'owner',
+      approvedAt: '2026-07-25T01:00:00.000Z',
+    });
+
+    const transferred = transferSharedResourceOwner(
+      'trading-data',
+      reconciled.version,
+      'owner',
+      'reader',
+      '2026-07-25T02:00:00.000Z',
+    );
+    expect(transferred).toMatchObject({
+      owner_agent_group_id: 'reader',
+      reconciliation_state: 'reconciled',
+      version: reconciled.version + 1,
+    });
+    expect(() => transferSharedResourceOwner('trading-data', reconciled.version, 'owner', 'reader')).toThrow(
+      'owner transfer conflict',
+    );
   });
 });
