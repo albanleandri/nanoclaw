@@ -130,6 +130,9 @@ export function note(message: string, title?: string): void {
   p.note(message, title, { format: brandBody });
 }
 
+// Matching the ANSI escape byte is the point — visibleLength() has to strip
+// colour codes to measure printable width.
+// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function visibleLength(s: string): number {

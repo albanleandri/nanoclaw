@@ -72,7 +72,11 @@ for (const journalMode of ["DELETE", "WAL"]) {
 
   // Give container a moment to start
   const waitUntil = Date.now() + 2000;
-  while (Date.now() < waitUntil) {}
+  // Deliberate busy-wait: this sanity script must block the event loop to
+  // reproduce the cross-mount visibility behaviour it is measuring.
+  while (Date.now() < waitUntil) {
+    /* spin */
+  }
 
   // Host opens, writes, CLOSES each time (matches production session-manager pattern)
   for (let i = 1; i <= 8; i++) {
@@ -83,7 +87,10 @@ for (const journalMode of ["DELETE", "WAL"]) {
     h.close();
     console.log(`  [host] wrote+closed seq=${i} t=${Date.now() % 100000}`);
     const sleepUntil = Date.now() + 1000;
-    while (Date.now() < sleepUntil) {}
+    // Deliberate busy-wait — see note above.
+    while (Date.now() < sleepUntil) {
+      /* spin */
+    }
   }
 
   // Wait for container to finish

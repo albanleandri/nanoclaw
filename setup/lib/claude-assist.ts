@@ -196,7 +196,10 @@ export async function ensureClaudeReady(projectRoot: string): Promise<boolean> {
     } finally {
       try {
         fs.unlinkSync(tmpfile);
-      } catch {}
+      } catch {
+        // Best-effort cleanup of a temp file — nothing useful to do if it
+        // is already gone or unlinkable.
+      }
     }
 
     if (!isClaudeAuthenticated()) {

@@ -68,7 +68,7 @@ export function getOnecliApiHost(): string | null {
 }
 
 function extractUrlFromOutput(output: string): string | null {
-  const match = output.match(/https?:\/\/[\w.\-]+(?::\d+)?/);
+  const match = output.match(/https?:\/\/[\w.-]+(?::\d+)?/);
   return match ? match[0] : null;
 }
 

@@ -416,7 +416,7 @@ async function resolveAgentName(): Promise<string> {
   return value;
 }
 
-function showPostInstallChecklist(info: WorkspaceInfo): void {
+function showPostInstallChecklist(_info: WorkspaceInfo): void {
   note(
     wrapForGutter(
       [

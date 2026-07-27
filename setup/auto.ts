@@ -1218,7 +1218,7 @@ function detectExistingOnecli(): { version: string; apiHost: string } | null {
     } catch {
       // not JSON — try to extract a URL directly
     }
-    const m = raw.match(/https?:\/\/[\w.\-]+(?::\d+)?/);
+    const m = raw.match(/https?:\/\/[\w.-]+(?::\d+)?/);
     return m ? { version, apiHost: m[0] } : null;
   } catch {
     return null;

@@ -97,6 +97,9 @@ function postJson(config: PusherConfig, urlPath: string, data: unknown): void {
   req.end();
 }
 
+// Matching the ANSI escape byte is the point — log lines are stripped of
+// colour codes before being pushed to the dashboard.
+// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function startLogTail(config: PusherConfig): void {

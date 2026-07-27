@@ -148,9 +148,6 @@ console.log('✓ Mock adapter & delivery configured');
 // --- Step 3: Simulate inbound message through adapter ---
 console.log('\n=== Step 3: Simulate inbound message ===');
 
-// This is what a real adapter would do when receiving a platform message
-const adapterSetup = (mockAdapter as { _setup?: ChannelSetup })._setup;
-
 // Call routeInbound directly (simulating onInbound callback)
 await routeInbound({
   channelType: 'mock',

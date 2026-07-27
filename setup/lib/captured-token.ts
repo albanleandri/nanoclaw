@@ -1,7 +1,12 @@
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 
+// Control characters are the subject of these patterns, not an accident:
+// captured terminal output has to be stripped of CSI sequences and control
+// bytes before a token can be read out of it.
+// eslint-disable-next-line no-control-regex
 const CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// eslint-disable-next-line no-control-regex
 const CONTROL_AND_SPACE = /[\x00-\x20\x7f]/g;
 const CLAUDE_OAUTH_TOKEN = /sk-ant-oat[A-Za-z0-9_-]{80,500}AA/g;
 

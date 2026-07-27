@@ -25,12 +25,12 @@ function parseJson5(text: string): unknown {
   // Strip single-line comments (// ...) that aren't inside strings
   let cleaned = text.replace(
     /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
-    (match, str) => (str ? str : ''),
+    (_match, str) => (str ? str : ''),
   );
   // Strip block comments (/* ... */)
   cleaned = cleaned.replace(
     /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
-    (match, str) => (str ? str : ''),
+    (_match, str) => (str ? str : ''),
   );
   // Strip trailing commas before } or ]
   cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
@@ -370,7 +370,7 @@ function detectSkills(
 // Identity extraction
 // ---------------------------------------------------------------------------
 
-function extractIdentityName(stateDir: string, workspaceDir: string | null): string {
+function extractIdentityName(_stateDir: string, workspaceDir: string | null): string {
   if (!workspaceDir) return '';
 
   const identityPath = path.join(workspaceDir, 'IDENTITY.md');

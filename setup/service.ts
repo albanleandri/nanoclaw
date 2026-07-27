@@ -12,7 +12,7 @@ import path from 'path';
 import { log } from '../src/log.js';
 import { getLaunchdLabel, getSystemdUnit } from '../src/install-slug.js';
 import { cleanupUnhealthyPeers } from './peer-cleanup.js';
-import { commandExists, getPlatform, getNodePath, getServiceManager, hasSystemd, isRoot, isWSL } from './platform.js';
+import { commandExists, getPlatform, getNodePath, getServiceManager, isRoot } from './platform.js';
 import { emitStatus } from './status.js';
 
 export async function run(_args: string[]): Promise<void> {
@@ -395,7 +395,7 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   });
 }
 
-function setupNohupFallback(projectRoot: string, nodePath: string, homeDir: string): void {
+function setupNohupFallback(projectRoot: string, nodePath: string, _homeDir: string): void {
   log.warn('No systemd detected — generating nohup wrapper script');
 
   const wrapperPath = path.join(projectRoot, 'start-nanoclaw.sh');

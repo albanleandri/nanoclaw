@@ -23,7 +23,7 @@ import k from 'kleur';
 import * as setupLog from '../logs.js';
 import { isHeadless } from '../platform.js';
 import { BACK_TO_CHANNEL_SELECTION, type ChannelFlowResult } from '../lib/back-nav.js';
-import { confirmThenOpen, formatNoteLink, openUrl } from '../lib/browser.js';
+import { openUrl } from '../lib/browser.js';
 import { brightSelect } from '../lib/bright-select.js';
 import { askOperatorRole } from '../lib/role-prompt.js';
 import {

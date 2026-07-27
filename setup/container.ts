@@ -22,9 +22,6 @@ function dockerStatus(): DockerStatus {
   return 'other';
 }
 
-function dockerRunning(): boolean {
-  return dockerStatus() === 'ok';
-}
 
 /**
  * Try to start Docker if it's installed but idle. Poll up to 60s for the
@@ -83,7 +80,6 @@ export async function run(args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const { runtime } = parseArgs(args);
   const image = getDefaultContainerImage(projectRoot);
-  const logFile = path.join(projectRoot, 'logs', 'setup.log');
 
   if (runtime !== 'docker') {
     emitStatus('SETUP_CONTAINER', {
