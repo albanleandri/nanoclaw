@@ -11,6 +11,7 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:send-message' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:send_message' },
   ],
+  mcpTools: ['add_reaction', 'ask_user_question', 'edit_message', 'send_card', 'send_file', 'send_message'],
 });
 
 registerCapability({
@@ -21,6 +22,7 @@ registerCapability({
   sideEffects: 'local-write',
   approval: 'policy',
   adapters: [{ kind: 'host-action', entrypoint: 'host:create-agent' }],
+  mcpTools: ['create_agent'],
 });
 
 registerCapability({
@@ -34,6 +36,7 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:install-packages' },
     { kind: 'host-action', entrypoint: 'host:add-mcp-server' },
   ],
+  mcpTools: ['add_mcp_server', 'install_packages'],
 });
 
 registerCapability({
@@ -48,6 +51,7 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:get-job-status' },
     { kind: 'host-action', entrypoint: 'host:cancel-job' },
   ],
+  mcpTools: ['cancel_job', 'get_job_status', 'start_job'],
 });
 
 registerCapability({
@@ -97,6 +101,7 @@ for (const taskTool of [
       { kind: 'host-action', entrypoint: `host:${taskTool[1].replaceAll('_', '-')}` },
       { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: `tool:${taskTool[1]}` },
     ],
+    mcpTools: [taskTool[1]],
   });
 }
 
@@ -116,6 +121,7 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:update-task' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:schedule_task' },
   ],
+  mcpTools: ['cancel_task', 'list_tasks', 'pause_task', 'resume_task', 'schedule_task', 'update_task'],
 });
 
 registerCapability({
@@ -129,6 +135,7 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:session-search' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:session_search' },
   ],
+  mcpTools: ['session_search'],
 });
 
 registerCapability({
@@ -145,6 +152,7 @@ registerCapability({
       entrypoint: 'mcp:nanoclaw',
     },
   ],
+  mcpTools: ['browse_web'],
 });
 
 registerCapability({
@@ -199,4 +207,5 @@ registerCapability({
       entrypoint: 'mcp:nanoclaw',
     },
   ],
+  mcpTools: ['run_shell'],
 });

@@ -31,6 +31,12 @@ they share no modules). Those are pinned with a checked-in contract file under
 - `contracts/session-db-schema.json` — inbound.db / outbound.db table and column
   shape (`src/db/session-schema-conformance.test.ts`,
   `container/agent-runner/src/db/schema-conformance.test.ts`)
+- `contracts/mcp-tool-capabilities.json` — which capability each in-process MCP
+  tool belongs to (`src/capabilities/conformance.test.ts`,
+  `container/agent-runner/src/mcp-tools/capability-conformance.test.ts`). The
+  runner reports `tool:<name>` as the capability-audit entrypoint; the host
+  rejects any entrypoint the manifest's `mcpTools` does not declare, so drift
+  here silently drops audit events.
 
 When you change one side of a contract, change the contract file and the other
 side in the same patch. Do not "fix" a failing conformance test by editing only

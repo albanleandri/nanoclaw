@@ -30,7 +30,12 @@ export async function handleCapabilityAudit(
   const capabilityVersion = Number(content.capabilityVersion);
   if (capabilityVersion !== manifest.version) throw new Error('Capability audit version mismatch');
   const entrypoint = String(content.entrypoint ?? '');
-  if (!manifest.adapters.some((candidate) => candidate.entrypoint === entrypoint)) {
+  // The runner reports an adapter entrypoint for host/protocol paths, but `tool:<name>` for
+  // its in-process MCP tools — those are declared by the manifest's mcpTools, not adapters.
+  const declared =
+    manifest.adapters.some((candidate) => candidate.entrypoint === entrypoint) ||
+    (manifest.mcpTools ?? []).some((toolName) => `tool:${toolName}` === entrypoint);
+  if (!declared) {
     throw new Error('Capability audit entrypoint mismatch');
   }
   appendCapabilityAuditEvent({

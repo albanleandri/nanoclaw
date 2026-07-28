@@ -1,0 +1,118 @@
+[
+  {
+    "capabilityId": "memory.session-search",
+    "toolName": "session_search"
+  },
+  {
+    "capabilityId": "nanoclaw.block-agent-task",
+    "toolName": "block_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.browse-web",
+    "toolName": "browse_web"
+  },
+  {
+    "capabilityId": "nanoclaw.cancel-agent-task",
+    "toolName": "cancel_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.complete-agent-task",
+    "toolName": "complete_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.fail-agent-task",
+    "toolName": "fail_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.get-agent-task",
+    "toolName": "get_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.manage-agents",
+    "toolName": "create_agent"
+  },
+  {
+    "capabilityId": "nanoclaw.manage-jobs",
+    "toolName": "cancel_job"
+  },
+  {
+    "capabilityId": "nanoclaw.manage-jobs",
+    "toolName": "get_job_status"
+  },
+  {
+    "capabilityId": "nanoclaw.manage-jobs",
+    "toolName": "start_job"
+  },
+  {
+    "capabilityId": "nanoclaw.publish-agent-task-artifact",
+    "toolName": "publish_agent_task_artifact"
+  },
+  {
+    "capabilityId": "nanoclaw.report-agent-task-progress",
+    "toolName": "report_agent_task_progress"
+  },
+  {
+    "capabilityId": "nanoclaw.request-agent-task",
+    "toolName": "request_agent_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "cancel_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "list_tasks"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "pause_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "resume_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "schedule_task"
+  },
+  {
+    "capabilityId": "nanoclaw.schedule-task",
+    "toolName": "update_task"
+  },
+  {
+    "capabilityId": "nanoclaw.self-modify",
+    "toolName": "add_mcp_server"
+  },
+  {
+    "capabilityId": "nanoclaw.self-modify",
+    "toolName": "install_packages"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "add_reaction"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "ask_user_question"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "edit_message"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "send_card"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "send_file"
+  },
+  {
+    "capabilityId": "nanoclaw.send-message",
+    "toolName": "send_message"
+  },
+  {
+    "capabilityId": "runtime.shell",
+    "toolName": "run_shell"
+  }
+]

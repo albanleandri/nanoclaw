@@ -66,6 +66,37 @@ describe('capability audit host bridge', () => {
     inDb.close();
   });
 
+  // Regression: nanoclaw.schedule-task surfaces six MCP tools but the manifest declared
+  // only `tool:schedule_task`, so every list/update/cancel/pause/resume audit event was
+  // rejected and retried to exhaustion — 1,314 dropped events before this was caught.
+  it('accepts every MCP tool entrypoint the container emits for a capability', async () => {
+    const inDb = new Database(':memory:');
+    for (const toolName of ['list_tasks', 'update_task', 'cancel_task', 'pause_task', 'resume_task']) {
+      await handleCapabilityAudit(
+        {
+          eventId: `event-${toolName}`,
+          invocationId: `invocation-${toolName}`,
+          seq: 1,
+          eventType: 'requested',
+          capabilityId: 'nanoclaw.schedule-task',
+          capabilityVersion: 1,
+          adapter: 'mcp',
+          entrypoint: `tool:${toolName}`,
+          argsSha256: 'b'.repeat(64),
+          createdAt: '2026-01-01',
+        },
+        session,
+        inDb,
+      );
+    }
+    expect(
+      listCapabilityAuditEvents({ agentGroupId: 'agent' })
+        .map((event) => event.entrypoint)
+        .sort(),
+    ).toEqual(['tool:cancel_task', 'tool:list_tasks', 'tool:pause_task', 'tool:resume_task', 'tool:update_task']);
+    inDb.close();
+  });
+
   it('rejects an entrypoint that is not declared by the capability', async () => {
     const inDb = new Database(':memory:');
     await expect(

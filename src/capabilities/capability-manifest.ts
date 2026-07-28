@@ -24,6 +24,12 @@ export interface CapabilityManifest {
   sideEffects: 'none' | 'local-write' | 'external-write' | 'credentialed';
   approval: 'never' | 'policy' | 'always';
   adapters: CapabilityAdapter[];
+  /**
+   * In-process MCP tools the agent-runner surfaces for this capability. The runner reports
+   * `tool:<name>` as the capability-audit entrypoint on every call, so a tool missing here
+   * has its audit events rejected. Pinned to contracts/mcp-tool-capabilities.json.
+   */
+  mcpTools?: string[];
 }
 
 export type CapabilitySupport = 'native' | 'bridged' | 'degraded' | 'unsupported';
@@ -56,5 +62,15 @@ export function validateCapabilityManifest(manifest: CapabilityManifest): void {
     if (!adapter.entrypoint.trim()) {
       throw new Error(`Capability ${manifest.id} adapter has no entrypoint`);
     }
+  }
+  const seenTools = new Set<string>();
+  for (const toolName of manifest.mcpTools ?? []) {
+    if (!/^[a-z][a-z0-9_]*$/.test(toolName)) {
+      throw new Error(`Capability ${manifest.id} has invalid MCP tool name: ${toolName || '(empty)'}`);
+    }
+    if (seenTools.has(toolName)) {
+      throw new Error(`Capability ${manifest.id} lists MCP tool ${toolName} twice`);
+    }
+    seenTools.add(toolName);
   }
 }

@@ -11,6 +11,9 @@ const SUPPORT = new Set(['native', 'bridged', 'degraded', 'unsupported']);
 const protocolToolContract = JSON.parse(
   readFileSync(new URL('../../contracts/protocol-tools.json', import.meta.url), 'utf8'),
 ) as Array<{ capabilityId: string; toolName: string }>;
+const mcpToolContract = JSON.parse(
+  readFileSync(new URL('../../contracts/mcp-tool-capabilities.json', import.meta.url), 'utf8'),
+) as Array<{ capabilityId: string; toolName: string }>;
 
 describe('runtime by capability conformance matrix', () => {
   const runtimes = listRuntimeDescriptors();
@@ -66,5 +69,17 @@ describe('runtime by capability conformance matrix', () => {
     expect(hostBindings).toEqual(
       protocolToolContract.map(({ capabilityId, toolName }) => ({ capabilityId, toolName })),
     );
+  });
+
+  // The container emits `tool:<name>` on every audited MCP call and the host rejects any
+  // entrypoint a manifest does not declare. Drift here silently drops the audit trail, so
+  // the two sides are pinned to contracts/mcp-tool-capabilities.json independently.
+  it('declares every MCP tool the runner surfaces for each capability', () => {
+    const hostBindings = capabilities
+      .flatMap((capability) =>
+        (capability.mcpTools ?? []).map((toolName) => ({ capabilityId: capability.id, toolName })),
+      )
+      .sort((a, b) => a.capabilityId.localeCompare(b.capabilityId) || a.toolName.localeCompare(b.toolName));
+    expect(hostBindings).toEqual(mcpToolContract.map(({ capabilityId, toolName }) => ({ capabilityId, toolName })));
   });
 });
