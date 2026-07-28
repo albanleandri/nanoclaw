@@ -25,6 +25,11 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
   /** Validates `frame.args` and produces the typed handler input. Throws on invalid. */
   parseArgs: (raw: Record<string, unknown>) => TArgs;
   handler: (args: TArgs, ctx: CallerContext) => Promise<TData>;
+  /**
+   * Presentational renderer for human mode. Returned to the client in the
+   * frame's `human` field; the `--json` path is untouched.
+   */
+  formatHuman?: (data: TData) => string;
 };
 
 const registry = new Map<string, CommandDef>();

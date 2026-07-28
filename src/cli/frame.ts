@@ -18,7 +18,17 @@ export type RequestFrame = {
 };
 
 export type ResponseFrame =
-  | { id: string; ok: true; data: unknown }
+  | {
+      id: string;
+      ok: true;
+      data: unknown;
+      /**
+       * Server-rendered human view. When present, clients print it verbatim
+       * instead of auto-formatting `data` — so the container agent sees the
+       * same aligned table as the host CLI without a Bun-side formatter copy.
+       */
+      human?: string;
+    }
   | { id: string; ok: false; error: { code: ErrorCode; message: string } };
 
 export type ErrorCode =

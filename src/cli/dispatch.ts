@@ -13,6 +13,7 @@ import { registerApprovalHandler, requestApproval } from '../modules/approvals/i
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
 import { getResource } from './crud.js';
 import { lookup } from './registry.js';
+import { log } from '../log.js';
 
 export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<ResponseFrame> {
   let cmd = lookup(req.command);
@@ -171,6 +172,14 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
       }
     }
 
+    if (cmd.formatHuman) {
+      try {
+        return { id: req.id, ok: true, data, human: cmd.formatHuman(data) };
+      } catch (e) {
+        // A broken renderer must not swallow a successful result.
+        log.warn('formatHuman failed; returning raw data', { command: cmd.name, err: e });
+      }
+    }
     return { id: req.id, ok: true, data };
   } catch (e) {
     return err(req.id, 'handler-error', errMsg(e));

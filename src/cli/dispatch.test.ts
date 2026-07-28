@@ -532,4 +532,30 @@ describe('CLI scope enforcement', () => {
       expect(resp.error.message).toContain('not available in group scope');
     }
   });
+
+  it('carries formatHuman output in the response frame human field', async () => {
+    register({
+      name: 'human-probe',
+      description: 'probe',
+      access: 'open',
+      parseArgs: () => ({}),
+      handler: async () => [{ a: 1 }],
+      formatHuman: (data) => `rendered:${JSON.stringify(data)}`,
+    });
+    const res = await dispatch({ id: 'r1', command: 'human-probe', args: {} }, { caller: 'host' });
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.human).toBe('rendered:[{"a":1}]');
+  });
+
+  it('omits human when the command declares no formatHuman', async () => {
+    register({
+      name: 'plain-probe',
+      description: 'probe',
+      access: 'open',
+      parseArgs: () => ({}),
+      handler: async () => ({ b: 2 }),
+    });
+    const res = await dispatch({ id: 'r2', command: 'plain-probe', args: {} }, { caller: 'host' });
+    expect(res.ok && res.human).toBeUndefined();
+  });
 });

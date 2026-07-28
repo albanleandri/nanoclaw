@@ -31,6 +31,7 @@ export function localizeIsoTimestamps(value: unknown): unknown {
 }
 
 export function formatResponse(res: ResponseFrame, mode: FormatMode): string {
+  if (mode === 'human' && res.ok && res.human !== undefined) return res.human + '\n';
   if (mode === 'json') return JSON.stringify(res, null, 2) + '\n';
 
   if (!res.ok) {
