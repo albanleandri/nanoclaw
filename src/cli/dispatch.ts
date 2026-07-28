@@ -12,6 +12,7 @@ import { getSession } from '../db/sessions.js';
 import { registerApprovalHandler, requestApproval } from '../modules/approvals/index.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
 import { getResource } from './crud.js';
+import { listVerbs, renderVerbHelp } from './help-render.js';
 import { lookup } from './registry.js';
 import { log } from '../log.js';
 
@@ -35,7 +36,7 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
   }
 
   if (!cmd) {
-    return err(req.id, 'unknown-command', `no command "${req.command}"`);
+    return err(req.id, 'unknown-command', unknownCommandMessage(req.command));
   }
 
   // CLI scope enforcement for agent callers
@@ -99,6 +100,15 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
         }
       }
     }
+  }
+
+  // `--help` interception: answer with the command's generated help instead of
+  // executing. Placed after scope enforcement (a group-scoped agent can't probe
+  // forbidden resources) and BEFORE approval gating — asking for help on an
+  // approval-gated verb must never mint an approval card.
+  if (req.args.help === true) {
+    const helpText = commandHelp(cmd.name, cmd.resource, cmd.description);
+    return { id: req.id, ok: true, data: helpText, human: helpText };
   }
 
   if (ctx.caller !== 'host' && cmd.access === 'approval') {
@@ -204,4 +214,43 @@ function err(id: string, code: ErrorCode, message: string): ResponseFrame {
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** Help text for a resolved command: deep verb help when derivable, else description. */
+function commandHelp(name: string, resource: string | undefined, description: string): string {
+  if (resource && name.startsWith(`${resource}-`)) {
+    const res = getResource(resource);
+    const verb = name.slice(resource.length + 1);
+    const deep = res && renderVerbHelp(res, verb);
+    if (deep) return deep;
+    // Custom-operation KEYS may contain spaces ('config update') while command
+    // names are dash-joined ('groups-config-update'). Resolve by matching keys
+    // normalized the same way registerResource builds command names.
+    if (res?.customOperations) {
+      const spaced = Object.keys(res.customOperations).find((k) => k.replace(/ /g, '-') === verb);
+      const deepSpaced = spaced && renderVerbHelp(res, spaced);
+      if (deepSpaced) return deepSpaced;
+    }
+  }
+  return description;
+}
+
+/**
+ * Unknown-command error that carries its fix: if the command names a known
+ * resource, list that resource's verbs; otherwise fall back to `ncl help`.
+ * Resource detection walks dash-prefixes longest-first, same as the ID
+ * fallback above, so multi-word plurals (messaging-groups, user-dms) resolve.
+ */
+function unknownCommandMessage(command: string): string {
+  const parts = command.split('-');
+  for (let i = parts.length; i > 0; i--) {
+    const res = getResource(parts.slice(0, i).join('-'));
+    if (res) {
+      return (
+        `no command "${command}" — verbs for ${res.plural}: ${listVerbs(res).join(', ')}. ` +
+        `Run \`ncl ${res.plural} help <verb>\` for flags and examples.`
+      );
+    }
+  }
+  return `no command "${command}". Run \`ncl help\`.`;
 }

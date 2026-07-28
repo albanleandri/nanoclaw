@@ -7,9 +7,10 @@
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getResources } from '../crud.js';
 import type { CallerContext } from '../frame.js';
+import { renderVerbHelp, summaryLine } from '../help-render.js';
 import { listCommands, register } from '../registry.js';
 
-const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members']);
+const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks']);
 
 function getCliScope(ctx: CallerContext): string | undefined {
   if (ctx.caller !== 'agent') return undefined;
@@ -79,8 +80,21 @@ export function registerResourceHelpCommands(): void {
         description: `Show ${res.name} resource details.`,
         access: 'open',
         resource: res.plural,
-        parseArgs: () => ({}),
-        handler: async (_args, ctx) => {
+        parseArgs: (raw) => raw,
+        handler: async (args, ctx) => {
+          // `ncl <resource> help <verb>` arrives via the dispatcher's
+          // longest-prefix fallback (`tasks-help-create` → `tasks-help` +
+          // id=`create`). Group-scope auto-fill also puts the caller's agent
+          // group ID into `id` on groups/destinations — that is not a verb
+          // request, so ignore it.
+          const autoFilled = ctx.caller === 'agent' && args.id === ctx.agentGroupId;
+          const verbArg = !autoFilled && typeof args.id === 'string' ? args.id : null;
+          if (verbArg) {
+            const deep = renderVerbHelp(res, verbArg);
+            if (!deep) throw new Error(`no verb "${verbArg}" on ${res.plural} — run \`ncl ${res.plural} help\``);
+            return deep;
+          }
+
           const cliScope = getCliScope(ctx);
           const lines: string[] = [];
           lines.push(`${res.plural}: ${res.description}`);
@@ -101,13 +115,16 @@ export function registerResourceHelpCommands(): void {
           if (res.operations.create) verbs.push(`create [approval]`);
           if (res.operations.update) verbs.push(`update${idHint} [approval]`);
           if (res.operations.delete) verbs.push(`delete${idHint} [approval]`);
+          const tag = (access: string | undefined) => (!access || access === 'open' ? '' : ` [${access}]`);
           if (res.customOperations) {
             for (const [verb, op] of Object.entries(res.customOperations)) {
-              verbs.push(`${verb} [${op.access}] — ${op.description}`);
+              verbs.push(`${verb}${tag(op.access)} — ${summaryLine(op.description)}`);
             }
           }
           lines.push('Verbs:');
           for (const v of verbs) lines.push(`  ${v}`);
+          lines.push('');
+          lines.push(`Run \`ncl ${res.plural} help <verb>\` (or add --help to any command) for flags and examples.`);
           lines.push('');
 
           // Columns

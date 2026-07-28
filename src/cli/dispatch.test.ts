@@ -22,11 +22,19 @@ vi.mock('../db/sessions.js', () => ({
 }));
 
 // dispatch's post-handler looks up the resource's `scopeField` via getResource.
-// The real resources aren't registered in this unit test, so mock it.
+// The real resources aren't registered in this unit test, so mock it. The
+// `--help` interception path (dispatch.ts's commandHelp) needs the real
+// registry for resources registered via the real `registerResource` (e.g. the
+// 'probes' probe below), so getResource falls back to the actual
+// implementation for anything not explicitly stubbed via mockGetResource.
 const mockGetResource = vi.fn();
-vi.mock('./crud.js', () => ({
-  getResource: (...args: unknown[]) => mockGetResource(...args),
-}));
+vi.mock('./crud.js', async () => {
+  const actual = await vi.importActual<typeof import('./crud.js')>('./crud.js');
+  return {
+    ...actual,
+    getResource: (...args: Parameters<typeof actual.getResource>) => mockGetResource(...args),
+  };
+});
 
 vi.mock('../modules/approvals/index.js', () => ({
   registerApprovalHandler: vi.fn(),
@@ -157,11 +165,16 @@ register({
 });
 
 import { dispatch } from './dispatch.js';
+import { registerResource } from './crud.js';
 import type { CallerContext } from './frame.js';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   // Default: the four CLI-whitelisted resources with their real scopeFields.
+  // Anything else falls back to the actual registry lookup so resources
+  // registered via the real `registerResource` (e.g. the 'probes' probe) are
+  // still resolvable by the --help interception path.
+  const actual = await vi.importActual<typeof import('./crud.js')>('./crud.js');
   const scopeFields: Record<string, string> = {
     groups: 'id',
     sessions: 'agent_group_id',
@@ -169,7 +182,7 @@ beforeEach(() => {
     members: 'agent_group_id',
   };
   mockGetResource.mockImplementation((plural: string) =>
-    scopeFields[plural] ? { scopeField: scopeFields[plural] } : undefined,
+    scopeFields[plural] ? { scopeField: scopeFields[plural] } : actual.getResource(plural),
   );
 });
 
@@ -557,5 +570,33 @@ describe('CLI scope enforcement', () => {
     });
     const res = await dispatch({ id: 'r2', command: 'plain-probe', args: {} }, { caller: 'host' });
     expect(res.ok && res.human).toBeUndefined();
+  });
+
+  it('intercepts --help and returns generated verb help without running the handler', async () => {
+    let ran = false;
+    registerResource({
+      name: 'probe',
+      plural: 'probes',
+      table: 'probes',
+      description: 'probe resource',
+      idColumn: 'id',
+      columns: [{ name: 'id', type: 'string', description: 'id' }],
+      operations: {},
+      customOperations: {
+        poke: {
+          access: 'approval',
+          description: 'Poke it.',
+          args: [{ name: 'force', type: 'boolean', description: 'Force the poke.' }],
+          handler: async () => {
+            ran = true;
+            return {};
+          },
+        },
+      },
+    });
+    const res = await dispatch({ id: 'h1', command: 'probes-poke', args: { help: true } }, { caller: 'host' });
+    expect(ran).toBe(false);
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.human).toContain('--force');
   });
 });

@@ -36,9 +36,23 @@ export interface ColumnDef {
 
 export interface CustomOperation {
   access: Access;
+  /**
+   * First line = one-line summary (resource help). Full text renders in the
+   * per-verb deep help (`ncl <resource> help <verb>` / `--help`).
+   */
   description: string;
+  /**
+   * Declaring args opts this verb into strict validation: required/enum/type
+   * checks plus unknown-flag rejection, with the verb's generated usage block
+   * appended to every failure. Omit to keep the legacy lenient behavior
+   * (handler validates by hand, stray flags ignored).
+   */
   args?: ColumnDef[];
+  /** Ready-to-paste invocations, rendered under Examples in deep help. */
+  examples?: string[];
   handler: (args: Record<string, unknown>, ctx: CallerContext) => Promise<unknown>;
+  /** Presentational renderer for human mode — see CommandDef.formatHuman. */
+  formatHuman?: (data: unknown) => string;
 }
 
 export interface ResourceDef {
