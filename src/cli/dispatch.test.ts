@@ -599,4 +599,43 @@ describe('CLI scope enforcement', () => {
     expect(res.ok).toBe(true);
     expect(res.ok && res.human).toContain('--force');
   });
+
+  // Regression guard: dispatch.ts's commandHelp() has a fallback that maps a
+  // dash-joined command-name tail back to a space-containing customOperations
+  // key (e.g. `groups-config-update` -> 'config update' -- see the real
+  // 'config update' op on the groups resource, src/cli/resources/groups.ts).
+  // Without this branch, `--help` on such a verb would silently fall back to
+  // the one-line resource description instead of rendering deep help.
+  it('resolves --help through a custom operation whose key contains a space', async () => {
+    let ran = false;
+    registerResource({
+      name: 'widget',
+      plural: 'widgets',
+      table: 'widgets',
+      description: 'widget resource',
+      idColumn: 'id',
+      columns: [{ name: 'id', type: 'string', description: 'id' }],
+      operations: {},
+      customOperations: {
+        'config update': {
+          access: 'approval',
+          description: 'Update widget config.',
+          args: [{ name: 'flag', type: 'boolean', description: 'A flag.' }],
+          handler: async () => {
+            ran = true;
+            return {};
+          },
+        },
+      },
+    });
+    const res = await dispatch(
+      { id: 'h2', command: 'widgets-config-update', args: { help: true } },
+      { caller: 'host' },
+    );
+    expect(ran).toBe(false);
+    expect(res.ok).toBe(true);
+    // Deep help (from renderVerbHelp), not the bare resource/command description.
+    expect(res.ok && res.human).toContain('--flag');
+    expect(res.ok && res.human).toContain('ncl widgets config update');
+  });
 });
