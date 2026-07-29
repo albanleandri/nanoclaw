@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 
 import { getDb } from '../db/connection.js';
 import { register } from './registry.js';
+import { renderVerbHelp } from './help-render.js';
 import type { CallerContext } from './frame.js';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ export interface ColumnDef {
   updatable?: boolean;
   /** Default value on create when not provided. */
   default?: unknown;
+  /** Default to another column's resolved value on create when not provided. */
+  defaultFrom?: string;
   /** Allowed values (shown in help). */
   enum?: string[];
 }
@@ -123,8 +126,11 @@ function genericList(def: ResourceDef) {
     }
     const where = filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : '';
     params.push(limit);
+    // Newest first: without an ORDER BY the LIMIT silently hides the most
+    // recently inserted rows once a table outgrows it (bit `sessions list`
+    // past 200 sessions — a just-created session was invisible).
     return getDb()
-      .prepare(`SELECT ${cols} FROM ${def.table}${where} LIMIT ?`)
+      .prepare(`SELECT ${cols} FROM ${def.table}${where} ORDER BY rowid DESC LIMIT ?`)
       .all(...params);
   };
 }
@@ -164,6 +170,8 @@ function genericCreate(def: ResourceDef) {
         throw new Error(`--${col.name.replace(/_/g, '-')} is required`);
       } else if (col.default !== undefined) {
         values[col.name] = col.default;
+      } else if (col.defaultFrom !== undefined && values[col.defaultFrom] !== undefined) {
+        values[col.name] = values[col.defaultFrom];
       }
     }
 
@@ -234,6 +242,84 @@ function normalizeArgs(raw: Record<string, unknown>): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Strict arg validation (opt-in via CustomOperation.args)
+// ---------------------------------------------------------------------------
+
+/**
+ * Keys the dispatcher may inject into `req.args` before parseArgs runs
+ * (group-scope auto-fill). Strict validation must tolerate them even when a
+ * verb doesn't declare them, or every scoped agent call breaks.
+ */
+const DISPATCH_INJECTED_KEYS = ['id', 'agent_group_id', 'group'] as const;
+
+/**
+ * Validate `args` (already underscore-normalized) against a ColumnDef list:
+ * unknown-flag rejection, required, enum, and type coercion per the declared
+ * type. Returns a coerced copy; throws with a focused message on the first
+ * problem.
+ */
+export function validateArgs(
+  defs: ColumnDef[],
+  args: Record<string, unknown>,
+  opts: { allowExtra?: readonly string[] } = {},
+): Record<string, unknown> {
+  const declared = new Map(defs.map((d) => [d.name, d]));
+  const allowed = new Set<string>([...declared.keys(), ...(opts.allowExtra ?? DISPATCH_INJECTED_KEYS)]);
+
+  for (const key of Object.keys(args)) {
+    if (!allowed.has(key)) {
+      throw new Error(`unknown flag --${key.replace(/_/g, '-')}`);
+    }
+  }
+
+  const out: Record<string, unknown> = { ...args };
+  for (const def of defs) {
+    const flag = `--${def.name.replace(/_/g, '-')}`;
+    const v = args[def.name];
+    if (v === undefined) {
+      if (def.required) throw new Error(`${flag} is required`);
+      if (def.default !== undefined) out[def.name] = def.default;
+      continue;
+    }
+    // The client parses a value-less `--flag` as boolean true.
+    if (v === true && def.type !== 'boolean') {
+      throw new Error(`${flag} requires a value`);
+    }
+    switch (def.type) {
+      case 'number': {
+        const n = Number(v);
+        if (Number.isNaN(n)) throw new Error(`${flag} must be a number, got "${v}"`);
+        out[def.name] = n;
+        break;
+      }
+      case 'boolean': {
+        if (v === true || v === 'true' || v === '1') out[def.name] = true;
+        else if (v === false || v === 'false' || v === '0') out[def.name] = false;
+        else throw new Error(`${flag} must be true or false, got "${v}"`);
+        break;
+      }
+      case 'json': {
+        if (typeof v === 'string') {
+          try {
+            out[def.name] = JSON.parse(v);
+          } catch (jsonErr) {
+            throw new Error(`${flag} must be valid JSON`, { cause: jsonErr });
+          }
+        }
+        break;
+      }
+      case 'string':
+        out[def.name] = String(v);
+        break;
+    }
+    if (def.enum && !def.enum.includes(String(out[def.name]))) {
+      throw new Error(`${flag} must be one of: ${def.enum.join(', ')}`);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // registerResource
 // ---------------------------------------------------------------------------
 
@@ -297,16 +383,30 @@ export function registerResource(def: ResourceDef): void {
     });
   }
 
-  // Custom operations
+  // Custom operations. Declaring `args` opts the verb into strict validation;
+  // every failure carries the verb's usage block so a caller (human or agent)
+  // can fix the invocation without a second help round-trip.
   if (def.customOperations) {
     for (const [verb, op] of Object.entries(def.customOperations)) {
+      const declared = op.args;
       register({
         name: `${def.plural}-${verb.replace(/ /g, '-')}`,
         description: op.description,
         access: op.access,
         resource: def.plural,
-        parseArgs: (raw) => normalizeArgs(raw),
+        parseArgs: declared
+          ? (raw) => {
+              try {
+                return validateArgs(declared, normalizeArgs(raw));
+              } catch (e) {
+                const usage = renderVerbHelp(def, verb);
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(usage ? `${msg}\n\n${usage}` : msg, { cause: e });
+              }
+            }
+          : (raw) => normalizeArgs(raw),
         handler: async (args, ctx) => op.handler(args as Record<string, unknown>, ctx),
+        formatHuman: op.formatHuman,
       });
     }
   }
