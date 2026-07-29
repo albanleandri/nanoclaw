@@ -31,12 +31,62 @@ vi.mock('./config.js', async () => {
   return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-delivery' };
 });
 
+// task_log routing (ncl-tasks port, Task 13): appendRunLog is spied so tests
+// can assert a run-log append happened without touching the filesystem —
+// appendRunLog's own file-writing behavior is covered by
+// modules/scheduling/run-log.test.ts.
+const { appendRunLogSpy, directDeliveryDecisionSpy, recordDirectDeliverySpy, pauseTypingRefreshAfterDeliverySpy } =
+  vi.hoisted(() => ({
+    appendRunLogSpy: vi.fn(),
+    directDeliveryDecisionSpy: vi.fn(),
+    recordDirectDeliverySpy: vi.fn(),
+    pauseTypingRefreshAfterDeliverySpy: vi.fn(),
+  }));
+
+vi.mock('./modules/scheduling/run-log.js', () => ({
+  appendRunLog: appendRunLogSpy,
+}));
+
+// Wrap (not replace) the real implementations so every pre-existing test in
+// this file keeps its real behavior — only add a spy on top, to observe
+// whether task_log rows reach these orchestration/typing code paths.
+vi.mock('./orchestration/run-store.js', async () => {
+  const actual = await vi.importActual<typeof import('./orchestration/run-store.js')>('./orchestration/run-store.js');
+  return {
+    ...actual,
+    directDeliveryDecision: (...args: Parameters<typeof actual.directDeliveryDecision>) => {
+      directDeliveryDecisionSpy(...args);
+      return actual.directDeliveryDecision(...args);
+    },
+    recordDirectDelivery: (...args: Parameters<typeof actual.recordDirectDelivery>) => {
+      recordDirectDeliverySpy(...args);
+      return actual.recordDirectDelivery(...args);
+    },
+  };
+});
+
+vi.mock('./modules/typing/index.js', async () => {
+  const actual = await vi.importActual<typeof import('./modules/typing/index.js')>('./modules/typing/index.js');
+  return {
+    ...actual,
+    pauseTypingRefreshAfterDelivery: (...args: Parameters<typeof actual.pauseTypingRefreshAfterDelivery>) => {
+      pauseTypingRefreshAfterDeliverySpy(...args);
+      return actual.pauseTypingRefreshAfterDelivery(...args);
+    },
+  };
+});
+
 const TEST_DIR = '/tmp/nanoclaw-test-delivery';
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup, createMessagingGroup } from './db/index.js';
 import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
-import { deliverSessionMessages, setDeliveryAdapter, clearDeliveryAdapterForTesting } from './delivery.js';
+import {
+  deliverSessionMessages,
+  deliverMessage,
+  setDeliveryAdapter,
+  clearDeliveryAdapterForTesting,
+} from './delivery.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -70,11 +120,57 @@ function insertOutbound(agentGroupId: string, sessionId: string, msgId: string):
   db.close();
 }
 
+/** Insert an outbound row with an explicit kind and in_reply_to — used for
+ * task_log rows (no channel destination) and for the guard-exclusion
+ * contrast tests below. */
+function insertOutboundKind(
+  agentGroupId: string,
+  sessionId: string,
+  msgId: string,
+  opts: {
+    kind: string;
+    content: object;
+    inReplyTo: string | null;
+    channelType?: string | null;
+    platformId?: string | null;
+  },
+): void {
+  const db = new Database(outboundDbPath(agentGroupId, sessionId));
+  db.prepare(
+    `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content, in_reply_to)
+     VALUES (?, datetime('now'), ?, ?, ?, ?, ?)`,
+  ).run(
+    msgId,
+    opts.kind,
+    opts.platformId ?? null,
+    opts.channelType ?? null,
+    JSON.stringify(opts.content),
+    opts.inReplyTo,
+  );
+  db.close();
+}
+
+/** A task session — no messaging group, thread under the tasks system prefix. */
+function taskSession(agentGroupId: string, threadId: string) {
+  const { session } = resolveSession(agentGroupId, null, threadId, 'per-thread');
+  return session;
+}
+
+/** A normal chat session. */
+function chatSession(agentGroupId: string, messagingGroupId: string, threadId: string) {
+  const { session } = resolveSession(agentGroupId, messagingGroupId, threadId, 'per-thread');
+  return session;
+}
+
 beforeEach(() => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
   const db = initTestDb();
   runMigrations(db);
+  appendRunLogSpy.mockClear();
+  directDeliveryDecisionSpy.mockClear();
+  recordDirectDeliverySpy.mockClear();
+  pauseTypingRefreshAfterDeliverySpy.mockClear();
 });
 
 afterEach(() => {
@@ -407,5 +503,125 @@ describe('deliverSessionMessages — permission check', () => {
     const delivered = getDeliveredIds(inDb);
     inDb.close();
     expect(delivered.has('out-unauth')).toBe(true);
+  });
+});
+
+describe('deliverMessage — task_log routing', () => {
+  // Regression for the ncl-tasks port — one-door delivery: a task fire's final
+  // text becomes a run-log line, never a chat message. Delivering it would leak
+  // scratchpad reasoning to the user.
+  it('appends a task_log row to the series run log and sends nothing', async () => {
+    seedAgentAndChannel();
+    const session = taskSession('ag-1', 'system:tasks:daily-1a2b');
+    const adapterSendSpy = vi.fn().mockResolvedValue('plat-msg');
+    setDeliveryAdapter({ deliver: adapterSendSpy });
+    const inDb = openInboundDb('ag-1', session.id);
+
+    await deliverMessage(
+      {
+        id: 'm1',
+        timestamp: now(),
+        kind: 'task_log',
+        platform_id: null,
+        channel_type: null,
+        thread_id: session.thread_id,
+        content: JSON.stringify({ text: 'posted the digest' }),
+        in_reply_to: null,
+      },
+      session,
+      inDb,
+    );
+    inDb.close();
+
+    expect(appendRunLogSpy).toHaveBeenCalledWith('ag-1', 'daily-1a2b', 'posted the digest');
+    expect(adapterSendSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression for the ncl-tasks port — a task_log row must never be
+  // guessed at a channel destination outside its own task session; that
+  // would risk leaking scratchpad reasoning to a user.
+  it('drops a task_log row that arrives outside a task session', async () => {
+    seedAgentAndChannel();
+    const session = chatSession('ag-1', 'mg-1', 'thread-1');
+    const adapterSendSpy = vi.fn().mockResolvedValue('plat-msg');
+    setDeliveryAdapter({ deliver: adapterSendSpy });
+    const inDb = openInboundDb('ag-1', session.id);
+
+    await deliverMessage(
+      {
+        id: 'm2',
+        timestamp: now(),
+        kind: 'task_log',
+        platform_id: null,
+        channel_type: null,
+        thread_id: session.thread_id,
+        content: JSON.stringify({ text: 'x' }),
+        in_reply_to: null,
+      },
+      session,
+      inDb,
+    );
+    inDb.close();
+
+    expect(appendRunLogSpy).not.toHaveBeenCalled();
+    expect(adapterSendSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('deliverSessionMessages — task_log is excluded from the orchestration/typing guards', () => {
+  // Regression for the ncl-tasks port — writeMessageOut auto-stamps
+  // in_reply_to from getCurrentInReplyTo() when the caller omits it
+  // (container/agent-runner/src/db/messages-out.ts), and the task_log writer
+  // (Task 22) does omit it. So a task_log row WILL carry a non-null
+  // in_reply_to and would otherwise satisfy the drainSession guards that
+  // gate orchestration-correlation, delivery telemetry, and the typing
+  // pause. None of those apply to a run-log append: there is no chat
+  // attached to a task session, so consulting cancelled-run state could
+  // wrongly suppress a run-log line, and recording it as a "delivery" or
+  // pausing a nonexistent typing indicator would corrupt telemetry for a
+  // channel event that never happened.
+  it('does not consult orchestration correlation, delivery telemetry, or the typing pause for a task_log row', async () => {
+    seedAgentAndChannel();
+    const session = taskSession('ag-1', 'system:tasks:daily-1a2b');
+    setDeliveryAdapter({ deliver: vi.fn().mockResolvedValue('plat-msg') });
+    insertOutboundKind('ag-1', session.id, 'out-tasklog-1', {
+      kind: 'task_log',
+      content: { text: 'ran ok' },
+      inReplyTo: 'inbound-unrelated',
+    });
+
+    await deliverSessionMessages(session);
+
+    expect(appendRunLogSpy).toHaveBeenCalledWith('ag-1', 'daily-1a2b', 'ran ok');
+    expect(directDeliveryDecisionSpy).not.toHaveBeenCalled();
+    expect(recordDirectDeliverySpy).not.toHaveBeenCalled();
+    expect(pauseTypingRefreshAfterDeliverySpy).not.toHaveBeenCalled();
+
+    const inDb = openInboundDb('ag-1', session.id);
+    expect(getDeliveredIds(inDb).has('out-tasklog-1')).toBe(true);
+    inDb.close();
+  });
+
+  // Contrast case: proves the spies above are actually wired to the real
+  // guards, and that the task_log exclusion is kind-specific rather than a
+  // side effect of some other change — a normal chat reply with the same
+  // in_reply_to shape still goes through the orchestration/typing guards.
+  it('still consults orchestration correlation and the typing pause for a normal chat row with in_reply_to', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    setDeliveryAdapter({ deliver: vi.fn().mockResolvedValue('plat-msg') });
+    insertOutboundKind('ag-1', session.id, 'out-chat-1', {
+      kind: 'chat',
+      content: { text: 'hi' },
+      inReplyTo: 'inbound-unrelated',
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+    });
+
+    await deliverSessionMessages(session);
+
+    expect(directDeliveryDecisionSpy).toHaveBeenCalledWith(session.id, 'inbound-unrelated');
+    expect(recordDirectDeliverySpy).toHaveBeenCalled();
+    expect(pauseTypingRefreshAfterDeliverySpy).toHaveBeenCalledWith(session.id);
   });
 });

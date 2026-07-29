@@ -9,7 +9,13 @@
  */
 import type Database from 'better-sqlite3';
 
-import { getRunningSessions, getActiveSessions, createPendingQuestion } from './db/sessions.js';
+import {
+  getRunningSessions,
+  getActiveSessions,
+  createPendingQuestion,
+  isTaskThread,
+  TASKS_SYSTEM_THREAD_ID,
+} from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import {
@@ -23,6 +29,7 @@ import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
+import { appendRunLog } from './modules/scheduling/run-log.js';
 import { hasPoolBots, deliverViaPool } from './channels/telegram-pool.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
@@ -212,7 +219,7 @@ async function drainSession(session: Session): Promise<void> {
     migrateDeliveredTable(inDb);
 
     for (const msg of undelivered) {
-      if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+      if (msg.in_reply_to && msg.kind !== 'system' && msg.kind !== 'task_log' && msg.channel_type !== 'agent') {
         const decision = directDeliveryDecision(session.id, msg.in_reply_to);
         if (decision.state === 'wait') continue;
         if (decision.state === 'suppress') {
@@ -227,7 +234,7 @@ async function drainSession(session: Session): Promise<void> {
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
-        if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+        if (msg.in_reply_to && msg.kind !== 'system' && msg.kind !== 'task_log' && msg.channel_type !== 'agent') {
           recordOrchestrationDelivery({
             sourceSessionId: session.id,
             inputMessageId: msg.in_reply_to,
@@ -251,9 +258,10 @@ async function drainSession(session: Session): Promise<void> {
         // lands on the user's screen, so the client has time to visually
         // clear the indicator before the next heartbeat tick brings it
         // back. Skip the pause for internal traffic (system actions,
-        // agent-to-agent routing) — the user doesn't see those and
-        // shouldn't get a gap in their typing indicator for them.
-        if (msg.kind !== 'system' && msg.channel_type !== 'agent') {
+        // agent-to-agent routing, task run-log appends) — the user doesn't
+        // see those and shouldn't get a gap in their typing indicator for
+        // them. A task session has no chat attached in the first place.
+        if (msg.kind !== 'system' && msg.kind !== 'task_log' && msg.channel_type !== 'agent') {
           pauseTypingRefreshAfterDelivery(session.id);
         }
       } catch (err) {
@@ -267,7 +275,7 @@ async function drainSession(session: Session): Promise<void> {
             err,
           });
           markDeliveryFailed(inDb, msg.id);
-          if (msg.in_reply_to && msg.kind !== 'system' && msg.channel_type !== 'agent') {
+          if (msg.in_reply_to && msg.kind !== 'system' && msg.kind !== 'task_log' && msg.channel_type !== 'agent') {
             recordOrchestrationDelivery({
               sourceSessionId: session.id,
               inputMessageId: msg.in_reply_to,
@@ -293,7 +301,7 @@ async function drainSession(session: Session): Promise<void> {
   }
 }
 
-async function deliverMessage(
+export async function deliverMessage(
   msg: {
     id: string;
     timestamp: string;
@@ -319,6 +327,24 @@ async function deliverMessage(
       inReplyTo: msg.in_reply_to,
       outboundMessageId: msg.id,
     });
+    return;
+  }
+
+  // Task-fire run log: the runner mirrors a fire's final text here (one-door
+  // delivery — final text never reaches a channel; the send_message tool is
+  // the only delivery path from a task session). Append to the series log,
+  // never deliver. The caller marks it delivered so it isn't retried.
+  if (msg.kind === 'task_log') {
+    if (session.messaging_group_id === null && isTaskThread(session.thread_id) && session.thread_id) {
+      const series = session.thread_id.slice(`${TASKS_SYSTEM_THREAD_ID}:`.length);
+      try {
+        appendRunLog(session.agent_group_id, series, typeof content.text === 'string' ? content.text : '');
+      } catch (err) {
+        log.warn('Failed to append task run log', { id: msg.id, sessionId: session.id, err });
+      }
+    } else {
+      log.warn('task_log row outside a task session — ignoring', { id: msg.id, sessionId: session.id });
+    }
     return;
   }
 
