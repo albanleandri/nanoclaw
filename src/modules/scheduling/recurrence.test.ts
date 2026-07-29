@@ -6,14 +6,23 @@
  * not UTC. Without this, `"0 9 * * *"` fires at 09:00 UTC instead of 09:00
  * user-local — a recurring scheduling bug users can't diagnose.
  */
+import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./run-log.js', () => ({
+  appendRunLog: vi.fn(),
+}));
+
+import { TIMEZONE } from '../../config.js';
 import { ensureSchema, openInboundDb } from '../../db/session-db.js';
-import { insertTask } from './db.js';
-import { handleRecurrence } from './recurrence.js';
+import { insertTask, insertTaskRow } from './db.js';
+import { handleRecurrence, scriptBackoffMinutes } from './recurrence.js';
+import { appendRunLog } from './run-log.js';
 import type { Session } from '../../types.js';
+
+const appendRunLogSpy = vi.mocked(appendRunLog);
 
 const TEST_DIR = '/tmp/nanoclaw-recurrence-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
@@ -88,5 +97,106 @@ describe('handleRecurrence', () => {
 
     const count = (db.prepare(`SELECT COUNT(*) AS c FROM messages_in`).get() as { c: number }).c;
     expect(count).toBe(1);
+  });
+});
+
+// Seeds `fails` consecutive FAILED task occurrences sharing one series_id —
+// the newest of them carries the recurrence (it's the row getCompletedRecurring
+// hands to handleRecurrence). insertTaskRow assigns seq via nextEvenSeq on each
+// call, so inserting in this order (oldest first) also gives increasing seq,
+// which is what trailingFailedRuns' `ORDER BY seq DESC` streak-count relies on.
+function seedFailedSeries(
+  db: ReturnType<typeof freshDb>,
+  seriesId: string,
+  opts: { fails: number; recurrence: string },
+): void {
+  for (let i = 0; i < opts.fails - 1; i++) {
+    const id = `${seriesId}-h${i}`;
+    insertTaskRow(db, {
+      id,
+      seriesId,
+      processAfter: '2020-01-01T00:00:00.000Z',
+      recurrence: null,
+      content: JSON.stringify({ prompt: 'history' }),
+    });
+    db.prepare(`UPDATE messages_in SET status = 'failed' WHERE id = ?`).run(id);
+  }
+
+  insertTaskRow(db, {
+    id: seriesId,
+    seriesId,
+    processAfter: '2020-01-01T00:00:00.000Z',
+    recurrence: opts.recurrence,
+    content: JSON.stringify({ prompt: 'watch' }),
+  });
+  db.prepare(`UPDATE messages_in SET status = 'failed' WHERE id = ?`).run(seriesId);
+}
+
+// A healthy series: a single COMPLETED row carrying the recurrence, no
+// trailing failures — trailingFailedRuns must read a streak of 0 for it.
+function seedCompletedSeries(db: ReturnType<typeof freshDb>, seriesId: string, opts: { recurrence: string }): void {
+  insertTaskRow(db, {
+    id: seriesId,
+    seriesId,
+    processAfter: '2020-01-01T00:00:00.000Z',
+    recurrence: opts.recurrence,
+    content: JSON.stringify({ prompt: 'daily' }),
+  });
+  db.prepare(`UPDATE messages_in SET status = 'completed' WHERE id = ?`).run(seriesId);
+}
+
+describe('scriptBackoffMinutes', () => {
+  it('doubles from 2 minutes and caps at 60', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map(scriptBackoffMinutes)).toEqual([2, 4, 8, 16, 32, 60, 60, 60]);
+  });
+});
+
+describe('handleRecurrence script-failure backoff', () => {
+  let db: ReturnType<typeof freshDb>;
+  let session: Session;
+
+  beforeEach(() => {
+    db = freshDb();
+    session = fakeSession();
+    appendRunLogSpy.mockClear();
+  });
+
+  // Regression for the ncl-tasks port — a monitor whose gate script keeps
+  // erroring must throttle, not spawn a container at raw cron cadence forever.
+  it('pushes the next fire past the cron time while a failure streak is running', async () => {
+    seedFailedSeries(db, 'watch-9f9f', { fails: 3, recurrence: '*/5 * * * *' });
+    await handleRecurrence(db, session);
+
+    const next = db
+      .prepare("SELECT process_after FROM messages_in WHERE status = 'pending' AND series_id = 'watch-9f9f'")
+      .get() as { process_after: string };
+    // 3 fails → 8 minutes, which is beyond the next */5 grid point.
+    expect(Date.parse(next.process_after) - Date.now()).toBeGreaterThan(7 * 60_000);
+  });
+
+  it('re-arms paused and writes a run-log note after 8 consecutive failures', async () => {
+    seedFailedSeries(db, 'watch-9f9f', { fails: 8, recurrence: '*/5 * * * *' });
+    await handleRecurrence(db, session);
+
+    const row = db
+      .prepare("SELECT status FROM messages_in WHERE series_id = 'watch-9f9f' AND status IN ('pending','paused')")
+      .get() as { status: string };
+    expect(row.status).toBe('paused');
+    expect(appendRunLogSpy).toHaveBeenCalledWith(
+      session.agent_group_id,
+      'watch-9f9f',
+      expect.stringContaining('auto-paused after 8 consecutive script failures'),
+    );
+  });
+
+  it('does not back off a healthy series', async () => {
+    seedCompletedSeries(db, 'daily-1a2b', { recurrence: '0 9 * * *' });
+    await handleRecurrence(db, session);
+
+    const next = db
+      .prepare("SELECT process_after FROM messages_in WHERE status = 'pending' AND series_id = 'daily-1a2b'")
+      .get() as { process_after: string };
+    const expected = CronExpressionParser.parse('0 9 * * *', { tz: TIMEZONE }).next().toISOString();
+    expect(next.process_after).toBe(expected);
   });
 });
