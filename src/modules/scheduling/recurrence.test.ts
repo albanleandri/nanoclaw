@@ -49,9 +49,6 @@ describe('handleRecurrence', () => {
       id: 'task-1',
       processAfter: '2020-01-01T00:00:00.000Z',
       recurrence: '0 9 * * *', // every day at 09:00 (user TZ)
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'daily digest' }),
     });
     db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();
@@ -83,9 +80,6 @@ describe('handleRecurrence', () => {
       id: 'task-1',
       processAfter: '2020-01-01T00:00:00.000Z',
       recurrence: null,
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'one-off' }),
     });
     db.prepare(`UPDATE messages_in SET status='completed' WHERE id='task-1'`).run();

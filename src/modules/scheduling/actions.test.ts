@@ -82,9 +82,6 @@ describe('scheduling delivery actions shared owner routing', () => {
         id: 'task-shared-1',
         processAfter: '2026-06-20T07:30:00.000Z',
         recurrence: '0 7 * * *',
-        platformId: 'telegram:owner-test',
-        channelType: 'telegram',
-        threadId: null,
         content: JSON.stringify({ prompt: 'Shared schedule task', script: null }),
       });
     } finally {
@@ -201,7 +198,9 @@ describe('scheduling delivery actions shared owner routing', () => {
       const row = ownerDb
         .prepare("SELECT status, recurrence FROM messages_in WHERE id = ? AND kind = 'task'")
         .get('task-shared-1') as { status: string; recurrence: string | null };
-      expect(row).toEqual({ status: 'completed', recurrence: null });
+      // A cancelled occurrence never fired: it's marked 'cancelled', not
+      // 'completed' — see the ncl-tasks port regression test in db.test.ts.
+      expect(row).toEqual({ status: 'cancelled', recurrence: null });
     } finally {
       ownerDb.close();
     }

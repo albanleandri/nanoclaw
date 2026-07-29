@@ -30,8 +30,9 @@ export async function handleRecurrence(inDb: Database.Database, session: Session
       // 09:00 user-local.
       const interval = CronExpressionParser.parse(msg.recurrence, { tz: TIMEZONE });
       const nextRun = interval.next().toISOString();
-      const prefix = msg.kind === 'task' ? 'task' : 'msg';
-      const newId = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // getCompletedRecurring only ever returns task rows now (RecurringMessage
+      // no longer carries `kind` — see db.ts), so the id prefix is always 'task'.
+      const newId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       insertRecurrence(inDb, msg, newId, nextRun);
       clearRecurrence(inDb, msg.id);

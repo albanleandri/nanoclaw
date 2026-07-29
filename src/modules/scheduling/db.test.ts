@@ -6,20 +6,25 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 
-import { ensureSchema, openInboundDb } from '../../db/session-db.js';
+import { ensureSchema, nextEvenSeq, openInboundDb } from '../../db/session-db.js';
 import {
   insertTask,
+  insertTaskRow,
   insertRecurrence,
   cancelTask,
+  cancelAllTasks,
   pauseTask,
   resumeTask,
+  deleteTask,
   updateTask,
   getCompletedRecurring,
+  trailingFailedRuns,
   type RecurringMessage,
 } from './db.js';
 
+const NOW = '2026-07-28T09:00:00.000Z';
 const TEST_DIR = '/tmp/nanoclaw-scheduling-db-test';
 const DB_PATH = path.join(TEST_DIR, 'inbound.db');
 
@@ -35,9 +40,6 @@ function insertBasicTask(db: ReturnType<typeof openInboundDb>, id: string, recur
     id,
     processAfter: new Date().toISOString(),
     recurrence,
-    platformId: null,
-    channelType: null,
-    threadId: null,
     content: JSON.stringify({ prompt: 'noop' }),
   });
 }
@@ -55,13 +57,17 @@ describe('insertTask', () => {
     db.close();
   });
 
-  it('stores an ISO UTC timestamp', () => {
+  // Behaviour change from the ncl-tasks port: insertTaskRow stamps the
+  // timestamp with SQL `datetime('now')` (UTC, 'YYYY-MM-DD HH:MM:SS') instead
+  // of a JS `new Date().toISOString()` string. Was asserting the old ISO
+  // 'T'/'Z' shape; updated to match the new SQLite-generated format.
+  it('stores a SQLite UTC datetime', () => {
     const db = freshDb();
     insertBasicTask(db, 'task-iso', null);
     const row = db.prepare('SELECT timestamp FROM messages_in WHERE id = ?').get('task-iso') as {
       timestamp: string;
     };
-    expect(row.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    expect(row.timestamp).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     db.close();
   });
 });
@@ -78,13 +84,8 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
 
     const msg: RecurringMessage = {
       id: 'task-orig',
-      kind: 'task',
       content: JSON.stringify({ prompt: 'noop' }),
       recurrence: '0 9 * * *',
-      process_after: null,
-      platform_id: null,
-      channel_type: null,
-      thread_id: null,
       series_id: 'task-orig',
     };
     insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
@@ -103,7 +104,10 @@ describe('cancelTask / pauseTask / resumeTask series matching', () => {
       status: string;
       recurrence: string | null;
     };
-    expect(followUp.status).toBe('completed');
+    // A cancelled occurrence never fired: it's marked 'cancelled', not
+    // 'completed', so it never inflates the run history `ncl tasks list`
+    // reports. Regression for the ncl-tasks port.
+    expect(followUp.status).toBe('cancelled');
     // Recurrence cleared so the sweep doesn't spawn another clone.
     expect(followUp.recurrence).toBeNull();
     db.close();
@@ -150,9 +154,6 @@ describe('updateTask', () => {
       id: 'task-1',
       processAfter: new Date().toISOString(),
       recurrence: null,
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'old', script: 'echo old', extra: 'keep me' }),
     });
 
@@ -172,9 +173,6 @@ describe('updateTask', () => {
       id: 'task-1',
       processAfter: '2026-01-01T00:00:00Z',
       recurrence: '0 9 * * *',
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'p' }),
     });
 
@@ -194,9 +192,6 @@ describe('updateTask', () => {
       id: 'task-1',
       processAfter: '2026-01-01T00:00:00Z',
       recurrence: '0 9 * * *',
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'p' }),
     });
 
@@ -214,22 +209,14 @@ describe('updateTask', () => {
       id: 'task-orig',
       processAfter: new Date().toISOString(),
       recurrence: '0 9 * * *',
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'old' }),
     });
     db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-orig'").run();
 
     const msg: RecurringMessage = {
       id: 'task-orig',
-      kind: 'task',
       content: JSON.stringify({ prompt: 'old' }),
       recurrence: '0 9 * * *',
-      process_after: null,
-      platform_id: null,
-      channel_type: null,
-      thread_id: null,
       series_id: 'task-orig',
     };
     insertRecurrence(db, msg, 'task-next', new Date(Date.now() + 86400000).toISOString());
@@ -252,9 +239,6 @@ describe('updateTask', () => {
       id: 'task-1',
       processAfter: new Date().toISOString(),
       recurrence: null,
-      platformId: null,
-      channelType: null,
-      threadId: null,
       content: JSON.stringify({ prompt: 'p' }),
     });
     db.prepare("UPDATE messages_in SET status = 'completed' WHERE id = 'task-1'").run();
@@ -272,13 +256,8 @@ describe('insertRecurrence', () => {
 
     const msg: RecurringMessage = {
       id: 'task-orig',
-      kind: 'task',
       content: '{}',
       recurrence: '0 9 * * *',
-      process_after: null,
-      platform_id: null,
-      channel_type: null,
-      thread_id: null,
       series_id: 'task-orig',
     };
     insertRecurrence(db, msg, 'task-next', new Date().toISOString());
@@ -288,5 +267,81 @@ describe('insertRecurrence', () => {
     };
     expect(row.series_id).toBe('task-orig');
     db.close();
+  });
+});
+
+describe('ncl-tasks port: series-aware task row API', () => {
+  let db: ReturnType<typeof openInboundDb>;
+
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // Regression for the ncl-tasks port — cancel must mark 'cancelled', not
+  // 'completed'. A cancelled occurrence never fired; counting it as a run
+  // inflates the run history `ncl tasks list` reports.
+  it('cancels to the cancelled status and clears the recurrence', () => {
+    insertTaskRow(db, {
+      id: 'daily-1a2b',
+      seriesId: 'daily-1a2b',
+      processAfter: NOW,
+      recurrence: '0 9 * * *',
+      content: '{}',
+    });
+    expect(cancelTask(db, 'daily-1a2b')).toBe(1);
+    const row = db.prepare("SELECT status, recurrence FROM messages_in WHERE id = 'daily-1a2b'").get();
+    expect(row).toEqual({ status: 'cancelled', recurrence: null });
+  });
+
+  it('returns 0 when no live row matches, so the caller can report not-found', () => {
+    expect(cancelTask(db, 'nope-0000')).toBe(0);
+    expect(pauseTask(db, 'nope-0000')).toBe(0);
+    expect(resumeTask(db, 'nope-0000')).toBe(0);
+    expect(deleteTask(db, 'nope-0000')).toBe(0);
+  });
+
+  it('counts only the trailing failed run streak, stopping at the first completed run', () => {
+    const mk = (id: string, status: string) =>
+      db
+        .prepare(
+          `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, content, series_id)
+           VALUES (?, ?, datetime('now'), ?, 0, NULL, NULL, 'task', '{}', 'watch-9f9f')`,
+        )
+        .run(id, nextEvenSeq(db), status);
+    mk('r1', 'failed');
+    mk('r2', 'completed');
+    mk('r3', 'failed');
+    mk('r4', 'failed');
+    expect(trailingFailedRuns(db, 'watch-9f9f')).toBe(2);
+  });
+
+  it('re-arms failed occurrences too, so a broken monitor keeps its series alive', () => {
+    db.prepare(
+      `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, content, series_id)
+       VALUES ('f1', ?, datetime('now'), 'failed', 0, NULL, '*/15 * * * *', 'task', '{}', 'watch-9f9f')`,
+    ).run(nextEvenSeq(db));
+    expect(getCompletedRecurring(db).map((m) => m.id)).toContain('f1');
+  });
+
+  it('cancelAllTasks clears every live row and reports the count', () => {
+    insertTaskRow(db, { id: 'a-1111', seriesId: 'a-1111', processAfter: NOW, recurrence: null, content: '{}' });
+    insertTaskRow(db, { id: 'b-2222', seriesId: 'b-2222', processAfter: NOW, recurrence: null, content: '{}' });
+    expect(cancelAllTasks(db)).toBe(2);
+  });
+
+  it('inserts a paused occurrence when asked, for the auto-pause path', () => {
+    insertTaskRow(db, {
+      id: 'p-3333',
+      seriesId: 'p-3333',
+      processAfter: NOW,
+      recurrence: '0 9 * * *',
+      content: '{}',
+      status: 'paused',
+    });
+    expect(db.prepare("SELECT status FROM messages_in WHERE id = 'p-3333'").get()).toEqual({ status: 'paused' });
   });
 });
