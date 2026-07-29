@@ -233,7 +233,8 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       id           INTEGER PRIMARY KEY CHECK (id = 1),
       channel_type TEXT,
       platform_id  TEXT,
-      thread_id    TEXT
+      thread_id    TEXT,
+      is_task      INTEGER NOT NULL DEFAULT 0
     );
   `);
 

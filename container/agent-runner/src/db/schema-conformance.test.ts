@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { readFileSync } from 'fs';
 
-import { closeSessionDb, initTestSessionDb } from './connection.js';
+import { closeSessionDb, getInboundDb, initTestSessionDb } from './connection.js';
 import { getSessionRouting } from './session-routing.js';
 
 type TableColumns = Record<string, string[]>;
@@ -68,11 +68,32 @@ describe('session DB schema conformance (container fixture)', () => {
       channel_type: 'telegram',
       platform_id: 'chat-9',
       thread_id: 'thread-9',
+      is_task: 0,
     });
   });
 
   it('returns null routing when the host has not written a routing row', () => {
     initTestSessionDb();
-    expect(getSessionRouting()).toEqual({ channel_type: null, platform_id: null, thread_id: null });
+    expect(getSessionRouting()).toEqual({ channel_type: null, platform_id: null, thread_id: null, is_task: 0 });
+  });
+
+  // Regression for the ncl-tasks port — a session DB written by a host that
+  // predates the is_task stamp must still report task-ness, or one-door delivery
+  // fails open and a task fire's <message> blocks get delivered to a chat.
+  it('derives is_task from the thread prefix when the column is absent', () => {
+    initTestSessionDb();
+    const db = getInboundDb();
+    db.exec('DROP TABLE session_routing');
+    db.exec(`CREATE TABLE session_routing (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      channel_type TEXT, platform_id TEXT, thread_id TEXT
+    );`);
+    db.prepare(
+      `INSERT INTO session_routing (id, channel_type, platform_id, thread_id)
+       VALUES (1, NULL, NULL, 'system:tasks:daily-1a2b')`,
+    ).run();
+
+    expect(getSessionRouting().is_task).toBe(1);
+    closeSessionDb();
   });
 });

@@ -19,6 +19,7 @@ import {
   markDeliveryFailed,
   retryWithBackoff,
   syncProcessingAcks,
+  upsertSessionRouting,
 } from './session-db.js';
 
 const TEST_DIR = '/tmp/nanoclaw-session-db-test';
@@ -243,4 +244,25 @@ describe('runtime timestamp storage', () => {
     expect(rows.every((row) => /^\d{4}-\d{2}-\d{2}T.*Z$/.test(row.delivered_at))).toBe(true);
     db.close();
   });
+});
+
+// Regression for the ncl-tasks port — session_routing.is_task is the
+// host-asserted task flag the container gates one-door delivery on. A session
+// DB created before this column must gain it lazily on open.
+it('adds is_task to a pre-existing session_routing table on upsert', () => {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE session_routing (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    channel_type TEXT, platform_id TEXT, thread_id TEXT
+  );`);
+
+  upsertSessionRouting(db, {
+    channel_type: null,
+    platform_id: null,
+    thread_id: 'system:tasks:daily-1a2b',
+    is_task: 1,
+  });
+
+  const row = db.prepare('SELECT * FROM session_routing WHERE id = 1').get() as { is_task: number };
+  expect(row.is_task).toBe(1);
 });

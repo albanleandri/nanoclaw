@@ -23,7 +23,7 @@
       "tries",
       "trigger"
     ],
-    "session_routing": ["channel_type", "id", "platform_id", "thread_id"]
+    "session_routing": ["channel_type", "id", "is_task", "platform_id", "thread_id"]
   },
   "outbound": {
     "$comment": "Container writes, host opens read-only.",

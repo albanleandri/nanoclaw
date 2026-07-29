@@ -24,6 +24,7 @@ import {
   findSessionByAgentGroup,
   findSessionForAgent,
   getSession,
+  isTaskThread,
   updateSession,
 } from './db/sessions.js';
 import {
@@ -166,6 +167,10 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
       channel_type: channelType,
       platform_id: platformId,
       thread_id: session.thread_id,
+      // Stamp task-ness explicitly so the container can gate one-door
+      // delivery on a host-asserted flag instead of sniffing the thread
+      // prefix (fail-closed at the source of truth).
+      is_task: isTaskThread(session.thread_id) ? 1 : 0,
     });
   } finally {
     db.close();
