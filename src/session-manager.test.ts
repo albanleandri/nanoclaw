@@ -262,12 +262,18 @@ describe('resolveTaskSession / withInboundDb', () => {
 
   it('closes the inbound db even when the callback throws', () => {
     const { session } = resolveTaskSession(TASK_AG, 'probe-5e6f');
+    let stashed: Database.Database | undefined;
     expect(() =>
-      withInboundDb(TASK_AG, session.id, () => {
+      withInboundDb(TASK_AG, session.id, (db) => {
+        stashed = db;
         throw new Error('boom');
       }),
     ).toThrow('boom');
-    // A leaked handle would make this second open fail on some platforms.
+    // Assert the handle itself was closed by the `finally`, not just that a
+    // later open happens to succeed — a second `new Database(...)` open can
+    // succeed against the same file even if the first handle leaked, so that
+    // alone would not catch a deleted `finally { db.close(); }`.
+    expect(stashed?.open).toBe(false);
     expect(withInboundDb(TASK_AG, session.id, (db) => db.prepare('SELECT 1 AS ok').get())).toEqual({ ok: 1 });
   });
 });
