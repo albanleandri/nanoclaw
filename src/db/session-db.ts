@@ -217,18 +217,28 @@ export function getMessageForRetry(
 }
 
 export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Database): void {
-  const terminal = outDb
-    .prepare("SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed')")
-    .all() as Array<{ message_id: string; status: 'completed' | 'failed' }>;
+  const completed = outDb
+    .prepare(
+      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error')",
+    )
+    .all() as Array<{ message_id: string; status: string }>;
 
-  if (terminal.length === 0) return;
+  if (completed.length === 0) return;
 
-  const updateStmt = inDb.prepare(
-    "UPDATE messages_in SET status = ? WHERE id = ? AND status NOT IN ('completed', 'failed')",
+  // `script-skip:error` (pre-task script crashed) lands as a FAILED run —
+  // semantically true, and it lets recurrence derive the trailing failed
+  // streak from the occurrence rows themselves (no stored counter).
+  const completeStmt = inDb.prepare(
+    "UPDATE messages_in SET status = 'completed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
+  );
+  const failStmt = inDb.prepare(
+    "UPDATE messages_in SET status = 'failed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
   );
   inDb.transaction(() => {
-    for (const { message_id, status } of terminal) {
-      updateStmt.run(status, message_id);
+    for (const { message_id, status } of completed) {
+      // Only a literal 'completed' ack counts as success; both real 'failed'
+      // acks and 'script-skip:error' acks land as failed occurrences.
+      (status === 'completed' ? completeStmt : failStmt).run(message_id);
     }
   })();
 }

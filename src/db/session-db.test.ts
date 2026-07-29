@@ -8,7 +8,7 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import {
   countDueMessages,
@@ -168,29 +168,46 @@ describe('due trigger queries', () => {
   });
 });
 
+function makeOutboundAckDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE processing_ack (
+      message_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      status_changed TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
 describe('syncProcessingAcks', () => {
+  let inDb: Database.Database;
+  let outDb: Database.Database;
+  let seq = 2;
+
+  // Inserts a non-terminal (pending) task-kind row — the shape a pre-task
+  // gate script's occurrence starts life in, before an ack transitions it.
+  function seedTaskRow(db: Database.Database, id: string): void {
+    db.prepare(
+      `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
+       VALUES (?, ?, 'task', datetime('now'), 'pending', 1, '{}')`,
+    ).run(id, seq++);
+  }
+
+  beforeEach(() => {
+    inDb = makeDueMessageDb();
+    outDb = makeOutboundAckDb();
+    seq = 2;
+  });
+
+  afterEach(() => {
+    inDb.close();
+    outDb.close();
+  });
+
   it('preserves completed and failed terminal outcomes', () => {
-    const inDb = makeDueMessageDb();
-    const outDb = new Database(':memory:');
-    outDb.exec(`
-      CREATE TABLE processing_ack (
-        message_id TEXT PRIMARY KEY,
-        status TEXT NOT NULL,
-        status_changed TEXT NOT NULL
-      );
-    `);
-    inDb
-      .prepare(
-        `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
-         VALUES (?, ?, 'chat', datetime('now'), 'pending', 1, '{}')`,
-      )
-      .run('completed-message', 2);
-    inDb
-      .prepare(
-        `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
-         VALUES (?, ?, 'chat', datetime('now'), 'pending', 1, '{}')`,
-      )
-      .run('failed-message', 4);
+    seedTaskRow(inDb, 'completed-message');
+    seedTaskRow(inDb, 'failed-message');
     outDb.prepare("INSERT INTO processing_ack VALUES (?, 'completed', datetime('now'))").run('completed-message');
     outDb.prepare("INSERT INTO processing_ack VALUES (?, 'failed', datetime('now'))").run('failed-message');
 
@@ -200,8 +217,49 @@ describe('syncProcessingAcks', () => {
       { id: 'completed-message', status: 'completed' },
       { id: 'failed-message', status: 'failed' },
     ]);
-    inDb.close();
-    outDb.close();
+  });
+
+  // Regression for the ncl-tasks port — a crashed gate script must land as a
+  // FAILED occurrence. That row IS the backoff counter (trailingFailedRuns reads
+  // it); acking it 'completed' makes a broken monitor spin at cron cadence.
+  it('records a script-skip:error ack as a failed occurrence', () => {
+    seedTaskRow(inDb, 'f1');
+    outDb
+      .prepare(
+        "INSERT INTO processing_ack (message_id, status, status_changed) VALUES ('f1', 'script-skip:error', datetime('now'))",
+      )
+      .run();
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(inDb.prepare("SELECT status FROM messages_in WHERE id = 'f1'").get()).toEqual({ status: 'failed' });
+  });
+
+  it('records a plain completed ack as a completed occurrence', () => {
+    seedTaskRow(inDb, 'c1');
+    outDb
+      .prepare(
+        "INSERT INTO processing_ack (message_id, status, status_changed) VALUES ('c1', 'completed', datetime('now'))",
+      )
+      .run();
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(inDb.prepare("SELECT status FROM messages_in WHERE id = 'c1'").get()).toEqual({ status: 'completed' });
+  });
+
+  it('never downgrades an already-terminal row', () => {
+    seedTaskRow(inDb, 't1');
+    inDb.prepare("UPDATE messages_in SET status = 'failed' WHERE id = 't1'").run();
+    outDb
+      .prepare(
+        "INSERT INTO processing_ack (message_id, status, status_changed) VALUES ('t1', 'completed', datetime('now'))",
+      )
+      .run();
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(inDb.prepare("SELECT status FROM messages_in WHERE id = 't1'").get()).toEqual({ status: 'failed' });
   });
 });
 

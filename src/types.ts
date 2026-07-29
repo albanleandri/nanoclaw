@@ -170,7 +170,7 @@ export interface ProviderProfileRow {
 // ── Session DB entities ──
 
 export type MessageInKind = 'chat' | 'chat-sdk' | 'task' | 'webhook' | 'system';
-export type MessageInStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type MessageInStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface MessageIn {
   id: string;
