@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { formatLocalTime, isValidTimezone, resolveTimezone } from './timezone.js';
+import { formatLocalTime, isValidTimezone, parseZonedToUtc, resolveTimezone } from './timezone.js';
 
 // --- formatLocalTime ---
 
@@ -60,5 +60,28 @@ describe('resolveTimezone', () => {
   it('falls back to UTC for invalid timezone', () => {
     expect(resolveTimezone('IST-2')).toBe('UTC');
     expect(resolveTimezone('')).toBe('UTC');
+  });
+});
+
+describe('parseZonedToUtc', () => {
+  it('interprets a naive timestamp as wall-clock in the given zone', () => {
+    // 09:00 in Europe/Zurich during CEST is 07:00Z.
+    expect(parseZonedToUtc('2026-07-15T09:00:00', 'Europe/Zurich').toISOString()).toBe('2026-07-15T07:00:00.000Z');
+  });
+
+  it('interprets the same naive timestamp differently in winter (DST-aware)', () => {
+    // 09:00 in Europe/Zurich during CET is 08:00Z.
+    expect(parseZonedToUtc('2026-01-15T09:00:00', 'Europe/Zurich').toISOString()).toBe('2026-01-15T08:00:00.000Z');
+  });
+
+  it('passes through a string that already carries offset info', () => {
+    expect(parseZonedToUtc('2026-07-15T09:00:00Z', 'Europe/Zurich').toISOString()).toBe('2026-07-15T09:00:00.000Z');
+    expect(parseZonedToUtc('2026-07-15T09:00:00+02:00', 'Europe/Zurich').toISOString()).toBe(
+      '2026-07-15T07:00:00.000Z',
+    );
+  });
+
+  it('returns an invalid Date for unparseable input rather than throwing', () => {
+    expect(Number.isNaN(parseZonedToUtc('not a date', 'UTC').getTime())).toBe(true);
   });
 });
