@@ -2,20 +2,50 @@
  * Unit tests for the stuck-container decision logic introduced by
  * ACTION-ITEMS item 9. Lives on the pure helper `decideStuckAction` so we
  * don't have to mock the filesystem or the container runner.
+ *
+ * The `sweepSession — task GC placement` block near the bottom is the
+ * exception: it drives `_sweepSessionForTesting` end-to-end (real
+ * inbound.db, real central db) to pin the ordering of the recurrence hook
+ * and the task-GC block introduced for the ncl-tasks port, following the
+ * same container-runner/config mocking pattern as
+ * `telegram-critical-path.test.ts`.
  */
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { TEST_DIR, mockWakeContainer, mockIsContainerRunning } = vi.hoisted(() => ({
+  TEST_DIR: '/tmp/nanoclaw-test-host-sweep-task-gc',
+  mockWakeContainer: vi.fn(),
+  mockIsContainerRunning: vi.fn(),
+}));
+
+vi.mock('./container-runner.js', () => ({
+  wakeContainer: (...args: unknown[]) => mockWakeContainer(...args),
+  isContainerRunning: (...args: unknown[]) => mockIsContainerRunning(...args),
+  killContainer: vi.fn(),
+  getContainerStartedAtMs: vi.fn().mockReturnValue(undefined),
+}));
+
+vi.mock('./config.js', async () => {
+  const actual = await vi.importActual<typeof import('./config.js')>('./config.js');
+  return { ...actual, DATA_DIR: TEST_DIR };
+});
+
+import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
+import { getSession } from './db/sessions.js';
 import { deleteOrphanProcessingClaims, getProcessingClaims } from './db/session-db.js';
 import {
   ABSOLUTE_CEILING_MS,
   CLAIM_STUCK_MS,
   PENDING_STUCK_MS,
   _resetStuckProcessingRowsForTesting,
+  _sweepSessionForTesting,
   decideStuckAction,
   parseSqliteUtc,
   shouldCloseTaskSession,
 } from './host-sweep.js';
+import { inboundDbPath, resolveTaskSession } from './session-manager.js';
 import type { Session } from './types.js';
 
 const BASE = Date.parse('2026-04-20T12:00:00.000Z');
@@ -489,5 +519,100 @@ describe('shouldCloseTaskSession', () => {
   it('never closes a non-task session', () => {
     expect(shouldCloseTaskSession('thread-1', false, 0)).toBe(false);
     expect(shouldCloseTaskSession(null, false, 0)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Placement regression: the task-GC block in sweepSession must run AFTER the
+// recurrence hook, never before. `shouldCloseTaskSession` alone can't catch a
+// reordering — it's correct in isolation either way. Only driving the real
+// `sweepSession` (via `_sweepSessionForTesting`) against a real inbound.db
+// proves the two blocks fire in the right order: a series that just fired
+// must already have its next occurrence re-armed before the live-row count
+// is taken, or GC reads a false zero and kills a healthy recurring series on
+// its first fire.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('sweepSession — task GC placement (must run after recurrence)', () => {
+  beforeEach(() => {
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+    const db = initTestDb();
+    runMigrations(db);
+    mockWakeContainer.mockReset();
+    mockWakeContainer.mockResolvedValue(true);
+    mockIsContainerRunning.mockReset();
+    mockIsContainerRunning.mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    closeDb();
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('a recurring series survives its own fire — recurrence re-arms the next occurrence before GC counts live rows', async () => {
+    createAgentGroup({
+      id: 'ag-task-gc-recurring',
+      name: 'Task GC Recurring',
+      folder: 'task-gc-recurring',
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+    const { session } = resolveTaskSession('ag-task-gc-recurring', 'series-recurring');
+
+    // Seed the one occurrence as just-completed, still carrying its cron
+    // recurrence — exactly what handleRecurrence looks for.
+    const inDb = new Database(inboundDbPath('ag-task-gc-recurring', session.id));
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, recurrence, series_id, content)
+         VALUES ('task-1', 1, 'task', datetime('now'), 'completed', '0 9 * * *', 'series-recurring', '{}')`,
+      )
+      .run();
+    inDb.close();
+
+    await _sweepSessionForTesting(session);
+
+    // This is the assertion that goes red if the GC block is ever moved
+    // ahead of the recurrence hook.
+    const after = getSession(session.id)!;
+    expect(after.status).toBe('active');
+
+    // Sanity: recurrence actually fired (next pending occurrence exists,
+    // original row's recurrence cleared) — otherwise the test would pass
+    // for the wrong reason.
+    const seriesDb = new Database(inboundDbPath('ag-task-gc-recurring', session.id), { readonly: true });
+    const rows = seriesDb
+      .prepare("SELECT status, recurrence FROM messages_in WHERE series_id = 'series-recurring' ORDER BY seq")
+      .all() as Array<{ status: string; recurrence: string | null }>;
+    seriesDb.close();
+    expect(rows).toEqual([
+      { status: 'completed', recurrence: null },
+      { status: 'pending', recurrence: '0 9 * * *' },
+    ]);
+  });
+
+  it('a spent one-shot task session is collected — completed, no recurrence, no container', async () => {
+    createAgentGroup({
+      id: 'ag-task-gc-oneshot',
+      name: 'Task GC Oneshot',
+      folder: 'task-gc-oneshot',
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+    const { session } = resolveTaskSession('ag-task-gc-oneshot', 'series-oneshot');
+
+    const inDb = new Database(inboundDbPath('ag-task-gc-oneshot', session.id));
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, series_id, content)
+         VALUES ('task-2', 1, 'task', datetime('now'), 'completed', 'series-oneshot', '{}')`,
+      )
+      .run();
+    inDb.close();
+
+    await _sweepSessionForTesting(session);
+
+    const after = getSession(session.id)!;
+    expect(after.status).toBe('closed');
   });
 });
