@@ -14,6 +14,7 @@ import {
   _resetStuckProcessingRowsForTesting,
   decideStuckAction,
   parseSqliteUtc,
+  shouldCloseTaskSession,
 } from './host-sweep.js';
 import type { Session } from './types.js';
 
@@ -467,5 +468,26 @@ describe('parseSqliteUtc', () => {
     // bare string returns different values depending on the host TZ.)
     const bare = '2026-04-20T12:00:00';
     expect(parseSqliteUtc(bare)).toBe(Date.parse(bare + 'Z'));
+  });
+});
+
+describe('shouldCloseTaskSession', () => {
+  it('closes only a task session with no live rows and no container', () => {
+    expect(shouldCloseTaskSession('system:tasks:daily-1a2b', false, 0)).toBe(true);
+  });
+
+  it('keeps a task session that still has a live row', () => {
+    expect(shouldCloseTaskSession('system:tasks:daily-1a2b', false, 1)).toBe(false);
+  });
+
+  it('keeps a task session whose container is still running', () => {
+    expect(shouldCloseTaskSession('system:tasks:daily-1a2b', true, 0)).toBe(false);
+  });
+
+  // Regression for the ncl-tasks port — a chat session with an empty inbox is
+  // not spent; closing it would kill the live conversation.
+  it('never closes a non-task session', () => {
+    expect(shouldCloseTaskSession('thread-1', false, 0)).toBe(false);
+    expect(shouldCloseTaskSession(null, false, 0)).toBe(false);
   });
 });
