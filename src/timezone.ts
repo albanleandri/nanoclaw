@@ -78,6 +78,9 @@ export function parseZonedToUtc(input: string, tz: string): Date {
       .filter((p) => p.type !== 'literal')
       .map((p) => [p.type, p.value]),
   );
+  // ICU's h24 hourCycle renders start-of-day midnight as hour 24 on the *same* date.
+  // Mapping 24→00 keeps the date correct; incrementing the date would shift by 24 hours.
+  // (hour12: false resolves to h23 on Node, so this branch is defensive for other runtimes.)
   const hour = parts.hour === '24' ? '00' : parts.hour;
   const zonedAsUtcMs = Date.UTC(
     Number(parts.year),
