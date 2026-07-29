@@ -20,7 +20,9 @@ import {
   inboundDbPath,
   initSessionFolder,
   outboundDbPath,
+  resolveTaskSession,
   sessionDir,
+  withInboundDb,
   writeOutboundDirect,
   writeSessionMessage,
 } from './session-manager.js';
@@ -222,5 +224,50 @@ describe('writeSessionMessage', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('resolveTaskSession / withInboundDb', () => {
+  const TASK_AG = 'ag-1';
+
+  beforeEach(() => {
+    const db = initTestDb();
+    runMigrations(db);
+    createAgentGroup({
+      id: TASK_AG,
+      name: 'Task session test',
+      folder: 'task-session-test',
+      agent_provider: null,
+      created_at: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => closeDb());
+
+  // Regression for the ncl-tasks port — each series gets its OWN session so a
+  // backlog in one series cannot queue behind another series or a live chat.
+  it('creates one isolated session per series and reuses it on the second call', () => {
+    const first = resolveTaskSession(TASK_AG, 'daily-1a2b');
+    expect(first.created).toBe(true);
+    expect(first.session.thread_id).toBe('system:tasks:daily-1a2b');
+    expect(first.session.messaging_group_id).toBeNull();
+
+    const again = resolveTaskSession(TASK_AG, 'daily-1a2b');
+    expect(again.created).toBe(false);
+    expect(again.session.id).toBe(first.session.id);
+
+    const other = resolveTaskSession(TASK_AG, 'weekly-3c4d');
+    expect(other.session.id).not.toBe(first.session.id);
+  });
+
+  it('closes the inbound db even when the callback throws', () => {
+    const { session } = resolveTaskSession(TASK_AG, 'probe-5e6f');
+    expect(() =>
+      withInboundDb(TASK_AG, session.id, () => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+    // A leaked handle would make this second open fail on some platforms.
+    expect(withInboundDb(TASK_AG, session.id, (db) => db.prepare('SELECT 1 AS ok').get())).toEqual({ ok: 1 });
   });
 });
