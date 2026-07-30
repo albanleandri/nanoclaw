@@ -385,6 +385,37 @@ describe('tasks CLI resource', () => {
     });
   });
 
+  // Deliberate D2 decision (task-17 review), the mirror image of the block
+  // above: with the dispatcher's scope gate ENABLED (cli_scope defaults to
+  // 'group' — no ensureContainerConfig override here), dispatch.ts auto-fills
+  // `args.group` to the caller's own group whenever no foreign --group was
+  // requested (src/cli/dispatch.ts's `fill.group = req.args.group ?? ...
+  // ctx.agentGroupId`). That means groupArg()/resolveTaskGroup() in
+  // src/cli/resources/tasks.ts never observes `undefined` for a default-scope
+  // agent, so the sole-grant fallback inside resolveTaskGroup can't fire here
+  // — even though the grant exists and even though the describe block above
+  // proves that fallback is real and reachable when the gate is bypassed.
+  // This is intentional, not an oversight: an agent silently writing into a
+  // grant owner's tasks just because a grant happens to exist would be
+  // surprising and hard to audit. Cross-group access stays fully available,
+  // just always explicit (`--group ag-2`). Deleting this test would let a
+  // future edit (e.g. "only auto-fill --group when it differs from the
+  // caller's group") silently re-enable the implicit cross-group default.
+  it('a granted agent with no --group still resolves to its own group, not the grant owner', async () => {
+    grantScheduleAdmin('ag-1', 'ag-2');
+    const res = await dispatch(
+      {
+        id: 'g4',
+        command: 'tasks-create',
+        args: { prompt: 'x', name: 'own-group', process_after: '2999-01-01T00:00:00Z' },
+      },
+      agentCtx('ag-1', 'chat-1'),
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect((res.data as { agent_group_id: string }).agent_group_id).toBe('ag-1');
+  });
+
   it('--name yields a short, readable, fs/thread-safe id', async () => {
     const r = await dispatch(
       {

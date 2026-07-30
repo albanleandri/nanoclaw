@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 
 // --- Mocks ---
 
@@ -40,6 +40,36 @@ vi.mock('../modules/approvals/index.js', () => ({
   registerApprovalHandler: vi.fn(),
   requestApproval: vi.fn(),
 }));
+
+// `../modules/scheduling/grants.js` is deliberately left unmocked: the D2 grant
+// gate is the thing under test, so it must run against a real
+// schedule_admin_grants table rather than a stubbed authorization predicate.
+import { initTestDb, closeDb } from '../db/connection.js';
+import { grantScheduleAdmin as insertScheduleAdminGrant } from '../db/schedule-admin-grants.js';
+
+beforeAll(() => {
+  const db = initTestDb();
+  // Minimal standalone schema (no agent_groups FK) — this suite doesn't stand
+  // up the rest of the schema, and the grant gate only needs the grants rows.
+  db.exec(`
+    CREATE TABLE schedule_admin_grants (
+      admin_agent_group_id TEXT NOT NULL,
+      owner_agent_group_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      PRIMARY KEY (admin_agent_group_id, owner_agent_group_id)
+    );
+  `);
+});
+
+afterAll(() => {
+  closeDb();
+});
+
+/** Inserts a live schedule-admin grant into the real table (see beforeAll above). */
+function grantScheduleAdmin(adminAgentGroupId: string, ownerAgentGroupId: string): void {
+  insertScheduleAdminGrant(adminAgentGroupId, ownerAgentGroupId);
+}
 
 // Register a test command so dispatch has something to find
 import { register } from './registry.js';
@@ -101,6 +131,15 @@ register({
   name: 'wirings-list',
   description: 'test command (wirings resource — not allowed)',
   resource: 'wirings',
+  access: 'open',
+  parseArgs: (raw) => raw,
+  handler: async (args) => ({ echo: args }),
+});
+
+register({
+  name: 'tasks-list',
+  description: 'test command (tasks resource)',
+  resource: 'tasks',
   access: 'open',
   parseArgs: (raw) => raw,
   handler: async (args) => ({ echo: args }),
@@ -638,4 +677,70 @@ describe('CLI scope enforcement', () => {
     expect(res.ok && res.human).toContain('--flag');
     expect(res.ok && res.human).toContain('ncl widgets config update');
   });
+
+  // --- D2: grant-aware --group on tasks ---
+
+  // Regression for D2 — `ncl tasks --group <other>` is the fork's cross-group
+  // delegation path. The generic scope gate rejects every foreign --group; tasks
+  // is the one resource where a live schedule-admin grant makes it legal.
+  it('allows a granted foreign --group on tasks', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    grantScheduleAdmin('ag-1', 'ag-owner');
+    const res = await dispatch(
+      { id: 'g1', command: 'tasks-list', args: { group: 'ag-owner' } },
+      { caller: 'agent', sessionId: 'sess-1', agentGroupId: 'ag-1', messagingGroupId: 'mg-1' },
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it('rejects an ungranted foreign --group on tasks', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    const res = await dispatch(
+      { id: 'g2', command: 'tasks-list', args: { group: 'ag-stranger' } },
+      { caller: 'agent', sessionId: 'sess-1', agentGroupId: 'ag-1', messagingGroupId: 'mg-1' },
+    );
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error.code).toBe('forbidden');
+  });
+
+  it('still rejects a foreign --group on every other resource, granted or not', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    grantScheduleAdmin('ag-1', 'ag-owner');
+    const res = await dispatch(
+      { id: 'g3', command: 'sessions-list', args: { group: 'ag-owner' } },
+      { caller: 'agent', sessionId: 'sess-1', agentGroupId: 'ag-1', messagingGroupId: 'mg-1' },
+    );
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error.code).toBe('forbidden');
+  });
+
+  it('does not overwrite an authorized explicit --group with the caller own group', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+    grantScheduleAdmin('ag-1', 'ag-owner');
+    const seen: string[] = [];
+    register({
+      name: 'tasks-probe',
+      description: 'probe',
+      access: 'open',
+      resource: 'tasks',
+      parseArgs: (raw) => raw,
+      handler: async (args) => {
+        seen.push((args as Record<string, string>).group);
+        return {};
+      },
+    });
+    await dispatch(
+      { id: 'g4', command: 'tasks-probe', args: { group: 'ag-owner' } },
+      { caller: 'agent', sessionId: 'sess-1', agentGroupId: 'ag-1', messagingGroupId: 'mg-1' },
+    );
+    expect(seen).toEqual(['ag-owner']);
+  });
 });
+
+// The sole-grant default (`resolveTaskGroup`: an agent with exactly one grant
+// and no --group resolves to the grant OWNER's group) is pinned against the
+// real dispatcher + real tasks resource in
+// `src/cli/resources/tasks.test.ts` ("a granted agent with no --group..."),
+// not here — this file's registered commands are echo stubs that never call
+// `groupArg`/`resolveTaskGroup`, so they cannot prove what the real handler
+// chain does with dispatch's auto-fill in front of it.

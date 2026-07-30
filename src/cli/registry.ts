@@ -7,6 +7,13 @@
  */
 import type { CallerContext } from './frame.js';
 
+/**
+ * Resources a `cli_scope=group` agent may touch. Consumed by both dispatch
+ * enforcement and `ncl help` filtering, so the agent is never shown a resource
+ * the gate would reject (or vice versa).
+ */
+export const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks']);
+
 export type Access = 'open' | 'approval' | 'hidden';
 
 export type CommandDef<TArgs = unknown, TData = unknown> = {

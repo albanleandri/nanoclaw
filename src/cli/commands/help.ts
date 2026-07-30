@@ -8,9 +8,7 @@ import { getContainerConfig } from '../../db/container-configs.js';
 import { getResources } from '../crud.js';
 import type { CallerContext } from '../frame.js';
 import { renderVerbHelp, summaryLine } from '../help-render.js';
-import { listCommands, register } from '../registry.js';
-
-const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks']);
+import { GROUP_SCOPE_RESOURCES, listCommands, register } from '../registry.js';
 
 function getCliScope(ctx: CallerContext): string | undefined {
   if (ctx.caller !== 'agent') return undefined;

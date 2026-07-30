@@ -10,10 +10,11 @@ import { getContainerConfig } from '../db/container-configs.js';
 import { getAgentGroup } from '../db/agent-groups.js';
 import { getSession } from '../db/sessions.js';
 import { registerApprovalHandler, requestApproval } from '../modules/approvals/index.js';
+import { isTaskGroupAuthorized } from '../modules/scheduling/grants.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
 import { getResource } from './crud.js';
 import { listVerbs, renderVerbHelp } from './help-render.js';
-import { lookup } from './registry.js';
+import { GROUP_SCOPE_RESOURCES, lookup } from './registry.js';
 import { log } from '../log.js';
 
 export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<ResponseFrame> {
@@ -49,20 +50,32 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
     }
 
     if (cliScope === 'group') {
-      const allowed = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks']);
       // Only allow whitelisted resources and general commands (no resource, like help)
-      if (cmd.resource && !allowed.has(cmd.resource)) {
+      if (cmd.resource && !GROUP_SCOPE_RESOURCES.has(cmd.resource)) {
         return err(req.id, 'forbidden', `CLI access is scoped to this agent group. Cannot access "${cmd.resource}".`);
       }
 
       // Enforce group scope on all agent-group-related args.
       // Different resources use different arg names for the agent group ID.
-      // Only check --id for resources where it IS the agent group ID.
+      //
+      // `tasks` is the one exception: the fork keeps cross-agent-group task
+      // delegation behind schedule-admin grants (migration 020), so an
+      // explicitly granted foreign --group is legal there and only there.
+      // Everything else stays a hard reject.
       const groupArgs = ['agent_group_id', 'group'] as const;
+      let delegatedGroup: string | undefined;
       for (const key of groupArgs) {
-        if (req.args[key] && req.args[key] !== ctx.agentGroupId) {
-          return err(req.id, 'forbidden', 'CLI access is scoped to this agent group.');
+        const requested = req.args[key];
+        if (!requested || requested === ctx.agentGroupId) continue;
+        if (
+          cmd.resource === 'tasks' &&
+          typeof requested === 'string' &&
+          isTaskGroupAuthorized(ctx.agentGroupId, requested)
+        ) {
+          delegatedGroup = requested;
+          continue;
         }
+        return err(req.id, 'forbidden', 'CLI access is scoped to this agent group.');
       }
       if (
         (cmd.resource === 'groups' || cmd.resource === 'destinations') &&
@@ -80,8 +93,8 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
       // Auto-fill agent-group-related args so the agent doesn't need
       // to pass its own group ID explicitly.
       const fill: Record<string, unknown> = {
-        agent_group_id: req.args.agent_group_id ?? ctx.agentGroupId,
-        group: req.args.group ?? ctx.agentGroupId,
+        agent_group_id: req.args.agent_group_id ?? delegatedGroup ?? ctx.agentGroupId,
+        group: req.args.group ?? delegatedGroup ?? ctx.agentGroupId,
       };
       // Only auto-fill --id for resources where it IS the agent group ID
       // (groups, destinations). For sessions/members --id is a different key.
