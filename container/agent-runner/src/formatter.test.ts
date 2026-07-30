@@ -13,7 +13,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
-import { categorizeMessage, formatMessages, isClearCommand, stripInternalTags } from './formatter.js';
+import type { MessageInRow } from './db/messages-in.js';
+import { categorizeMessage, extractRouting, formatMessages, isClearCommand, stripInternalTags } from './formatter.js';
 import { TIMEZONE } from './timezone.js';
 
 beforeEach(() => {
@@ -235,5 +236,73 @@ describe('stripInternalTags', () => {
 
   it('preserves content that surrounds internal tags', () => {
     expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe('The answer is 42');
+  });
+});
+
+describe('taskFire gating (D3)', () => {
+  // Regression for D3 (see docs/superpowers/specs/2026-07-28-ncl-tasks-...-design.md)
+  // — one-door delivery must key off the HOST-STAMPED is_task flag, not the
+  // message kind. Legacy series created before the ncl tasks port live in a chat
+  // session; treating them as task fires makes their final text undeliverable
+  // (delivery.ts drops a task_log row outside a task session).
+
+  function seedRouting(routing: {
+    channel_type: string | null;
+    platform_id: string | null;
+    thread_id: string | null;
+    is_task: 0 | 1;
+  }) {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO session_routing (id, channel_type, platform_id, thread_id, is_task)
+         VALUES (1, ?, ?, ?, ?)`,
+      )
+      .run(routing.channel_type, routing.platform_id, routing.thread_id, routing.is_task);
+  }
+
+  function taskRow(id: string): MessageInRow {
+    return {
+      id,
+      seq: null,
+      kind: 'task',
+      timestamp: new Date().toISOString(),
+      status: 'pending',
+      process_after: null,
+      recurrence: null,
+      tries: 0,
+      trigger: 1,
+      platform_id: null,
+      channel_type: null,
+      thread_id: null,
+      content: JSON.stringify({ prompt: 'do the thing' }),
+    };
+  }
+
+  function chatRow(id: string): MessageInRow {
+    return {
+      ...taskRow(id),
+      kind: 'chat',
+      content: JSON.stringify({ sender: 'Alice', text: 'hello' }),
+    };
+  }
+
+  it('is not a task fire when the session is not stamped is_task, even for task rows', () => {
+    seedRouting({ channel_type: 'telegram', platform_id: 'chat-1', thread_id: 'thread-1', is_task: 0 });
+    expect(extractRouting([taskRow('t1'), taskRow('t2')]).taskFire).toBe(false);
+  });
+
+  it('is a task fire when the session is stamped is_task and every row is a task', () => {
+    seedRouting({ channel_type: null, platform_id: null, thread_id: 'system:tasks:daily-1a2b', is_task: 1 });
+    expect(extractRouting([taskRow('t1')]).taskFire).toBe(true);
+  });
+
+  it('is not a task fire when a chat row is mixed into a stamped task session', () => {
+    seedRouting({ channel_type: null, platform_id: null, thread_id: 'system:tasks:daily-1a2b', is_task: 1 });
+    expect(extractRouting([taskRow('t1'), chatRow('c1')]).taskFire).toBe(false);
+  });
+
+  it('is not a task fire for an empty batch', () => {
+    seedRouting({ channel_type: null, platform_id: null, thread_id: 'system:tasks:daily-1a2b', is_task: 1 });
+    expect(extractRouting([]).taskFire).toBe(false);
   });
 });

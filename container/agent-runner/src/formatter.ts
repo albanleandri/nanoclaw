@@ -1,5 +1,6 @@
 import { findByRouting } from './destinations.js';
 import type { MessageInRow } from './db/messages-in.js';
+import { getSessionRouting } from './db/session-routing.js';
 import { TIMEZONE, formatLocalTime } from './timezone.js';
 
 /**
@@ -105,6 +106,18 @@ export interface RoutingContext {
   channelType: string | null;
   threadId: string | null;
   inReplyTo: string | null;
+  /**
+   * Batch is a task fire. One-door delivery: only the send_message tool
+   * delivers from a task session; final-text `<message to>` blocks are inert
+   * and the final text auto-appends to the series run log.
+   *
+   * D3: gated on the HOST-STAMPED session_routing.is_task, not on message kind
+   * alone (which is what upstream does). Task rows also exist in chat sessions
+   * — every series created before the `ncl tasks` port. Treating those as task
+   * fires would make their output undeliverable: delivery.ts drops a task_log
+   * row that arrives outside a task session.
+   */
+  taskFire: boolean;
 }
 
 /**
@@ -118,6 +131,8 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
     channelType: first?.channel_type ?? null,
     threadId: first?.thread_id ?? null,
     inReplyTo: first?.id ?? null,
+    taskFire:
+      getSessionRouting().is_task === 1 && messages.length > 0 && messages.every((m) => m.kind === 'task'),
   };
 }
 
