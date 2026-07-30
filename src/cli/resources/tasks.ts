@@ -463,23 +463,50 @@ function updateTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
   if (args.process_after !== undefined) update.processAfter = parseProcessAfter(args.process_after);
   const recurrence = normalizeNullableString(args.recurrence);
   const script = normalizeNullableString(args.script);
-  if (recurrence !== undefined) {
-    validateRecurrence(recurrence);
-    // Effective script AFTER this update: the new value when provided
-    // (including an explicit clear), else whatever the task already has.
-    let scriptAfter: string | null = script !== undefined ? script : null;
-    if (script === undefined) {
+  if (recurrence !== undefined) validateRecurrence(recurrence);
+
+  // The frequency guard judges the series as it will be AFTER this update, not
+  // as the caller happened to phrase it. Either field can strand an ungated
+  // frequent series: raising the cadence, OR removing the gate script that
+  // justified an already-fast cadence. Enforcing only on the recurrence branch
+  // let `update --script null` strip the gate off a */5 task and leave 288
+  // ungated fires/day with no override flag and no user confirmation.
+  const override = bool(args.dangerously_override_recurrence_limit);
+  if (!override && (recurrence !== undefined || script !== undefined)) {
+    // Read the live row at most once, and only for a field the caller did not
+    // supply whose value can still change the verdict. Supplying both fields
+    // (or setting a script, which exempts every cadence) needs no read at all.
+    let fetched = false;
+    let live: TaskRow | undefined;
+    const liveRow = (): TaskRow | undefined => {
+      if (fetched) return live;
+      fetched = true;
       for (const session of selectedSessions(args, ctx)) {
         const row = withInbound(session, (db) => selectTask(db, id));
         if (row) {
-          scriptAfter = parseContent(row.content).script;
+          live = row;
           break;
         }
       }
+      return live;
+    };
+
+    const rowScript = (): string | null => {
+      const row = liveRow();
+      return row ? parseContent(row.content).script : null;
+    };
+    const scriptAfter = script !== undefined ? script : rowScript();
+
+    // A gate script that survives the update exempts any cadence (a gated fire
+    // that finds nothing costs zero tokens), so the cron only matters when the
+    // task will have no script.
+    if (scriptAfter == null) {
+      const recurrenceAfter = recurrence !== undefined ? recurrence : (liveRow()?.recurrence ?? null);
+      enforceRecurrenceLimit(recurrenceAfter, false, false);
     }
-    enforceRecurrenceLimit(recurrence, bool(args.dangerously_override_recurrence_limit), scriptAfter != null);
-    update.recurrence = recurrence;
   }
+
+  if (recurrence !== undefined) update.recurrence = recurrence;
   if (script !== undefined) update.script = script;
   const fields = Object.keys(update);
   if (fields.length === 0) throw new Error('nothing to update');

@@ -213,6 +213,81 @@ describe('tasks CLI resource', () => {
     if (!upd.ok) expect(upd.error.message).toContain('this task has not been scheduled');
   });
 
+  // Regression for the task-16 review finding: `update --script null` bypassed
+  // the frequency guard entirely. A gate script is a documented way to run a
+  // fast cadence, so removing one is exactly as dangerous as raising the
+  // cadence — but enforceRecurrenceLimit only ran inside `if (recurrence !==
+  // undefined)`, so clearing the script alone left an ungated 288-fires/day
+  // series with no override flag and no user confirmation. Deleting these
+  // reopens an agent-reachable quota/ban hazard at the default cli_scope.
+  describe('the frequency guard judges the task AFTER the update, whichever field moved', () => {
+    async function createFastScripted(name: string): Promise<string> {
+      const created = await dispatch(
+        {
+          id: `c-${name}`,
+          command: 'tasks-create',
+          args: { prompt: 'x', name, recurrence: '*/5 * * * *', script: 'echo {"wakeAgent": false}' },
+        },
+        agentCtx(),
+      );
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error('setup failed');
+      return (created.data as { series_id: string }).series_id;
+    }
+
+    it('refuses clearing the gate script off a fast recurrence', async () => {
+      const seriesId = await createFastScripted('gate-strip');
+      const upd = await dispatch(
+        { id: 'u-strip', command: 'tasks-update', args: { id: seriesId, script: 'null' } },
+        agentCtx(),
+      );
+      expect(upd.ok).toBe(false);
+      if (!upd.ok) expect(upd.error.message).toContain('this task has not been scheduled');
+    });
+
+    it('allows clearing the gate script off a slow recurrence', async () => {
+      const created = await dispatch(
+        {
+          id: 'c-slow',
+          command: 'tasks-create',
+          args: { prompt: 'x', name: 'slow-gated', recurrence: '0 9 * * *', script: 'echo {"wakeAgent": false}' },
+        },
+        agentCtx(),
+      );
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const seriesId = (created.data as { series_id: string }).series_id;
+
+      const upd = await dispatch(
+        { id: 'u-slow', command: 'tasks-update', args: { id: seriesId, script: 'null' } },
+        agentCtx(),
+      );
+      expect(upd.ok).toBe(true);
+    });
+
+    it('lets the override flag clear the gate script off a fast recurrence', async () => {
+      const seriesId = await createFastScripted('gate-strip-override');
+      const upd = await dispatch(
+        {
+          id: 'u-override',
+          command: 'tasks-update',
+          args: { id: seriesId, script: 'null', dangerously_override_recurrence_limit: true },
+        },
+        agentCtx(),
+      );
+      expect(upd.ok).toBe(true);
+    });
+
+    it('still allows an unrelated --prompt edit on a fast scripted series', async () => {
+      const seriesId = await createFastScripted('prompt-only');
+      const upd = await dispatch(
+        { id: 'u-prompt', command: 'tasks-update', args: { id: seriesId, prompt: 'new text' } },
+        agentCtx(),
+      );
+      expect(upd.ok).toBe(true);
+    });
+  });
+
   it('tasks create --help carries the script contract and the frequency-limit caveat', async () => {
     // --help and `tasks help create` render the same deep verb help.
     const resp = await dispatch({ id: 'h', command: 'tasks-create', args: { help: true } }, agentCtx());
