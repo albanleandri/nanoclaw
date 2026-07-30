@@ -26,6 +26,7 @@ vi.mock('../../config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-cli-destinations';
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
+import { createMessagingGroup } from '../../db/messaging-groups.js';
 import { createSession } from '../../db/sessions.js';
 import { initSessionFolder, inboundDbPath } from '../../session-manager.js';
 import { dispatch } from '../dispatch.js';
@@ -143,5 +144,123 @@ describe('destinations CLI custom ops project to inbound.db (#2465)', () => {
     expect(resp.ok).toBe(true);
     expect(readSessionDestinations(SOURCE, SESSION_A)).toEqual([]);
     expect(readSessionDestinations(SOURCE, SESSION_B)).toEqual([]);
+  });
+
+  // Task 23: `destinations list` resolves channel_type/display_name via a
+  // LEFT JOIN so a task fire (Task 21) can name an unambiguous destination.
+  // The generic `list` handler's post-handler group-scope filter (dispatch.ts)
+  // only runs for `cmd.generic` commands; a `customOperations.list` is not
+  // generic, so this resource's own SQL must do the scoping instead. These
+  // tests pin that: (1) the join resolves labels for both target types, and
+  // (2) an agent caller under the default 'group' cli_scope cannot see another
+  // group's destinations through this handler.
+  describe('destinations-list resolves labels and stays group-scoped (Task 23)', () => {
+    const CHANNEL_TARGET = 'mg-1';
+    const OTHER_SOURCE = 'ag-other';
+
+    beforeEach(() => {
+      createMessagingGroup({
+        id: CHANNEL_TARGET,
+        channel_type: 'telegram',
+        platform_id: 'chat-1',
+        name: 'Ops Room',
+        is_group: 1,
+        unknown_sender_policy: 'strict',
+        created_at: now(),
+      });
+    });
+
+    it('resolves channel_type and display_name for a channel target', async () => {
+      await dispatch(
+        {
+          id: 'req-1',
+          command: 'destinations-add',
+          args: { agent_group_id: SOURCE, local_name: 'boss', target_type: 'channel', target_id: CHANNEL_TARGET },
+        },
+        { caller: 'host' },
+      );
+
+      const resp = await dispatch(
+        { id: 'req-2', command: 'destinations-list', args: { agent_group_id: SOURCE } },
+        { caller: 'host' },
+      );
+
+      expect(resp.ok).toBe(true);
+      const rows = resp.ok ? (resp.data as Array<Record<string, unknown>>) : [];
+      expect(rows).toEqual([
+        expect.objectContaining({
+          local_name: 'boss',
+          channel_type: 'telegram',
+          display_name: 'Ops Room',
+        }),
+      ]);
+    });
+
+    it('resolves display_name (agent name) for an agent target', async () => {
+      await dispatch(
+        {
+          id: 'req-1',
+          command: 'destinations-add',
+          args: { agent_group_id: SOURCE, local_name: 'helper', target_type: 'agent', target_id: TARGET },
+        },
+        { caller: 'host' },
+      );
+
+      const resp = await dispatch(
+        { id: 'req-2', command: 'destinations-list', args: { agent_group_id: SOURCE } },
+        { caller: 'host' },
+      );
+
+      expect(resp.ok).toBe(true);
+      const rows = resp.ok ? (resp.data as Array<Record<string, unknown>>) : [];
+      expect(rows).toEqual([
+        expect.objectContaining({
+          local_name: 'helper',
+          channel_type: null,
+          display_name: 'target',
+        }),
+      ]);
+    });
+
+    it("an agent caller cannot see another group's destinations via list (no scopeField leak)", async () => {
+      createAgentGroup({
+        id: OTHER_SOURCE,
+        name: 'other-source',
+        folder: 'other-source',
+        agent_provider: null,
+        created_at: now(),
+      });
+
+      // Seed destinations for two different owning groups directly.
+      await dispatch(
+        {
+          id: 'req-1',
+          command: 'destinations-add',
+          args: { agent_group_id: SOURCE, local_name: 'helper', target_type: 'agent', target_id: TARGET },
+        },
+        { caller: 'host' },
+      );
+      await dispatch(
+        {
+          id: 'req-2',
+          command: 'destinations-add',
+          args: { agent_group_id: OTHER_SOURCE, local_name: 'helper-2', target_type: 'agent', target_id: TARGET },
+        },
+        { caller: 'host' },
+      );
+
+      // No container_configs row exists for SOURCE, so cli_scope defaults to
+      // 'group' — the security-relevant default path in dispatch.ts.
+      const resp = await dispatch(
+        { id: 'req-3', command: 'destinations-list', args: {} },
+        { caller: 'agent', sessionId: SESSION_A, agentGroupId: SOURCE, messagingGroupId: 'mg1' },
+      );
+
+      expect(resp.ok).toBe(true);
+      const rows = resp.ok ? (resp.data as Array<Record<string, unknown>>) : [];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ agent_group_id: SOURCE, local_name: 'helper' });
+      expect(rows.some((r) => r.agent_group_id === OTHER_SOURCE)).toBe(false);
+    });
   });
 });

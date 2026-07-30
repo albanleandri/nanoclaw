@@ -91,7 +91,7 @@ export function buildSystemPromptAddendum(assistantName?: string): string {
   return sections.join('\n\n');
 }
 
-function buildDestinationsSection(): string {
+export function buildDestinationsSection(): string {
   const all = getAllDestinations();
 
   if (all.length === 0) {
@@ -105,13 +105,11 @@ function buildDestinationsSection(): string {
   const lines = ['## Sending messages', ''];
   if (all.length === 1) {
     const d = all[0];
-    const label = d.displayName && d.displayName !== d.name ? ` (${d.displayName})` : '';
-    lines.push(`Your destination is \`${d.name}\`${label}.`);
+    lines.push(`Your destination is \`${d.name}\`${destinationLabel(d)}.`);
   } else {
     lines.push('You can send messages to the following destinations:', '');
     for (const d of all) {
-      const label = d.displayName && d.displayName !== d.name ? ` (${d.displayName})` : '';
-      lines.push(`- \`${d.name}\`${label}`);
+      lines.push(`- \`${d.name}\`${destinationLabel(d)}`);
     }
   }
   lines.push('');
@@ -131,4 +129,18 @@ function buildDestinationsSection(): string {
     'After `send_message` or `send_file` delivers the planned content, do not send a separate visible confirmation such as "sent", "delivered", "logged", or "done" to any main/default channel unless the user explicitly asked for that confirmation. Only report delivery status when delivery failed, was blocked, or needs user action. Use `<internal>...</internal>` for private success notes.',
   );
   return lines.join('\n');
+}
+
+/**
+ * Render a destination's parenthesized label — channel type and display name,
+ * joined by ` · `. A task fire must name its destination explicitly, so this
+ * label is what disambiguates otherwise-identical local names in the list the
+ * agent reads. Omits the display name when it duplicates the local name, and
+ * returns '' when neither is known.
+ */
+export function destinationLabel(d: DestinationEntry): string {
+  const parts: string[] = [];
+  if (d.channelType) parts.push(d.channelType);
+  if (d.displayName && d.displayName !== d.name) parts.push(d.displayName);
+  return parts.length > 0 ? ` (${parts.join(' · ')})` : '';
 }
