@@ -1,5 +1,11 @@
 import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
-import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
+import {
+  getPendingMessages,
+  markProcessing,
+  markCompleted,
+  markScriptSkipped,
+  type MessageInRow,
+} from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
@@ -197,15 +203,15 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Without the scheduling module, the marker block is empty, `keep`
     // falls back to `normalMessages`, and no gating happens.
     let keep: MessageInRow[] = normalMessages;
-    let skipped: string[] = [];
+    let skipped: Array<{ id: string; reason: string }> = [];
     // MODULE-HOOK:scheduling-pre-task:start
     const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
     const preTask = await applyPreTaskScripts(normalMessages);
     keep = preTask.keep;
     skipped = preTask.skipped;
     if (skipped.length > 0) {
-      markCompleted(skipped);
-      log(`Pre-task script skipped ${skipped.length} task(s): ${skipped.join(', ')}`);
+      markScriptSkipped(skipped);
+      log(`Pre-task script skipped ${skipped.length} task(s): ${skipped.map((s) => s.id).join(', ')}`);
     }
     // MODULE-HOOK:scheduling-pre-task:end
 
@@ -228,7 +234,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     });
 
     // Process the query while concurrently polling for new messages
-    const skippedSet = new Set(skipped);
+    const skippedSet = new Set(skipped.map((s) => s.id));
     const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
     const orchestrationIds = orchestrationMessageIds(keep);
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
@@ -504,15 +510,15 @@ export async function processQuery(
         // its script gate and always wakes the agent, defeating the gate.
         // Mirrors the initial-batch hook above.
         let keep = newMessages;
-        let skipped: string[] = [];
+        let skipped: Array<{ id: string; reason: string }> = [];
         // MODULE-HOOK:scheduling-pre-task-followup:start
         const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
         const preTask = await applyPreTaskScripts(newMessages);
         keep = preTask.keep;
         skipped = preTask.skipped;
         if (skipped.length > 0) {
-          completeMessages(skipped);
-          log(`Pre-task script skipped ${skipped.length} follow-up task(s): ${skipped.join(', ')}`);
+          markScriptSkipped(skipped);
+          log(`Pre-task script skipped ${skipped.length} follow-up task(s): ${skipped.map((s) => s.id).join(', ')}`);
         }
         // MODULE-HOOK:scheduling-pre-task-followup:end
 
