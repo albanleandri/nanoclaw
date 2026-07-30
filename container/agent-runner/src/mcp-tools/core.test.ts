@@ -67,6 +67,74 @@ describe('send_message MCP tool — in_reply_to plumbing', () => {
   });
 });
 
+describe('send_message MCP tool — one-door rule for task sessions', () => {
+  // Regression for the ncl-tasks port — a task fire has no origin chat, so
+  // "reply in place" is meaningless and the single-destination shortcut would
+  // silently pick an arbitrary target. One door: name the destination.
+
+  function seedRouting(routing: {
+    channel_type: string | null;
+    platform_id: string | null;
+    thread_id: string | null;
+    is_task: 0 | 1;
+  }) {
+    getInboundDb()
+      .prepare(
+        `INSERT INTO session_routing (id, channel_type, platform_id, thread_id, is_task)
+         VALUES (1, ?, ?, ?, ?)`,
+      )
+      .run(routing.channel_type, routing.platform_id, routing.thread_id, routing.is_task);
+  }
+
+  function seedDestinations(
+    destinations: Array<{
+      name: string;
+      type: string;
+      channel_type: string | null;
+      platform_id: string | null;
+    }>,
+  ) {
+    const db = getInboundDb();
+    for (const d of destinations) {
+      db.prepare(
+        `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+      ).run(d.name, d.name, d.type, d.channel_type, d.platform_id);
+    }
+  }
+
+  it('refuses to infer a destination in a task session', async () => {
+    seedRouting({ channel_type: null, platform_id: null, thread_id: 'system:tasks:daily-1a2b', is_task: 1 });
+    seedDestinations([{ name: 'boss', type: 'channel', channel_type: 'telegram', platform_id: 'chat-1' }]);
+
+    const res = await sendMessage.handler({ text: 'hi' });
+
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('task session');
+    expect(res.content[0].text).toContain('boss');
+    expect(getUndeliveredMessages().filter((m) => m.kind !== 'system')).toHaveLength(0);
+  });
+
+  it('still delivers from a task session when `to` is explicit', async () => {
+    seedRouting({ channel_type: null, platform_id: null, thread_id: 'system:tasks:daily-1a2b', is_task: 1 });
+    seedDestinations([{ name: 'boss', type: 'channel', channel_type: 'telegram', platform_id: 'chat-1' }]);
+
+    const res = await sendMessage.handler({ to: 'boss', text: 'hi' });
+
+    expect(res.isError).toBeUndefined();
+    expect(getUndeliveredMessages().filter((m) => m.kind !== 'system')).toHaveLength(1);
+  });
+
+  it('keeps the single-destination shortcut in a chat session', async () => {
+    seedRouting({ channel_type: 'telegram', platform_id: 'chat-1', thread_id: 'thread-1', is_task: 0 });
+    seedDestinations([{ name: 'boss', type: 'channel', channel_type: 'telegram', platform_id: 'chat-1' }]);
+
+    const res = await sendMessage.handler({ text: 'hi' });
+
+    expect(res.isError).toBeUndefined();
+  });
+});
+
 describe('send_file MCP tool — filename safety', () => {
   it('rejects a traversal filename and writes nothing', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'send-file-'));
