@@ -101,7 +101,10 @@ export function collectInstructionSections(options: CollectInstructionSectionsOp
       const match = entry.match(/^(.+)\.instructions\.md$/);
       if (!match) continue;
       const moduleName = match[1];
-      if (moduleName === 'cli' && profile.tools.cliScope === 'disabled') continue;
+      // `scheduling` teaches `ncl tasks`, so it is exactly as dead as `cli`
+      // itself when the agent has no ncl: dispatch rejects every cli_request
+      // and the binary is excluded from the image.
+      if ((moduleName === 'cli' || moduleName === 'scheduling') && profile.tools.cliScope === 'disabled') continue;
       const requiredCapabilities = MODULE_CAPABILITIES[moduleName];
       if (capabilityIds && requiredCapabilities && !requiredCapabilities.some((id) => capabilityIds.has(id))) {
         continue;

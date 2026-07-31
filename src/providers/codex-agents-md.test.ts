@@ -64,9 +64,14 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     expect(doc).not.toContain("Claude's native");
   });
 
+  // Regression for the ncl-tasks port — `scheduling` now teaches `ncl tasks`,
+  // so it is gated on cli_scope the same way `cli` is: both are dead when the
+  // agent has no ncl. `core` stands in as the always-enabled module here so
+  // the test still proves general module rendering works.
   it('renders enabled module and MCP instructions through the shared profile boundary', () => {
     const moduleDir = path.join(projectRoot, 'container', 'agent-runner', 'src', 'mcp-tools');
     fs.mkdirSync(moduleDir, { recursive: true });
+    fs.writeFileSync(path.join(moduleDir, 'core.instructions.md'), 'core module instructions through the boundary');
     fs.writeFileSync(path.join(moduleDir, 'scheduling.instructions.md'), 'schedule work through the shared module');
     fs.writeFileSync(path.join(moduleDir, 'cli.instructions.md'), 'do not include cli instructions when disabled');
     // Backing source for the `knowledge` shared resource so it is advertised.
@@ -92,8 +97,10 @@ describe('composeGroupAgentsMd shared knowledge instructions', () => {
     composeGroupAgentsMd(group, groupDir);
 
     const doc = fs.readFileSync(path.join(groupDir, 'AGENTS.md'), 'utf-8');
-    expect(doc).toContain('# NanoClaw Module: scheduling');
-    expect(doc).toContain('schedule work through the shared module');
+    expect(doc).toContain('# NanoClaw Module: core');
+    expect(doc).toContain('core module instructions through the boundary');
+    expect(doc).not.toContain('# NanoClaw Module: scheduling');
+    expect(doc).not.toContain('schedule work through the shared module');
     expect(doc).not.toContain('# NanoClaw Module: cli');
     expect(doc).not.toContain('do not include cli instructions when disabled');
     expect(doc).toContain('# MCP Server: search');

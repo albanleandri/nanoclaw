@@ -142,7 +142,11 @@ describe('collectInstructionSections', () => {
     expect(sections.some((section) => section.id === 'skill-stocks')).toBe(false);
   });
 
-  it('skips CLI module instructions when CLI scope is disabled', () => {
+  // Regression for the ncl-tasks port — `scheduling` now teaches `ncl tasks`,
+  // so it is exactly as dead as `cli` itself when the agent has no ncl:
+  // dispatch rejects every cli_request and the binary is excluded from the
+  // image. Both must be skipped together when CLI scope is disabled.
+  it('skips CLI and scheduling module instructions when CLI scope is disabled', () => {
     const projectRoot = tempProject();
     writeFile(projectRoot, 'container/agent-runner/src/mcp-tools/cli.instructions.md', 'cli instructions');
     writeFile(projectRoot, 'container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule instructions');
@@ -158,7 +162,7 @@ describe('collectInstructionSections', () => {
       }),
     });
 
-    expect(sections.map((section) => section.id)).toContain('module-scheduling');
+    expect(sections.map((section) => section.id)).not.toContain('module-scheduling');
     expect(sections.map((section) => section.id)).not.toContain('module-cli');
   });
 

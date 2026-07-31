@@ -142,12 +142,16 @@ describe('composeGroupClaudeMd', () => {
       agent_provider: null,
       created_at: now(),
     };
+    // cliScope is 'group' here (not 'disabled') because this test isolates
+    // capability-based filtering, which is orthogonal to cli_scope gating —
+    // `disabled` would now also exclude the scheduling module regardless of
+    // capability, defeating the point of this test.
     const base: ContainerConfig = {
       mcpServers: {},
       packages: { apt: [], npm: [] },
       additionalMounts: [],
       skills: [],
-      cliScope: 'disabled',
+      cliScope: 'group',
     };
     const plan = (ids: string[]): ContainerConfig['sessionRuntimePlan'] => ({
       runtime: { runtimeId: 'claude', runtimeStateKey: 'claude' },
@@ -221,5 +225,60 @@ describe('composeGroupClaudeMd', () => {
     const runtime = fs.readFileSync(path.join(outputDir, '.claude-fragments', 'runtime-contract.md'), 'utf8');
     expect(runtime).toContain('neutral memory authority');
     expect(runtime).not.toContain('legacy Claude memory');
+  });
+
+  // Regression for the ncl-tasks port — `scheduling` now teaches `ncl tasks`,
+  // so it is exactly as dead as `cli` itself when the agent has no ncl:
+  // dispatch rejects every cli_request and the binary is excluded.
+  it('skips both cli and scheduling instructions when cli_scope is disabled', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/agent-runner/src/mcp-tools/cli.instructions.md', 'cli tools');
+    writeFile('container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule tools');
+
+    const group: AgentGroup = {
+      id: 'ag-cli-scope-disabled',
+      name: 'Cli Scope Disabled',
+      folder: 'cli-scope-disabled-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      agent_provider: null,
+      created_at: now(),
+    };
+    groupFolder = group.folder;
+    createAgentGroup(group);
+    createContainerConfig(config(group.id, { cli_scope: 'disabled' }));
+
+    composeGroupClaudeMd(group);
+
+    // The fragments are symlinks to container paths (e.g. /app/src/mcp-tools/...)
+    // that don't exist on the host, so fs.existsSync on the symlink path itself
+    // would follow the link and report false regardless of whether the fragment
+    // was written. List the fragments dir instead.
+    const groupDir = path.join(previousCwd, 'groups', group.folder);
+    const fragments = fs.readdirSync(path.join(groupDir, '.claude-fragments'));
+    expect(fragments).not.toContain('module-cli.md');
+    expect(fragments).not.toContain('module-scheduling.md');
+  });
+
+  it('links both cli and scheduling instructions when cli_scope is group', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/agent-runner/src/mcp-tools/cli.instructions.md', 'cli tools');
+    writeFile('container/agent-runner/src/mcp-tools/scheduling.instructions.md', 'schedule tools');
+
+    const group: AgentGroup = {
+      id: 'ag-cli-scope-group',
+      name: 'Cli Scope Group',
+      folder: 'cli-scope-group-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      agent_provider: null,
+      created_at: now(),
+    };
+    groupFolder = group.folder;
+    createAgentGroup(group);
+    createContainerConfig(config(group.id, { cli_scope: 'group' }));
+
+    composeGroupClaudeMd(group);
+
+    const groupDir = path.join(previousCwd, 'groups', group.folder);
+    const fragments = fs.readdirSync(path.join(groupDir, '.claude-fragments'));
+    expect(fragments).toContain('module-cli.md');
+    expect(fragments).toContain('module-scheduling.md');
   });
 });
