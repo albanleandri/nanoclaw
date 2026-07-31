@@ -319,12 +319,13 @@ describe('ncl-tasks port: series-aware task row API', () => {
     expect(trailingFailedRuns(db, 'watch-9f9f')).toBe(2);
   });
 
-  it('re-arms failed occurrences too, so a broken monitor keeps its series alive', () => {
+  it('re-arms only failed occurrences proven to be gate-script errors', () => {
     db.prepare(
       `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, content, series_id)
        VALUES ('f1', ?, datetime('now'), 'failed', 0, NULL, '*/15 * * * *', 'task', '{}', 'watch-9f9f')`,
     ).run(nextEvenSeq(db));
-    expect(getCompletedRecurring(db).map((m) => m.id)).toContain('f1');
+    expect(getCompletedRecurring(db).map((m) => m.id)).not.toContain('f1');
+    expect(getCompletedRecurring(db, new Set(['f1'])).map((m) => m.id)).toContain('f1');
   });
 
   it('cancelAllTasks clears every live row and reports the count', () => {

@@ -16,7 +16,7 @@ vi.mock('./run-log.js', () => ({
 }));
 
 import { TIMEZONE } from '../../config.js';
-import { ensureSchema, openInboundDb } from '../../db/session-db.js';
+import { ensureSchema, openInboundDb, openOutboundDbRw } from '../../db/session-db.js';
 import { insertTask, insertTaskRow } from './db.js';
 import { handleRecurrence, scriptBackoffMinutes } from './recurrence.js';
 import { appendRunLog } from './run-log.js';
@@ -32,6 +32,20 @@ function freshDb() {
   fs.mkdirSync(TEST_DIR, { recursive: true });
   ensureSchema(DB_PATH, 'inbound');
   return openInboundDb(DB_PATH);
+}
+
+function freshOutboundDb() {
+  const dbPath = path.join(TEST_DIR, 'outbound.db');
+  ensureSchema(dbPath, 'outbound');
+  return openOutboundDbRw(dbPath);
+}
+
+function recordScriptError(outDb: ReturnType<typeof freshOutboundDb>, messageId: string): void {
+  outDb
+    .prepare(
+      "INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, 'script-skip:error', datetime('now'))",
+    )
+    .run(messageId);
 }
 
 function fakeSession(): Session {
@@ -165,7 +179,10 @@ describe('handleRecurrence script-failure backoff', () => {
   // erroring must throttle, not spawn a container at raw cron cadence forever.
   it('pushes the next fire past the cron time while a failure streak is running', async () => {
     seedFailedSeries(db, 'watch-9f9f', { fails: 3, recurrence: '*/5 * * * *' });
-    await handleRecurrence(db, session);
+    const outDb = freshOutboundDb();
+    recordScriptError(outDb, 'watch-9f9f');
+    await handleRecurrence(db, session, outDb);
+    outDb.close();
 
     const next = db
       .prepare("SELECT process_after FROM messages_in WHERE status = 'pending' AND series_id = 'watch-9f9f'")
@@ -176,7 +193,10 @@ describe('handleRecurrence script-failure backoff', () => {
 
   it('re-arms paused and writes a run-log note after 8 consecutive failures', async () => {
     seedFailedSeries(db, 'watch-9f9f', { fails: 8, recurrence: '*/5 * * * *' });
-    await handleRecurrence(db, session);
+    const outDb = freshOutboundDb();
+    recordScriptError(outDb, 'watch-9f9f');
+    await handleRecurrence(db, session, outDb);
+    outDb.close();
 
     const row = db
       .prepare("SELECT status FROM messages_in WHERE series_id = 'watch-9f9f' AND status IN ('pending','paused')")

@@ -194,13 +194,18 @@ export interface RecurringMessage {
   series_id: string;
 }
 
-// Failed occurrences (script-skip:error runs) re-arm too — a broken monitor
-// must keep its series alive so backoff can throttle it and the cap can pause
-// it; dropping the row would silently kill the series on first script error.
-export function getCompletedRecurring(db: Database.Database): RecurringMessage[] {
-  return db
+// Failed occurrences re-arm only when the caller proves they came from a
+// script-skip:error ack. Other terminal failures can retain recurrence in
+// legacy databases; treating all of them as script failures resurrects old
+// series on the first sweep after an upgrade.
+export function getCompletedRecurring(
+  db: Database.Database,
+  scriptErrorIds: ReadonlySet<string> = new Set(),
+): RecurringMessage[] {
+  const rows = db
     .prepare("SELECT * FROM messages_in WHERE status IN ('completed', 'failed') AND recurrence IS NOT NULL")
-    .all() as RecurringMessage[];
+    .all() as Array<RecurringMessage & { status: string }>;
+  return rows.filter((row) => row.status === 'completed' || scriptErrorIds.has(row.id));
 }
 
 /**

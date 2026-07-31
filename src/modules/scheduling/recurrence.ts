@@ -15,6 +15,7 @@ import type Database from 'better-sqlite3';
 import { CronExpressionParser } from 'cron-parser';
 
 import { TIMEZONE } from '../../config.js';
+import { getScriptErrorAckIds } from '../../db/session-db.js';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
 import { clearRecurrence, getCompletedRecurring, insertRecurrence, trailingFailedRuns } from './db.js';
@@ -47,8 +48,12 @@ function appendHostTaskNote(agentGroupId: string, seriesId: string, note: string
   }
 }
 
-export async function handleRecurrence(inDb: Database.Database, session: Session): Promise<void> {
-  const recurring = getCompletedRecurring(inDb);
+export async function handleRecurrence(
+  inDb: Database.Database,
+  session: Session,
+  outDb: Database.Database | null = null,
+): Promise<void> {
+  const recurring = getCompletedRecurring(inDb, outDb ? getScriptErrorAckIds(outDb) : undefined);
 
   for (const msg of recurring) {
     try {

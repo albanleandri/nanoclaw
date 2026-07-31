@@ -243,6 +243,14 @@ export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Data
   })();
 }
 
+/** IDs whose failed status specifically came from a pre-task gate script error. */
+export function getScriptErrorAckIds(outDb: Database.Database): Set<string> {
+  const rows = outDb
+    .prepare("SELECT message_id FROM processing_ack WHERE status = 'script-skip:error'")
+    .all() as Array<{ message_id: string }>;
+  return new Set(rows.map((row) => row.message_id));
+}
+
 export function getStuckProcessingIds(outDb: Database.Database): string[] {
   return (
     outDb.prepare("SELECT message_id FROM processing_ack WHERE status = 'processing'").all() as Array<{
