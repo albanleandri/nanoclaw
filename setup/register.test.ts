@@ -249,13 +249,10 @@ describe('parameterized SQL registration', () => {
       'TodoWrite',
       'ToolSearch',
       'Skill',
+      // D4: no task tool is recommended any more. Five are deleted; the
+      // surviving `schedule_task` is an openai-protocol-loop shim that no
+      // MCP-provider group may see. New groups manage tasks with `ncl tasks`.
       'mcp__nanoclaw__send_message',
-      'mcp__nanoclaw__schedule_task',
-      'mcp__nanoclaw__list_tasks',
-      'mcp__nanoclaw__pause_task',
-      'mcp__nanoclaw__resume_task',
-      'mcp__nanoclaw__cancel_task',
-      'mcp__nanoclaw__update_task',
     ]);
     expect(RECOMMENDED_SECONDARY_SKILLS).toEqual([
       'agent-browser',

@@ -57,27 +57,7 @@
   },
   {
     "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "cancel_task"
-  },
-  {
-    "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "list_tasks"
-  },
-  {
-    "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "pause_task"
-  },
-  {
-    "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "resume_task"
-  },
-  {
-    "capabilityId": "nanoclaw.schedule-task",
     "toolName": "schedule_task"
-  },
-  {
-    "capabilityId": "nanoclaw.schedule-task",
-    "toolName": "update_task"
   },
   {
     "capabilityId": "nanoclaw.self-modify",

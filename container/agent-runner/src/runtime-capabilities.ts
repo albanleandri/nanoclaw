@@ -1,3 +1,11 @@
+/**
+ * Runtime tool/skill menus offered when creating a secondary agent group.
+ *
+ * D4: none of the six task tools appear here any more. Five are deleted
+ * outright; `schedule_task` stays registered as the `openai-protocol-loop`
+ * shim (see mcp-tools/scheduling.ts) but must never be offered to a Claude or
+ * Codex group — those agents manage tasks with `ncl tasks`.
+ */
 import fs from 'fs';
 import path from 'path';
 
@@ -15,12 +23,6 @@ export const RECOMMENDED_SECONDARY_TOOLS = [
   'ToolSearch',
   'Skill',
   'mcp__nanoclaw__send_message',
-  'mcp__nanoclaw__schedule_task',
-  'mcp__nanoclaw__list_tasks',
-  'mcp__nanoclaw__pause_task',
-  'mcp__nanoclaw__resume_task',
-  'mcp__nanoclaw__cancel_task',
-  'mcp__nanoclaw__update_task',
 ];
 
 export const RECOMMENDED_SECONDARY_SKILLS = [
@@ -53,20 +55,6 @@ export const SELECTABLE_RUNTIME_TOOLS = [
     'Send a chat message immediately through NanoClaw IPC.',
     true,
   ],
-  [
-    'mcp__nanoclaw__schedule_task',
-    'Create scheduled or recurring tasks for this group.',
-    true,
-  ],
-  [
-    'mcp__nanoclaw__list_tasks',
-    'List scheduled tasks visible to this group.',
-    true,
-  ],
-  ['mcp__nanoclaw__pause_task', 'Pause a scheduled task.', true],
-  ['mcp__nanoclaw__resume_task', 'Resume a paused task.', true],
-  ['mcp__nanoclaw__cancel_task', 'Cancel and delete a scheduled task.', true],
-  ['mcp__nanoclaw__update_task', 'Update a scheduled task.', true],
 ] as const;
 
 export interface SkillOption {

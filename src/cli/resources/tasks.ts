@@ -181,8 +181,9 @@ function groupArg(args: Record<string, unknown>, ctx: CallerContext): string | u
     // Behaviour difference from upstream (which returns ctx.agentGroupId
     // unconditionally): an agent holding exactly one grant and passing no
     // --group resolves to its GRANT OWNER's group, not its own. That matches
-    // this fork's pre-port handleScheduleTask default, so a delegated agent
-    // need not repeat --group on every call. With no grants the result is the
+    // this fork's pre-port `schedule_task` delivery-action default, so a
+    // delegated agent need not repeat --group on every call. With no grants
+    // the result is the
     // caller's own group, i.e. upstream's behaviour.
     return resolveTaskGroup(ctx.agentGroupId, str(args.group) ?? str(args.agent_group_id));
   }

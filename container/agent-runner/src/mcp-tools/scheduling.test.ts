@@ -1,69 +1,62 @@
+/**
+ * D4 — the scheduling MCP surface is one tool wide.
+ *
+ * `ncl tasks` replaced list/update/cancel/pause/resume for every provider that
+ * can run a CLI. `openai-protocol-loop` cannot: it resolves its protocol tools
+ * from listRegisteredToolDefinitions() (see tool-loop/conformance.test.ts) and
+ * has no `ncl` path at all, so `schedule_task` survives as a registered-but-
+ * unexposed shim. Exposure to Claude/Codex is cut separately, in
+ * runtime-capabilities.ts.
+ */
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { initTestSessionDb, closeSessionDb } from '../db/connection.js';
-import { listTasks } from './scheduling.js';
+import { closeSessionDb, initTestSessionDb } from '../db/connection.js';
+import { getUndeliveredMessages } from '../db/messages-out.js';
+import { scheduleTask } from './scheduling.js';
+import { listRegisteredToolDefinitions } from './server.js';
 
-async function waitFor<T>(fn: () => T | undefined, timeoutMs = 1000): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = fn();
-    if (value !== undefined) return value;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('timed out waiting for condition');
-}
+const REMOVED_TOOLS = ['list_tasks', 'cancel_task', 'pause_task', 'resume_task', 'update_task'];
 
-describe('list_tasks MCP host-mediated flow', () => {
+describe('scheduling MCP tools', () => {
   afterEach(() => {
     closeSessionDb();
   });
 
-  it('requests the task list from the host, formats the response, and acknowledges it', async () => {
-    const { inbound, outbound } = initTestSessionDb();
+  // Regression for D4 — deleting schedule_task too would leave openai-protocol-loop
+  // with no way to schedule anything; re-adding any of the other five would give
+  // agents a second, unauthorized control plane beside `ncl tasks`.
+  it('registers schedule_task and none of the five tools ncl tasks replaced', () => {
+    const names = listRegisteredToolDefinitions().map((d) => d.tool.name);
+    expect(names).toContain('schedule_task');
+    for (const gone of REMOVED_TOOLS) {
+      expect(names).not.toContain(gone);
+    }
+  });
 
-    const resultPromise = listTasks.handler({});
+  it('routes a scheduled task into an isolated per-series session', async () => {
+    initTestSessionDb();
 
-    const out = await waitFor(() =>
-      outbound.prepare("SELECT id, content FROM messages_out WHERE kind = 'system' LIMIT 1").get() as
-        | { id: string; content: string }
-        | undefined,
-    );
-    const request = JSON.parse(out.content) as { action: string; requestId: string };
-    expect(request.action).toBe('list_tasks');
-    expect(request.requestId).toBe(out.id);
+    const res = await scheduleTask.handler({ prompt: 'say hi', processAfter: '2099-01-01T00:00:00' });
+    expect(res.isError).toBeUndefined();
 
-    inbound
-      .prepare(
-        `INSERT INTO messages_in (id, seq, kind, timestamp, status, trigger, content)
-         VALUES (?, ?, 'system', datetime('now'), 'pending', 0, ?)`,
-      )
-      .run(
-        'schedule-admin-response-1',
-        2,
-        JSON.stringify({
-          action: 'schedule_admin_response',
-          requestId: request.requestId,
-          ok: true,
-          tasks: [
-            {
-              id: 'task-shared-1',
-              status: 'pending',
-              process_after: '2026-06-20T07:30:00.000Z',
-              recurrence: '0 7 * * *',
-              content: JSON.stringify({ prompt: 'Shared schedule task for Codex visibility' }),
-            },
-          ],
-        }),
-      );
+    const action = getUndeliveredMessages()
+      .filter((m) => m.kind === 'system')
+      .map((m) => JSON.parse(m.content) as Record<string, unknown>)
+      .find((c) => c.action === 'schedule_task');
+    expect(action).toBeDefined();
+    // The host resolves the series session; the container only names the series.
+    // The charset is load-bearing: the id becomes a thread suffix
+    // (`system:tasks:<id>`) and a filename (`tasks/<id>.md`) on the host.
+    expect(action!.seriesId).toMatch(/^[a-z0-9-]+$/);
+    expect(action!.prompt).toBe('say hi');
+    expect(typeof action!.processAfter).toBe('string');
+  });
 
-    const result = await resultPromise;
-    expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toContain('task-shared-1 [pending]');
-    expect(result.content[0].text).toContain('Shared schedule task for Codex visibility');
+  it('rejects a schedule_task call with an unparseable processAfter', async () => {
+    initTestSessionDb();
 
-    const ack = outbound
-      .prepare("SELECT status FROM processing_ack WHERE message_id = ?")
-      .get('schedule-admin-response-1') as { status: string } | undefined;
-    expect(ack?.status).toBe('completed');
+    const res = await scheduleTask.handler({ prompt: 'say hi', processAfter: 'not-a-timestamp' });
+    expect(res.isError).toBe(true);
+    expect(getUndeliveredMessages()).toHaveLength(0);
   });
 });

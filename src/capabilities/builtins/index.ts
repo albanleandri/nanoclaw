@@ -121,7 +121,12 @@ registerCapability({
     { kind: 'host-action', entrypoint: 'host:update-task' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:schedule_task' },
   ],
-  mcpTools: ['cancel_task', 'list_tasks', 'pause_task', 'resume_task', 'schedule_task', 'update_task'],
+  // D4: the runner surfaces exactly one MCP tool for this capability now —
+  // `schedule_task`, the openai-protocol-loop shim. The other five moved to
+  // `ncl tasks`, so declaring them here would let a forged `tool:list_tasks`
+  // audit event through for a tool that no longer exists. Pinned from both
+  // sides by contracts/mcp-tool-capabilities.json.
+  mcpTools: ['schedule_task'],
 });
 
 registerCapability({

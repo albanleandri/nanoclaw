@@ -321,7 +321,7 @@ export async function deliverMessage(
 
   const content = JSON.parse(msg.content);
 
-  // System actions — handle internally (schedule_task, cancel_task, etc.)
+  // System actions — handle internally (cli_request, schedule_task, etc.)
   if (msg.kind === 'system') {
     await handleSystemAction(content, session, inDb, {
       inReplyTo: msg.in_reply_to,

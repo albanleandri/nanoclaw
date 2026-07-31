@@ -66,34 +66,55 @@ describe('capability audit host bridge', () => {
     inDb.close();
   });
 
-  // Regression: nanoclaw.schedule-task surfaces six MCP tools but the manifest declared
-  // only `tool:schedule_task`, so every list/update/cancel/pause/resume audit event was
-  // rejected and retried to exhaustion — 1,314 dropped events before this was caught.
-  it('accepts every MCP tool entrypoint the container emits for a capability', async () => {
+  // Regression: nanoclaw.schedule-task surfaced six MCP tools but the manifest declared
+  // only the adapter entrypoint `tool:schedule_task`, so every list/update/cancel/pause/
+  // resume audit event was rejected and retried to exhaustion — 1,314 dropped events
+  // before this was caught. The manifest's mcpTools list is the fix, and it has to keep
+  // tracking the runner in BOTH directions: D4 deleted those five tools, so the audited
+  // MCP surface of this capability is now `schedule_task` alone (the openai-protocol-loop
+  // shim). A manifest that lags the runner drops real events; one that outlives it
+  // accepts forged ones.
+  it('accepts every MCP tool entrypoint the container still emits, and no more', async () => {
     const inDb = new Database(':memory:');
+    await handleCapabilityAudit(
+      {
+        eventId: 'event-schedule_task',
+        invocationId: 'invocation-schedule_task',
+        seq: 1,
+        eventType: 'requested',
+        capabilityId: 'nanoclaw.schedule-task',
+        capabilityVersion: 1,
+        adapter: 'mcp',
+        entrypoint: 'tool:schedule_task',
+        argsSha256: 'b'.repeat(64),
+        createdAt: '2026-01-01',
+      },
+      session,
+      inDb,
+    );
     for (const toolName of ['list_tasks', 'update_task', 'cancel_task', 'pause_task', 'resume_task']) {
-      await handleCapabilityAudit(
-        {
-          eventId: `event-${toolName}`,
-          invocationId: `invocation-${toolName}`,
-          seq: 1,
-          eventType: 'requested',
-          capabilityId: 'nanoclaw.schedule-task',
-          capabilityVersion: 1,
-          adapter: 'mcp',
-          entrypoint: `tool:${toolName}`,
-          argsSha256: 'b'.repeat(64),
-          createdAt: '2026-01-01',
-        },
-        session,
-        inDb,
-      );
+      await expect(
+        handleCapabilityAudit(
+          {
+            eventId: `event-${toolName}`,
+            invocationId: `invocation-${toolName}`,
+            seq: 1,
+            eventType: 'requested',
+            capabilityId: 'nanoclaw.schedule-task',
+            capabilityVersion: 1,
+            adapter: 'mcp',
+            entrypoint: `tool:${toolName}`,
+            argsSha256: 'b'.repeat(64),
+            createdAt: '2026-01-01',
+          },
+          session,
+          inDb,
+        ),
+      ).rejects.toThrow('Capability audit entrypoint mismatch');
     }
-    expect(
-      listCapabilityAuditEvents({ agentGroupId: 'agent' })
-        .map((event) => event.entrypoint)
-        .sort(),
-    ).toEqual(['tool:cancel_task', 'tool:list_tasks', 'tool:pause_task', 'tool:resume_task', 'tool:update_task']);
+    expect(listCapabilityAuditEvents({ agentGroupId: 'agent' }).map((event) => event.entrypoint)).toEqual([
+      'tool:schedule_task',
+    ]);
     inDb.close();
   });
 

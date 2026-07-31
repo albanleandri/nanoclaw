@@ -37,11 +37,6 @@ const CANONICAL_CAPABILITIES: Record<string, NonNullable<McpToolDefinition['audi
     capabilityVersion: 1,
     sensitiveFields: ['prompt'],
   },
-  list_tasks: { capabilityId: 'nanoclaw.schedule-task', capabilityVersion: 1 },
-  update_task: { capabilityId: 'nanoclaw.schedule-task', capabilityVersion: 1, sensitiveFields: ['prompt'] },
-  cancel_task: { capabilityId: 'nanoclaw.schedule-task', capabilityVersion: 1 },
-  pause_task: { capabilityId: 'nanoclaw.schedule-task', capabilityVersion: 1 },
-  resume_task: { capabilityId: 'nanoclaw.schedule-task', capabilityVersion: 1 },
   create_agent: {
     capabilityId: 'nanoclaw.manage-agents',
     capabilityVersion: 1,

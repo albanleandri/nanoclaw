@@ -1,8 +1,11 @@
 /**
  * Schedule-admin-grant resolution for `ncl tasks`.
  *
- * Extracted from the deleted src/modules/scheduling/actions.ts when scheduling
- * moved from MCP tools to the CLI. Upstream has no grant concept — this is the
+ * Extracted from the scheduling module's now-deleted delivery-action handlers
+ * when scheduling moved from MCP tools to the CLI. The old owner-resolution
+ * code they held is preserved here and nowhere else.
+ *
+ * Upstream has no grant concept — this is the
  * fork's cross-agent-group task delegation (migration 020-schedule-admin-grants,
  * `ncl schedule-admin-grants`), preserved through the port.
  *
