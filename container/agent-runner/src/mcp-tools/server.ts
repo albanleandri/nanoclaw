@@ -144,7 +144,9 @@ export function filterToolsByCapability(
   tools: McpToolDefinition[],
   allowedCapabilities: ReadonlySet<string>,
 ): McpToolDefinition[] {
-  return tools.filter((tool) => tool.audit && allowedCapabilities.has(tool.audit.capabilityId));
+  return tools.filter(
+    (tool) => tool.tool.name !== 'schedule_task' && tool.audit && allowedCapabilities.has(tool.audit.capabilityId),
+  );
 }
 
 export async function callRegisteredTool(name: string, args: Record<string, unknown>) {

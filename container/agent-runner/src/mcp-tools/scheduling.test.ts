@@ -5,8 +5,8 @@
  * can run a CLI. `openai-protocol-loop` cannot: it resolves its protocol tools
  * from listRegisteredToolDefinitions() (see tool-loop/conformance.test.ts) and
  * has no `ncl` path at all, so `schedule_task` survives as a registered-but-
- * unexposed shim. Exposure to Claude/Codex is cut separately, in
- * runtime-capabilities.ts.
+ * unexposed shim. Exposure to Claude/Codex is cut separately in
+ * mcp-tools/server.ts.
  */
 import { afterEach, describe, expect, it } from 'bun:test';
 

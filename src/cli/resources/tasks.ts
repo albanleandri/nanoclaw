@@ -4,8 +4,7 @@ import fs from 'fs';
 import type Database from 'better-sqlite3';
 import { CronExpressionParser } from 'cron-parser';
 
-import { GROUPS_DIR, TIMEZONE } from '../../config.js';
-import { getAgentGroup } from '../../db/agent-groups.js';
+import { TIMEZONE } from '../../config.js';
 import {
   findTaskSessions,
   getActiveSessions,
@@ -28,7 +27,7 @@ import { parseZonedToUtc } from '../../timezone.js';
 import { resolveTaskGroup } from '../../modules/scheduling/grants.js';
 import { withTaskDeliveryContract } from '../../modules/scheduling/task-prompt.js';
 import { registerResource } from '../crud.js';
-import { appendRunLog } from '../../modules/scheduling/run-log.js';
+import { appendRunLog, readRunLogTail } from '../../modules/scheduling/run-log.js';
 import { formatTasksTable } from '../format-tasks.js';
 import type { CallerContext } from '../frame.js';
 
@@ -374,11 +373,7 @@ function seriesStats(
 
 /** Last ~10 lines of a series' run log (`tasks/<series>.md`), newest last. */
 function tailRunLog(agentGroupId: string, seriesKey: string, lines = 10): string[] {
-  const ag = getAgentGroup(agentGroupId);
-  if (!ag) return [];
-  const file = `${GROUPS_DIR}/${ag.folder}/tasks/${seriesKey}.md`;
-  if (!fs.existsSync(file)) return [];
-  return fs.readFileSync(file, 'utf8').trimEnd().split('\n').filter(Boolean).slice(-lines);
+  return readRunLogTail(agentGroupId, seriesKey, lines);
 }
 
 /**

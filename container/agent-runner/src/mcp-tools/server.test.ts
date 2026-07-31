@@ -14,6 +14,13 @@ describe('in-process MCP tool catalog', () => {
     expect(tools.map((tool) => tool.tool.name)).not.toContain('install_packages');
   });
 
+  it('keeps protocol-only schedule_task out of the native MCP surface', () => {
+    const tools = filterToolsByCapability(listRegisteredToolDefinitions(), new Set(['nanoclaw.schedule-task']));
+
+    expect(tools.map((tool) => tool.tool.name)).not.toContain('schedule_task');
+    expect(listRegisteredToolDefinitions().map((tool) => tool.tool.name)).toContain('schedule_task');
+  });
+
   it('assigns every registered tool to a capability', () => {
     expect(listRegisteredToolDefinitions().filter((tool) => !tool.audit)).toEqual([]);
   });

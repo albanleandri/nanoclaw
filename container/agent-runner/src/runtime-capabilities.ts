@@ -9,14 +9,9 @@
  * mcp-tools/server.ts, fed from the host's compiled capability plan.
  *
  * D4 removed all six task tools from here. The five deleted ones are gone from
- * the tool registry too, so nothing exposes them. `schedule_task` is not: it
- * stays registered as the `openai-protocol-loop` shim (mcp-tools/scheduling.ts),
- * and because the host's `deriveCapabilityProfile` requests
- * `nanoclaw.schedule-task` for every group, it remains available to Claude and
- * Codex agents alongside `ncl tasks`. Dropping it from these lists only keeps
- * it out of the setup menu. That is accepted rather than intended — see the
- * header of mcp-tools/scheduling.ts for why, and start there, not here, if you
- * mean to withdraw it for real.
+ * the tool registry too. `schedule_task` stays registered for the
+ * `openai-protocol-loop` broker, while mcp-tools/server.ts explicitly excludes
+ * it from the native Claude/Codex MCP surface.
  */
 import fs from 'fs';
 import path from 'path';
@@ -37,11 +32,7 @@ export const RECOMMENDED_SECONDARY_TOOLS = [
   'mcp__nanoclaw__send_message',
 ];
 
-export const RECOMMENDED_SECONDARY_SKILLS = [
-  'agent-browser',
-  'capabilities',
-  'status',
-];
+export const RECOMMENDED_SECONDARY_SKILLS = ['agent-browser', 'capabilities', 'status'];
 
 export const SELECTABLE_RUNTIME_TOOLS = [
   ['Bash', 'Run shell commands in the sandbox.', true],
@@ -62,11 +53,7 @@ export const SELECTABLE_RUNTIME_TOOLS = [
   ['ToolSearch', 'Search the runtime tool catalog.', true],
   ['Skill', 'Invoke installed runtime skills.', true],
   ['NotebookEdit', 'Edit Claude notebook state.', false],
-  [
-    'mcp__nanoclaw__send_message',
-    'Send a chat message immediately through NanoClaw IPC.',
-    true,
-  ],
+  ['mcp__nanoclaw__send_message', 'Send a chat message immediately through NanoClaw IPC.', true],
 ] as const;
 
 export interface SkillOption {
@@ -75,15 +62,9 @@ export interface SkillOption {
   recommended: boolean;
 }
 
-type FsLike = Pick<
-  typeof fs,
-  'existsSync' | 'readFileSync' | 'readdirSync' | 'statSync'
->;
+type FsLike = Pick<typeof fs, 'existsSync' | 'readFileSync' | 'readdirSync' | 'statSync'>;
 
-export function readSkillSummary(
-  skillDir: string,
-  fsImpl: FsLike = fs,
-): string {
+export function readSkillSummary(skillDir: string, fsImpl: FsLike = fs): string {
   const skillDoc = path.join(skillDir, 'SKILL.md');
   if (!fsImpl.existsSync(skillDoc)) {
     return 'Runtime skill.';
@@ -102,10 +83,7 @@ export function readSkillSummary(
 
 export function getAvailableSkillOptions(
   fsImpl: FsLike = fs,
-  candidateRoots = [
-    '/workspace/project/container/skills',
-    '/home/node/.claude/skills',
-  ],
+  candidateRoots = ['/workspace/project/container/skills', '/home/node/.claude/skills'],
 ): SkillOption[] {
   for (const root of candidateRoots) {
     if (!fsImpl.existsSync(root)) {
@@ -132,8 +110,8 @@ export function formatRuntimeSelectionList(skillOptions: SkillOption[]): string 
     ([id, description, recommended], index) =>
       `${index + 1}. \`${id}\` - ${description}${recommended ? ' [recommended]' : ''}`,
   );
-  const recommendedToolNumbers = SELECTABLE_RUNTIME_TOOLS.map(
-    ([, , recommended], index) => (recommended ? index + 1 : null),
+  const recommendedToolNumbers = SELECTABLE_RUNTIME_TOOLS.map(([, , recommended], index) =>
+    recommended ? index + 1 : null,
   )
     .filter((value): value is number => value !== null)
     .join(',');
@@ -153,9 +131,7 @@ export function formatRuntimeSelectionList(skillOptions: SkillOption[]): string 
     `Recommended tool numbers for most secondary groups: ${recommendedToolNumbers}`,
     '',
     'Selectable runtime skills for a new secondary group:',
-    ...(skillLines.length > 0
-      ? skillLines
-      : ['(No runtime skills were discovered in this install.)']),
+    ...(skillLines.length > 0 ? skillLines : ['(No runtime skills were discovered in this install.)']),
     '',
     `Recommended skill numbers for most secondary groups: ${recommendedSkillNumbers || '(none)'}`,
     '',

@@ -17,10 +17,10 @@ export default defineConfig({
       // deliberately. Mirrored for the agent-runner in
       // container/agent-runner/scripts/check-coverage.ts.
       thresholds: {
-        statements: 64,
-        branches: 58,
-        functions: 70,
-        lines: 67,
+        statements: 66,
+        branches: 60,
+        functions: 72,
+        lines: 69,
       },
     },
   },

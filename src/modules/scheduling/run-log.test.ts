@@ -12,6 +12,7 @@ vi.mock('../../db/agent-groups.js', () => ({
 }));
 
 beforeEach(() => {
+  vi.resetModules();
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runlog-'));
   process.env.TEST_GROUPS_DIR = tmp;
 });
@@ -37,6 +38,44 @@ describe('appendRunLog', () => {
     expect(() => appendRunLog('ag-1', '../../etc/passwd', 'x')).toThrow('invalid task id');
     expect(() => appendRunLog('ag-1', 'Daily_1A2B', 'x')).toThrow('invalid task id');
     expect(() => appendRunLog('ag-1', '', 'x')).toThrow('invalid task id');
+  });
+
+  it('exposes the same charset guard for run-log readers', async () => {
+    const { isValidTaskSeriesId } = await import('./run-log.js');
+    expect(isValidTaskSeriesId('daily-report-a1b2')).toBe(true);
+    expect(isValidTaskSeriesId('../../private')).toBe(false);
+    expect(isValidTaskSeriesId('Daily_Report')).toBe(false);
+  });
+
+  it('rejects symlinked task directories and log files for host writes', async () => {
+    const { appendRunLog } = await import('./run-log.js');
+    const probe = appendRunLog('ag-1', 'probe', 'locate root');
+    const group = path.dirname(path.dirname(probe.path));
+    const outside = path.join(tmp, 'outside');
+    fs.mkdirSync(outside);
+    fs.rmSync(path.join(group, 'tasks'), { recursive: true });
+    fs.symlinkSync(outside, path.join(group, 'tasks'));
+    expect(() => appendRunLog('ag-1', 'daily-1a2b', 'x')).toThrow('unsafe task log directory');
+
+    fs.unlinkSync(path.join(group, 'tasks'));
+    fs.mkdirSync(path.join(group, 'tasks'));
+    const target = path.join(outside, 'target.md');
+    fs.writeFileSync(target, 'keep\n');
+    fs.symlinkSync(target, path.join(group, 'tasks', 'daily-1a2b.md'));
+    expect(() => appendRunLog('ag-1', 'daily-1a2b', 'x')).toThrow(/symbolic link|ELOOP/);
+    expect(fs.readFileSync(target, 'utf8')).toBe('keep\n');
+    fs.rmSync(path.join(group, 'tasks'), { recursive: true });
+  });
+
+  it('fails closed when reading a symlinked run log', async () => {
+    const { appendRunLog, readRunLogTail } = await import('./run-log.js');
+    const probe = appendRunLog('ag-1', 'daily-1a2b', 'locate root');
+    const dir = path.dirname(probe.path);
+    const target = path.join(tmp, 'private.md');
+    fs.writeFileSync(target, 'secret\n');
+    fs.unlinkSync(probe.path);
+    fs.symlinkSync(target, path.join(dir, 'daily-1a2b.md'));
+    expect(readRunLogTail('ag-1', 'daily-1a2b')).toEqual([]);
   });
 
   it('rejects an unknown agent group', async () => {

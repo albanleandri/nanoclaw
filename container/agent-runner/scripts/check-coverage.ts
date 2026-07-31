@@ -10,10 +10,10 @@
  * This reads the lcov report bun writes and enforces a project-wide ratchet,
  * mirroring the `thresholds` block in the host's vitest.config.ts.
  */
-// Set just under the measured values (functions 82.0%, lines 82.9%) so this
+// Set just under the measured values (functions 83.85%, lines 85.83%) so this
 // acts as a ratchet against regression rather than an aspirational target.
 // Raise them when coverage genuinely improves.
-const FLOORS = { functions: 80, lines: 82 };
+const FLOORS = { functions: 83, lines: 85 };
 const LCOV_PATH = new URL('../coverage/lcov.info', import.meta.url);
 
 const report = await Bun.file(LCOV_PATH).text().catch(() => {
