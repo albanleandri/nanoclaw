@@ -107,18 +107,13 @@ for (const taskTool of [
 
 registerCapability({
   id: 'nanoclaw.schedule-task',
-  version: 1,
+  version: 2,
   description: 'Schedule a future inbound wake through the host.',
   requirements: { durableState: true },
   sideEffects: 'local-write',
   approval: 'never',
   adapters: [
     { kind: 'host-action', entrypoint: 'host:schedule-task' },
-    { kind: 'host-action', entrypoint: 'host:list-tasks' },
-    { kind: 'host-action', entrypoint: 'host:cancel-task' },
-    { kind: 'host-action', entrypoint: 'host:pause-task' },
-    { kind: 'host-action', entrypoint: 'host:resume-task' },
-    { kind: 'host-action', entrypoint: 'host:update-task' },
     { kind: 'protocol-tool', runtimeIds: ['openai-protocol-loop'], entrypoint: 'tool:schedule_task' },
   ],
   // D4: the runner surfaces exactly one MCP tool for this capability now —

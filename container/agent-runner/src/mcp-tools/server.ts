@@ -34,7 +34,11 @@ const CANONICAL_CAPABILITIES: Record<string, NonNullable<McpToolDefinition['audi
   send_card: { capabilityId: 'nanoclaw.send-message', capabilityVersion: 1, sensitiveFields: ['card'] },
   schedule_task: {
     capabilityId: 'nanoclaw.schedule-task',
-    capabilityVersion: 1,
+    // Bumped to 2 in lockstep with src/capabilities/builtins/index.ts (Task 25): the
+    // capability's adapter surface changed (five dead host:*-task adapters removed after
+    // D4 deleted their handlers), and the host's audit handler rejects any event whose
+    // capabilityVersion doesn't match the manifest exactly. Consumers pin on this number.
+    capabilityVersion: 2,
     sensitiveFields: ['prompt'],
   },
   create_agent: {
