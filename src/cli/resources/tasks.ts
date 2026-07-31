@@ -26,6 +26,7 @@ import {
 import { inboundDbPath, resolveTaskSession, withInboundDb } from '../../session-manager.js';
 import { parseZonedToUtc } from '../../timezone.js';
 import { resolveTaskGroup } from '../../modules/scheduling/grants.js';
+import { withTaskDeliveryContract } from '../../modules/scheduling/task-prompt.js';
 import { registerResource } from '../crud.js';
 import { appendRunLog } from '../../modules/scheduling/run-log.js';
 import { formatTasksTable } from '../format-tasks.js';
@@ -302,12 +303,7 @@ function createTask(args: Record<string, unknown>, ctx: CallerContext) {
   const originSessionId = ctx.caller === 'agent' ? ctx.sessionId : null;
   // Each series runs in its own isolated session; point the fire at its own log.
   const { session } = resolveTaskSession(group, id);
-  const promptWithLog =
-    `${prompt}\n\n` +
-    `[Task delivery contract:\n` +
-    `• MESSAGE (only if the task asks you to report/notify): use send_message({ to: "name", … }) with an explicit destination — that tool call is the ONLY thing the user receives. This run has no chat attached: final text and <message> blocks are NOT delivered here.\n` +
-    `• RUN LOG (automatic): your final text is recorded verbatim in tasks/${id}.md — end the run with a concrete work-log line: what you did and WHY (a no-op run still ends with why nothing was needed; name any files you wrote). Not a greeting, not a copy of the message you sent. For extra mid-run notes use \`ncl tasks append-log --msg "…"\` — if you do, your final text is not auto-logged. Do NOT edit tasks/${id}.md by hand; the log never goes to the user.\n` +
-    `Need context from past runs? Read tasks/${id}.md first.]`;
+  const promptWithLog = withTaskDeliveryContract(prompt, id);
 
   const created = withInbound(session, (db) => {
     insertTaskRow(db, {

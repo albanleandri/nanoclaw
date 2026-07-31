@@ -26,6 +26,7 @@ import { log } from '../../log.js';
 import { resolveTaskSession, withInboundDb } from '../../session-manager.js';
 import { insertTask } from './db.js';
 import { resolveTaskGroup } from './grants.js';
+import { withTaskDeliveryContract } from './task-prompt.js';
 
 /**
  * The series id becomes a thread suffix (`system:tasks:<id>`) and a run-log
@@ -52,7 +53,14 @@ registerDeliveryAction('schedule_task', async (content, session) => {
       id: seriesId,
       processAfter: content.processAfter as string,
       recurrence: (content.recurrence as string) || null,
-      content: JSON.stringify({ prompt: content.prompt, script: content.script ?? null }),
+      // Same delivery contract `ncl tasks create` attaches. Load-bearing here:
+      // the fire lands in an isolated task session where only send_message
+      // reaches a human, and a protocol-loop agent has no `ncl` to learn that
+      // from — without it the task runs and delivers to nobody.
+      content: JSON.stringify({
+        prompt: withTaskDeliveryContract(String(content.prompt ?? ''), seriesId),
+        script: content.script ?? null,
+      }),
     }),
   );
   log.info('Scheduled task created', {

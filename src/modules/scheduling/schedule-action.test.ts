@@ -130,7 +130,46 @@ describe('schedule_task delivery action (D4 protocol shim)', () => {
       process_after: '2099-01-01T00:00:00.000Z',
       recurrence: '0 9 * * 1-5',
     });
-    expect(JSON.parse(rows[0].content)).toEqual({ prompt: 'say hi', script: null });
+    // Exactly two content fields, and the prompt opens with what the agent
+    // asked for — the delivery contract appended after it is pinned separately.
+    const content = JSON.parse(rows[0].content) as Record<string, unknown>;
+    expect(Object.keys(content).sort()).toEqual(['prompt', 'script']);
+    expect(content.script).toBeNull();
+    expect((content.prompt as string).startsWith('say hi\n\n[Task delivery contract:')).toBe(true);
+  });
+
+  /*
+   * A shim-created task fires into an isolated `system:tasks:<id>` session, and
+   * D3/one-door delivery means NOTHING leaves that session except a send_message
+   * call with an explicit destination — final text and <message> blocks are
+   * inert there. `ncl tasks create` teaches the agent that by baking the
+   * delivery contract into the stored prompt; the shim MUST do the same, or an
+   * openai-protocol-loop agent (which has no `ncl` to learn it from) schedules a
+   * reminder that fires, produces text, and delivers it to nobody. Silent
+   * non-delivery is exactly the failure D3 was written to prevent, so this is
+   * pinned rather than left to the two call sites to remember.
+   */
+  it('bakes the task delivery contract into the stored prompt', async () => {
+    await fire(
+      {
+        action: 'schedule_task',
+        seriesId: 't-contract',
+        prompt: 'remind me to call Dana',
+        processAfter: '2099-01-01T00:00:00.000Z',
+      },
+      callerSession,
+    );
+
+    const [row] = tasksInSeriesSession(CALLER_AGENT_GROUP_ID, 't-contract');
+    const stored = JSON.parse(row.content).prompt as string;
+
+    expect(stored.startsWith('remind me to call Dana')).toBe(true);
+    // The one door out of a task fire, and the fact that it needs naming a destination.
+    expect(stored).toContain('send_message');
+    expect(stored).toContain('explicit destination');
+    expect(stored).toContain('no chat attached');
+    // Its own run log, addressed by series id.
+    expect(stored).toContain('tasks/t-contract.md');
   });
 
   // The deleted actions.ts let the container name any group it held a grant for
