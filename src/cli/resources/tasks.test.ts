@@ -366,8 +366,7 @@ describe('tasks CLI resource', () => {
       expect(res.ok).toBe(true);
     });
 
-    // Fork-only default, inherited from the pre-port `schedule_task` delivery
-    // action (deleted with the scheduling MCP tools): with
+    // Fork-only default, inherited from the pre-port handleScheduleTask: with
     // exactly one grant and no --group, the agent operates on its GRANT OWNER's
     // tasks, not its own. Upstream would create in ag-1 here.
     it('with a sole grant and no --group, creates in the grant owner group', async () => {

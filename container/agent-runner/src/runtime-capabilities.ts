@@ -1,10 +1,22 @@
 /**
  * Runtime tool/skill menus offered when creating a secondary agent group.
  *
- * D4: none of the six task tools appear here any more. Five are deleted
- * outright; `schedule_task` stays registered as the `openai-protocol-loop`
- * shim (see mcp-tools/scheduling.ts) but must never be offered to a Claude or
- * Codex group — those agents manage tasks with `ncl tasks`.
+ * These two lists are NOT the runtime exposure lever, despite the name. They
+ * are read by exactly two callers: `formatRuntimeSelectionList` below (the
+ * setup menu a human picks from) and ipc-mcp-stdio.ts, which is dead v1 code
+ * nothing in the repo launches. What an agent can actually call is decided by
+ * `filterToolsByCapability(allTools, NANOCLAW_CAPABILITIES)` in
+ * mcp-tools/server.ts, fed from the host's compiled capability plan.
+ *
+ * D4 removed all six task tools from here. The five deleted ones are gone from
+ * the tool registry too, so nothing exposes them. `schedule_task` is not: it
+ * stays registered as the `openai-protocol-loop` shim (mcp-tools/scheduling.ts),
+ * and because the host's `deriveCapabilityProfile` requests
+ * `nanoclaw.schedule-task` for every group, it remains available to Claude and
+ * Codex agents alongside `ncl tasks`. Dropping it from these lists only keeps
+ * it out of the setup menu. That is accepted rather than intended — see the
+ * header of mcp-tools/scheduling.ts for why, and start there, not here, if you
+ * mean to withdraw it for real.
  */
 import fs from 'fs';
 import path from 'path';

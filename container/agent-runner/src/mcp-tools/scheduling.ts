@@ -2,10 +2,24 @@
  * Scheduling MCP tool: `schedule_task`, and nothing else.
  *
  * D4 — `ncl tasks` is the task control plane for every provider that can run a
- * CLI, so list/update/cancel/pause/resume are gone. `openai-protocol-loop` has
- * no `ncl` path and resolves its protocol tools from the MCP registry, so this
- * one tool stays REGISTERED as a shim for it. It is deliberately absent from
- * runtime-capabilities.ts, so no Claude or Codex agent is offered it.
+ * CLI, so list/update/cancel/pause/resume are gone: deleted from the registry
+ * outright, so nothing can expose them. `openai-protocol-loop` has no `ncl`
+ * path and resolves its protocol tools from the MCP registry, so this one tool
+ * stays REGISTERED as a shim for it.
+ *
+ * D4 also removed all six names from runtime-capabilities.ts. Be clear about
+ * what that did and did not do: those lists feed the secondary-group setup menu
+ * and the dead v1 ipc-mcp-stdio.ts path only. Actual MCP exposure is decided by
+ * `filterToolsByCapability(allTools, NANOCLAW_CAPABILITIES)` in ./server.ts,
+ * fed from the host's compiled capability plan — and the host's
+ * `deriveCapabilityProfile` (src/capabilities/spawn-gate.ts) requests
+ * `nanoclaw.schedule-task` for EVERY group. So `schedule_task` is still
+ * offered to Claude and Codex agents alongside `ncl tasks`. That is accepted,
+ * not intended: re-plumbing capability compilation was out of scope for this
+ * port, and the tool is not a hazard now that it routes through the
+ * group-scoped, contract-bearing, isolated-session handler on the host. A
+ * maintainer who wants to actually withdraw it should start at server.ts's
+ * filter and the capability profile, not at these lists.
  *
  * The container cannot write to inbound.db (host-owned), so the tool emits a
  * `kind='system'` outbound message and the host applies it during delivery

@@ -1,11 +1,15 @@
 /**
  * D4 — the host half of the surviving `schedule_task` protocol shim.
  *
- * This action is the ONLY task write path left for `openai-protocol-loop`
- * providers. If the registration ever stops running at startup, delivery logs
- * "Unknown system action" and silently drops every scheduled task those
- * providers create — no other test would notice, which is why the registration
- * itself is asserted here alongside the behaviour.
+ * This action is the only task write path `openai-protocol-loop` providers have
+ * (and, because the compiled capability plan grants nanoclaw.schedule-task to
+ * every group, one that Claude and Codex agents can reach too). If the
+ * registration ever stops running at startup, delivery logs "Unknown system
+ * action" and silently drops every task scheduled through it — no other test
+ * would notice, which is why the registration itself is asserted here.
+ *
+ * That assertion is only worth anything if it reaches the registration the way
+ * the host does, through the modules barrel — see the import note below.
  */
 import fs from 'fs';
 
@@ -32,7 +36,13 @@ import { findTaskSessions } from '../../db/sessions.js';
 import { getDeliveryAction } from '../../delivery.js';
 import { resolveTaskSession, withInboundDb } from '../../session-manager.js';
 import type { Session } from '../../types.js';
-import './schedule-action.js';
+// The modules BARREL, deliberately — not './schedule-action.js'. Importing the
+// module directly would register the handler itself and make the registration
+// assertion below unfalsifiable: it would stay green even with the barrel line
+// deleted, which is precisely the regression this file claims to catch. Going
+// through '../index.js' exercises the same chain src/index.ts boots
+// (src/index.ts → modules/index.js → ./scheduling/schedule-action.js).
+import '../index.js';
 
 interface TaskRow {
   id: string;
@@ -104,7 +114,9 @@ describe('schedule_task delivery action (D4 protocol shim)', () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it('is registered, so delivery does not fall through to "Unknown system action"', () => {
+  // Deleting `import './scheduling/schedule-action.js'` from src/modules/index.ts
+  // must turn this red. Verified by doing exactly that.
+  it('is registered through the modules barrel the host boots', () => {
     expect(getDeliveryAction('schedule_task')).toBeDefined();
   });
 

@@ -63,9 +63,10 @@ export function classifyClaudeRateLimitEvent(
 // Code's interactive UI and would hang here).
 //
 // - CronCreate / CronDelete / CronList / ScheduleWakeup: we have durable
-//   scheduling via `ncl tasks` (D4 removed the scheduling MCP tools; the one
-//   that survives, schedule_task, is an openai-protocol-loop shim that is
-//   never exposed to this provider).
+//   scheduling via `ncl tasks` (D4 removed list/update/cancel/pause/resume;
+//   schedule_task survives as the openai-protocol-loop shim and, since the
+//   compiled capability plan grants nanoclaw.schedule-task to every group,
+//   stays callable here too — see mcp-tools/scheduling.ts).
 // - AskUserQuestion: SDK returns a placeholder instead of blocking on a
 //   real answer — we have mcp__nanoclaw__ask_user_question that persists
 //   the question and blocks on the real reply.

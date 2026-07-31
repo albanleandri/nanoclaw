@@ -2,11 +2,20 @@
  * D4: the `schedule_task` system action — the one surviving MCP write path.
  *
  * `openai-protocol-loop` providers have no `ncl`, so they schedule through the
- * registered-but-unexposed `schedule_task` protocol tool
- * (container/agent-runner/src/mcp-tools/scheduling.ts), which writes a
- * `kind='system'` outbound message that lands here. Everything else — list,
- * update, cancel, pause, resume — moved to `ncl tasks`, and the handlers that
- * used to serve them (src/modules/scheduling/actions.ts) are deleted.
+ * surviving `schedule_task` tool (container/agent-runner/src/mcp-tools/scheduling.ts),
+ * which writes a `kind='system'` outbound message that lands here. Everything
+ * else — list, update, cancel, pause, resume — moved to `ncl tasks`, and the
+ * handlers that used to serve them (the module's deleted actions file) are gone.
+ *
+ * Not only protocol-loop agents reach this handler. Removing `schedule_task`
+ * from runtime-capabilities.ts took it out of the setup menu, not out of the
+ * runtime: exposure is decided by `filterToolsByCapability` in the container's
+ * mcp-tools/server.ts, and deriveCapabilityProfile (src/capabilities/spawn-gate.ts)
+ * requests `nanoclaw.schedule-task` for every group, so Claude and Codex agents
+ * can still call it alongside `ncl tasks`. Accepted, not intended — which is
+ * why this handler is written to be safe for ANY caller: group-scoped through
+ * resolveTaskGroup, charset-guarded on the series id, isolated per-series
+ * session, and delivery contract attached.
  *
  * Two things the deleted actions.ts did are deliberately NOT carried over:
  *   - the `ownerAgentGroupId` request parameter, and
