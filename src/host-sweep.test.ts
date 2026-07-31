@@ -44,6 +44,7 @@ import {
   decideStuckAction,
   parseSqliteUtc,
   shouldCloseTaskSession,
+  shouldStopSpentTaskContainer,
 } from './host-sweep.js';
 import { inboundDbPath, resolveTaskSession } from './session-manager.js';
 import type { Session } from './types.js';
@@ -519,6 +520,18 @@ describe('shouldCloseTaskSession', () => {
   it('never closes a non-task session', () => {
     expect(shouldCloseTaskSession('thread-1', false, 0)).toBe(false);
     expect(shouldCloseTaskSession(null, false, 0)).toBe(false);
+  });
+});
+
+describe('shouldStopSpentTaskContainer', () => {
+  it('stops a task container after its final live row completes', () => {
+    expect(shouldStopSpentTaskContainer('system:tasks:daily-1a2b', true, 0)).toBe(true);
+  });
+
+  it('keeps recurring work and non-task containers alive', () => {
+    expect(shouldStopSpentTaskContainer('system:tasks:daily-1a2b', true, 1)).toBe(false);
+    expect(shouldStopSpentTaskContainer('thread-1', true, 0)).toBe(false);
+    expect(shouldStopSpentTaskContainer(null, true, 0)).toBe(false);
   });
 });
 

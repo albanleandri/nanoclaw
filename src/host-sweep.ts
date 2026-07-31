@@ -200,6 +200,16 @@ export function shouldCloseTaskSession(
   return isTaskThread(threadId) && !containerRunning && liveTaskCount === 0;
 }
 
+/** A completed one-shot task container has no future work and must exit so
+ *  the following sweep can close its spent session. */
+export function shouldStopSpentTaskContainer(
+  threadId: string | null,
+  containerRunning: boolean,
+  liveTaskCount: number,
+): boolean {
+  return isTaskThread(threadId) && containerRunning && liveTaskCount === 0;
+}
+
 async function sweepSession(session: Session): Promise<void> {
   const agentGroup = getAgentGroup(session.agent_group_id);
   if (!agentGroup) return;
@@ -280,7 +290,10 @@ async function sweepSession(session: Session): Promise<void> {
           .prepare("SELECT COUNT(*) AS c FROM messages_in WHERE kind = 'task' AND status IN ('pending', 'paused')")
           .get() as { c: number }
       ).c;
-      if (shouldCloseTaskSession(session.thread_id, isContainerRunning(session.id), liveTasks)) {
+      const taskContainerRunning = isContainerRunning(session.id);
+      if (shouldStopSpentTaskContainer(session.thread_id, taskContainerRunning, liveTasks)) {
+        killContainer(session.id, 'spent-task-session');
+      } else if (shouldCloseTaskSession(session.thread_id, taskContainerRunning, liveTasks)) {
         updateSession(session.id, { status: 'closed' });
         log.info('Closed spent task session', { sessionId: session.id, threadId: session.thread_id });
       }
