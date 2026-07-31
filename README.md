@@ -87,6 +87,7 @@ This fork stays close to upstream NanoClaw's host/container/session-DB architect
 - **Durable job/action framework** — host-side long-running jobs can persist progress, expose delivery actions, and report failures through the normal messaging path.
 - **Runner-neutral execution runs** — the existing direct session path is represented by a validated `ExecutionPlan`, inspected with `ncl orchestration-runs list --agent-group-id <id>`, cancelled with `ncl orchestration-runs cancel --id <run-id>`, and evaluated with `ncl orchestration-runs eval --agent-group-id <id>`; fallback requires an explicitly evaluated code-owned policy version and candidate profile list, while later advanced patterns remain gated.
 - **Local operator tooling** — helper scripts cover read-only SQLite inspection, backup/restore, token refresh, and systemd service management.
+- **Closed `ncl tasks update` gate bypass** — `updateTaskCommand` (`src/cli/resources/tasks.ts`) re-checks the recurrence-frequency limit whenever either `--recurrence` or `--script` changes, not just on the recurrence branch. Upstream enforces the limit only when `--recurrence` is supplied, so `ncl tasks update --script null` there strips a gate script off a high-frequency series (e.g. `*/5 * * * *`) with no override flag and no re-check, leaving it ungated. Do not "simplify" this back to upstream's single-branch check when porting future `tasks.ts` changes.
 
 ## Usage
 

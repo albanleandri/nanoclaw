@@ -59,7 +59,7 @@ CREATE TABLE messages_in (
   seq            INTEGER UNIQUE,           -- EVEN only (host assigns) — see §3
   kind           TEXT NOT NULL,
   timestamp      TEXT NOT NULL,
-  status         TEXT DEFAULT 'pending',   -- pending|processing|completed|failed|paused
+  status         TEXT DEFAULT 'pending',   -- pending|processing|completed|failed|paused|cancelled
   process_after  TEXT,
   recurrence     TEXT,                     -- cron expr for recurring
   series_id      TEXT,                     -- groups occurrences of a recurring task

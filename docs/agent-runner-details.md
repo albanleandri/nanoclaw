@@ -664,9 +664,52 @@ Send a message to another agent group.
 
 Implementation: write a `messages_out` row with `channel_type: 'agent'`, `platform_id: agentGroupId`, `thread_id: sessionId`.
 
+#### ncl tasks (not an MCP tool)
+
+Task scheduling is a CLI resource, not an MCP tool call. `list`, `get`,
+`create`, `update`, `pause`, `resume`, `cancel`, `delete`, `run`, and
+`append-log` are all verbs of `ncl tasks` (`src/cli/resources/tasks.ts`),
+reached through the `ncl` binary mounted at `/usr/local/bin/ncl` inside the
+container (`container/agent-runner/src/cli/ncl.ts`, socket transport to the
+host's CLI dispatcher). There is no MCP tool named `list_tasks`,
+`cancel_task`, `pause_task`, `resume_task`, or `update_task` any more — those
+five were removed outright, along with their host-side handlers.
+
+```bash
+ncl tasks create --name "ping" --prompt "..." --process-after "2026-01-15T09:00:00" --recurrence "0 9 * * *"
+ncl tasks list
+ncl tasks get ping-a25c
+ncl tasks update ping-a25c --prompt "..."
+ncl tasks pause ping-a25c
+ncl tasks resume ping-a25c
+ncl tasks cancel ping-a25c        # or --all as a kill switch
+ncl tasks delete ping-a25c
+ncl tasks run ping-a25c           # fire once now without changing the schedule
+ncl tasks append-log --msg "..."  # inside a fire, record one run-log line
+```
+
+Implementation: `create` resolves the caller's task group (`resolveTaskGroup`,
+honoring any schedule-admin grant), opens or reuses that series' isolated
+task session (`resolveTaskSession`, `src/session-manager.ts`), and inserts the
+`kind: 'task'` row straight into that session's `inbound.db` — the CLI runs on
+the host, so there is no `messages_out`/delivery round trip. `list`/`get` read
+across the caller's live task sessions; `update`/`pause`/`resume`/`cancel`/
+`delete` match by `(id = ? OR series_id = ?) AND kind='task' AND status IN
+('pending','paused')` (`src/modules/scheduling/db.ts`), so they reach the live
+next occurrence of a recurring task even when the agent passes the original
+(now-completed) id. See the "`ncl tasks` control plane" section of
+[architecture.md](architecture.md#scheduling-and-durable-jobs) for the
+script-gate contract, backoff/auto-pause, and one-door delivery, and
+[ncl-tasks-migration.md](ncl-tasks-migration.md) for the migration from the
+removed tools.
+
 #### schedule_task
 
-Schedule a one-shot or recurring task.
+Schedule a one-shot or recurring task. This is a narrow, **create-only** MCP
+tool — it cannot list, update, pause, resume, or cancel. It survives solely as
+a shim for `openai-protocol-loop` providers, which have no `ncl` binary and
+resolve their protocol tools from the MCP registry; every other provider
+should prefer `ncl tasks` above.
 
 ```typescript
 {
@@ -680,36 +723,7 @@ Schedule a one-shot or recurring task.
 }
 ```
 
-Implementation: write a `messages_in` row (to self) with `kind: 'task'`, `process_after`, and optionally `recurrence`. The host sweep picks it up when due.
-
-#### list_tasks
-
-List active scheduled/recurring tasks.
-
-```typescript
-{
-  name: 'list_tasks',
-  params: {}
-}
-```
-
-Implementation: query `messages_in WHERE recurrence IS NOT NULL AND status != 'failed'`.
-
-#### cancel_task / pause_task / resume_task / update_task
-
-Modify a scheduled task.
-
-```typescript
-{
-  name: 'cancel_task',
-  params: { taskId: string }
-}
-// pause_task: set status = 'paused' (new status value for recurring tasks)
-// resume_task: set status = 'pending'
-// update_task: merge { prompt?, recurrence?, processAfter?, script? } into the live row
-```
-
-Implementation: cancel/pause/resume update the live row(s) directly. update_task is sent as a system action — the host reads current content, merges supplied fields, and writes back. All four match by `(id = ? OR series_id = ?) AND kind='task' AND status IN ('pending','paused')`, so they reach the live next occurrence of a recurring task even when the agent passes the original (now-completed) id.
+Implementation: the container can't write host-owned `inbound.db`, so this writes a `messages_out` row with `kind: 'system'` and `action: 'schedule_task'` (`container/agent-runner/src/mcp-tools/scheduling.ts`). During delivery the host's action handler (`src/modules/scheduling/schedule-action.ts`) resolves the caller's task group, opens or creates that series' isolated task session exactly as `ncl tasks create` does, and inserts the `kind: 'task'` row with the same delivery-contract preamble. The host sweep picks it up when due.
 
 #### create_agent
 

@@ -510,6 +510,61 @@ Simple scheduled session messages use `process_after` and optional
 `recurrence` on inbound rows. Host sweep wakes due trigger-bearing work and
 advances recurring occurrences without wall-clock drift.
 
+### `ncl tasks` control plane
+
+Scheduled tasks are `messages_in` rows with `kind: 'task'`, but they run in
+their **own per-series system session**, not the caller's chat session. `ncl
+tasks create` (`src/cli/resources/tasks.ts`) resolves the caller's task group,
+then `resolveTaskSession()` (`src/session-manager.ts`) finds or creates a
+session with `messaging_group_id = NULL` and `thread_id =
+system:tasks:<series_id>` — one such session per live series, materialized on
+first fire and reused for every recurrence. The `openai-protocol-loop`
+`schedule_task` shim (the one surviving MCP write path, `src/modules/
+scheduling/schedule-action.ts`) creates a per-series session the same way, so
+a protocol-loop-scheduled task gets the identical isolation.
+
+**Script gate.** `create --script` attaches a pre-task bash script that runs
+_before_ the agent wakes (`container/agent-runner/src/scheduling/
+task-script.ts`): 30s timeout, 1MB output cap, and its last stdout line must be
+JSON `{"wakeAgent": boolean, "data"?: unknown}`. `wakeAgent: false` (or a
+missing/malformed line, or a nonzero exit) acks the occurrence without waking
+the agent — a gated fire costs no tokens. `wakeAgent: true` folds `data` into
+the task prompt as `scriptOutput` before the agent sees it. A gate script also
+exempts the series from the recurrence-frequency limit (more than 4 fires/day
+is otherwise refused) — the whole point of a gate is that most fires find
+nothing and never wake the agent.
+
+**Backoff and auto-pause.** A script that keeps _erroring_ (not a deliberate
+`wakeAgent: false`) counts as a failed occurrence. `trailingFailedRuns()`
+(`src/modules/scheduling/db.ts`) derives the current consecutive-failure
+streak from occurrence history — no separate counter — and
+`src/modules/scheduling/recurrence.ts` uses it to back the next fire off
+(2, 4, 8, …, capped at 60 minutes). After 8 consecutive failures the series is
+re-armed `paused` instead, with a host-written line in its run log explaining
+why; `ncl tasks resume <id>` revives it once the script is fixed.
+
+**One-door delivery.** A task fire has no chat attached, so `<message>` blocks
+and bare final text are inert there. Every task prompt gets the delivery
+contract baked in by `withTaskDeliveryContract()`
+(`src/modules/scheduling/task-prompt.ts`): the _only_ way to reach a human from
+inside a fire is `send_message` with an explicit destination. `delivery.ts`
+enforces this from the host side — it drops (never delivers) a `task_log` row
+that isn't coming from a session stamped `is_task` in `session_routing`, so a
+task fire cannot accidentally leak final text out through a channel.
+
+**Run log.** A fire's final text is auto-recorded, verbatim, as a `task_log`
+outbound row; `delivery.ts` appends it to
+`groups/<folder>/tasks/<series_id>.md` (`appendRunLog()`,
+`src/modules/scheduling/run-log.ts`) instead of delivering it anywhere. Inside
+a fire, `ncl tasks append-log --msg "..."` adds an extra host-timestamped line
+for a mid-run note (and suppresses that fire's final-text auto-log). `ncl
+tasks get <id>` tails the last ~10 lines alongside run/failure counts.
+
+See [docs/ncl-tasks-migration.md](ncl-tasks-migration.md) for the migration
+path from the pre-port scheduling MCP tools, including why legacy series
+(created before this control plane existed) still fire from their original
+chat session.
+
 Long-running host work uses the central `jobs`/`job_events` lifecycle rather
 than pretending a container tool call is durable. Agent-task delegation uses
 its own central task/event lifecycle and dedicated assignee sessions. Job
@@ -524,8 +579,7 @@ host-side flow is gated behind `SCREEN_MARKET_GUIDED_HOST`, which defaults to
 false — the tables exist in every install but the guided prompts stay off
 until an operator enables them.
 
-Auxiliary invocations (`auxiliary_routes`, `auxiliary_invocations`, migration
-023) are staged scaffolding: the `ncl auxiliary-routes` config surface is live,
+Auxiliary invocations (`auxiliary_routes`, `auxiliary_invocations`, migration 023) are staged scaffolding: the `ncl auxiliary-routes` config surface is live,
 but no production caller dispatches through `executeAuxiliaryInvocation` yet.
 Its trust boundary is structural — source identity is stamped from the trusted
 session and the target comes only from the operator-configured route, so there
@@ -558,3 +612,4 @@ route with.
 - [agent-runner-details.md](agent-runner-details.md) — runner/provider details
 - [isolation-model.md](isolation-model.md) — channel/session isolation choices
 - [OPERATIONS.md](OPERATIONS.md) — canonical build, test, and service commands
+- [ncl-tasks-migration.md](ncl-tasks-migration.md) — `ncl tasks` migration and legacy-task notes

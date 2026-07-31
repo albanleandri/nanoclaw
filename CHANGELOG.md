@@ -4,6 +4,7 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+- [BREAKING] **Scheduled tasks move to `ncl tasks`; the `list_tasks`, `cancel_task`, `pause_task`, `resume_task`, and `update_task` MCP tools are gone.** A task now runs in its own per-agent-group system session instead of the chat session that requested it, so it no longer wakes an existing conversation and the agent must name an explicit `send_message` destination when it fires — final text and `<message>` blocks are not delivered from a task session; they land in the task's run log instead. `schedule_task` survives only as a narrow create-only MCP shim for `openai-protocol-loop` providers, which have no `ncl` binary. Series created before this update keep firing from their original chat session unaffected, but are not visible to their own group's `ncl tasks list` — only to an unscoped host `ncl tasks list --session <id>`. **After updating:** rebuild and restart agent containers (`./container/build.sh && systemctl --user restart nanoclaw`) so they load the new MCP tool list and instructions. **Migration:** [docs/ncl-tasks-migration.md](docs/ncl-tasks-migration.md).
 - [BREAKING] **`@onecli-sh/sdk` 0.5.0 -> 2.2.1 — requires a OneCLI server with the `/v1` API** (older servers 404 every SDK call). The sanctioned gateway and CLI versions are pinned in `versions.json`; the `onecli` setup step enforces them. **Migration:** [docs/onecli-upgrades.md](docs/onecli-upgrades.md).
 
 ## [2.1.0] - 2026-06-07

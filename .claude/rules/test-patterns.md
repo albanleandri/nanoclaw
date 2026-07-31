@@ -42,6 +42,21 @@ When you change one side of a contract, change the contract file and the other
 side in the same patch. Do not "fix" a failing conformance test by editing only
 the contract — that is the drift the test exists to catch.
 
+There is a fourth cross-boundary invariant with **no automated check**: the
+capability `version` registered in `src/capabilities/builtins/index.ts` must
+stay numerically in lockstep with the matching `capabilityVersion` in the
+container's `CANONICAL_CAPABILITIES` map
+(`container/agent-runner/src/mcp-tools/server.ts`). `handleCapabilityAudit`
+(`src/audit/host-bridge.ts`) checks `capabilityVersion !== manifest.version`
+_before_ it checks the entrypoint, so a mismatch makes the host reject every
+audit event for that capability outright — not a warning, a hard throw on
+every call. Both sides currently read `2` for `nanoclaw.schedule-task`
+(bumped together when the five scheduling MCP tools were removed), and each
+side carries a comment pointing at the other, but nothing fails CI if a future
+edit bumps one side and not the other. Treat any edit to either number as
+touching both files, the same discipline as the three contracts above, even
+though there is no `contracts/*.json` file or conformance test enforcing it.
+
 ## Coverage gates
 
 - Host: thresholds in `vitest.config.ts`, enforced by `npm run test:coverage`.
