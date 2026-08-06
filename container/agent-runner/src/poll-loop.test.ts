@@ -7,7 +7,7 @@ import { formatMessages, extractRouting } from './formatter.js';
 import { isCorruptionError } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 import type { AgentQuery, ProviderEvent } from './providers/types.js';
-import { formatMessagesWithCommands, processQuery } from './poll-loop.js';
+import { formatMessagesWithCommands, processQuery, runnerIdleExpired } from './poll-loop.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -138,6 +138,13 @@ describe('accumulate gate (trigger column)', () => {
       .run();
     const [msg] = getPendingMessages();
     expect(msg.trigger).toBe(1);
+  });
+});
+
+describe('runner idle slot release', () => {
+  it('expires only at the configured idle boundary', () => {
+    expect(runnerIdleExpired(1_000, 1_999, 1_000)).toBe(false);
+    expect(runnerIdleExpired(1_000, 2_000, 1_000)).toBe(true);
   });
 });
 
@@ -514,6 +521,83 @@ describe('processQuery heartbeat', () => {
       query.end();
       await running;
     }
+  });
+
+  it('ends a completed provider stream after the post-result idle window', async () => {
+    let ended = false;
+    let release: (() => void) | null = null;
+    const query: AgentQuery = {
+      push() {},
+      end() {
+        ended = true;
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'result', text: '<internal>done</internal>' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+
+    const result = await processQuery(query, extractRouting([]), ['m1'], 'mock', {
+      activePollIntervalMs: 2,
+      postResultHeartbeatMs: 2,
+      postResultIdleExitMs: 10,
+    });
+
+    expect(ended).toBe(true);
+    expect(result.idleExpired).toBe(true);
+    expect(result.outcome).toBe('result');
+  });
+
+  it('resets the post-result idle deadline when a follow-up arrives', async () => {
+    let release: (() => void) | null = null;
+    let followUpReturned = false;
+    let pushed = false;
+    const query: AgentQuery = {
+      push(_prompt, onConsumed) {
+        pushed = true;
+        onConsumed?.();
+      },
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'result', text: '<internal>done</internal>' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+    const startedAt = Date.now();
+
+    const result = await processQuery(query, extractRouting([]), ['m1'], 'mock', {
+      activePollIntervalMs: 2,
+      postResultHeartbeatMs: 2,
+      postResultIdleExitMs: 20,
+      getPendingMessages: () => {
+        if (followUpReturned || Date.now() - startedAt < 12) return [];
+        followUpReturned = true;
+        return [followUpRow('m-follow-up')];
+      },
+      markProcessing: () => {},
+      markCompleted: () => {},
+    });
+
+    expect(pushed).toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(25);
+    expect(result.idleExpired).toBe(true);
   });
 
   it('does not synthesize heartbeats before the first provider result', async () => {

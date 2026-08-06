@@ -57,7 +57,13 @@ async function sendConfirmation(wizard: ScreenMarketWizard): Promise<void> {
 }
 
 async function startScreenJob(wizard: ScreenMarketWizard): Promise<void> {
-  const params = { ...mergeAnswersToParams(wizard.answers), batchSize: 50, delaySec: 0.5 };
+  const params = {
+    ...mergeAnswersToParams(wizard.answers),
+    batchSize: 50,
+    delaySec: 0.5,
+    years: 6,
+    quarters: 10,
+  };
   const job = startJob({
     type: 'stock_market_screen',
     params,

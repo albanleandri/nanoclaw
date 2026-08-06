@@ -154,7 +154,7 @@ describe('screen market guided response handler', () => {
         agentGroupId: 'ag-1',
         sessionId: 's-1',
         messagingGroupId: 'mg-1',
-        params: { marketCaps: ['Large Cap'], batchSize: 50, delaySec: 0.5 },
+        params: { marketCaps: ['Large Cap'], batchSize: 50, delaySec: 0.5, years: 6, quarters: 10 },
       }),
     );
     const updated = getWizard(wizard.id);

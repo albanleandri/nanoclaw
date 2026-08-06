@@ -30,6 +30,8 @@ describe('stock_market_screen job type', () => {
         batchSize: 25,
         delaySec: 0.1,
         maxAgeHours: 12,
+        years: 6,
+        quarters: 10,
         limit: 100,
       },
     );
@@ -43,6 +45,14 @@ describe('stock_market_screen job type', () => {
     expect(command.args).toContain('nasdaq');
     expect(command.args).toContain('--limit');
     expect(command.args).toContain('100');
+    expect(command.args.slice(command.args.indexOf('--years'), command.args.indexOf('--years') + 2)).toEqual([
+      '--years',
+      '6',
+    ]);
+    expect(command.args.slice(command.args.indexOf('--quarters'), command.args.indexOf('--quarters') + 2)).toEqual([
+      '--quarters',
+      '10',
+    ]);
   });
 
   it('formats progress without exposing internal job ids', () => {

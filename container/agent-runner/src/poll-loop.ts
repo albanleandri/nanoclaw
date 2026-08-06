@@ -31,6 +31,11 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderUsage } from './
 const POLL_INTERVAL_MS = 1000;
 const ACTIVE_POLL_INTERVAL_MS = 500;
 const POST_RESULT_HEARTBEAT_MS = 10_000;
+// Keep a completed provider stream warm briefly for follow-up messages, then
+// let the runner exit so the host's global container limit cannot be consumed
+// indefinitely by idle chat/task sessions. Continuations are persisted, so a
+// later wake resumes the same provider conversation in a fresh container.
+export const POST_RESULT_IDLE_EXIT_MS = 60_000;
 
 /**
  * Number of consecutive `database disk image is malformed` errors after which
@@ -79,6 +84,12 @@ export interface PollLoopConfig {
     instructions?: string;
   };
   stopSignal?: AbortSignal;
+  /** Override for tests; production uses POST_RESULT_IDLE_EXIT_MS. */
+  idleExitMs?: number;
+}
+
+export function runnerIdleExpired(idleSinceMs: number, nowMs: number, idleExitMs: number): boolean {
+  return nowMs - idleSinceMs >= idleExitMs;
 }
 
 /**
@@ -126,6 +137,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
   let pollCount = 0;
   let isFirstPoll = true;
+  let idleSinceMs = Date.now();
+  const idleExitMs = config.idleExitMs ?? POST_RESULT_IDLE_EXIT_MS;
   while (!config.stopSignal?.aborted) {
     // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
     const messages = getPendingMessages(isFirstPoll).filter((m) => m.kind !== 'system');
@@ -138,10 +151,13 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     }
 
     if (messages.length === 0) {
+      if (runnerIdleExpired(idleSinceMs, Date.now(), idleExitMs)) {
+        log(`Runner idle window expired after ${idleExitMs}ms; releasing container slot`);
+        return;
+      }
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
-
     // Accumulate gate: if the batch contains only trigger=0 rows
     // (context-only, router-stored under ignored_message_policy='accumulate'),
     // don't wake the agent. Leave them `pending` — they'll ride along the
@@ -151,9 +167,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // the "store as context, don't engage" contract. Host-side countDueMessages
     // gates the same way for wake-from-cold (see src/db/session-db.ts).
     if (!messages.some((m) => m.trigger === 1)) {
+      if (runnerIdleExpired(idleSinceMs, Date.now(), idleExitMs)) {
+        log(`Runner idle window expired with context-only rows after ${idleExitMs}ms; releasing container slot`);
+        return;
+      }
       await sleep(POLL_INTERVAL_MS);
       continue;
     }
+    idleSinceMs = Date.now();
 
     const ids = messages.map((m) => m.id);
     markProcessing(ids);
@@ -258,6 +279,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         continuation = result.continuation;
         setContinuation(providerStateKey, continuation);
       }
+      if (result.idleExpired) {
+        log('Provider stream idle; exiting runner for fair container-slot reuse');
+        return;
+      }
     } catch (err) {
       orchestrationException = true;
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -358,6 +383,7 @@ type InitialBatchOutcome = 'result' | 'terminal-error' | 'silent-close' | 'inter
 interface QueryResult {
   continuation?: string;
   outcome: InitialBatchOutcome;
+  idleExpired?: boolean;
   usage?: ProviderUsage;
   error?: {
     classification: string;
@@ -396,6 +422,7 @@ export function orchestrationMessageIds(messages: Array<Pick<MessageInRow, 'id' 
 interface ProcessQueryOptions {
   touchHeartbeat?: () => void;
   postResultHeartbeatMs?: number;
+  postResultIdleExitMs?: number;
   activePollIntervalMs?: number;
   stopSignal?: AbortSignal;
   getPendingMessages?: typeof getPendingMessages;
@@ -424,11 +451,15 @@ export async function processQuery(
   let usage: ProviderUsage | undefined;
   let terminalError: QueryResult['error'];
   let lastPostResultHeartbeat = 0;
+  let lastPostResultActivity = 0;
+  let idleExpired = false;
+  let followUpsInFlight = 0;
   const heartbeat = opts.touchHeartbeat ?? touchHeartbeat;
   const readPendingMessages = opts.getPendingMessages ?? getPendingMessages;
   const claimMessages = opts.markProcessing ?? markProcessing;
   const completeMessages = opts.markCompleted ?? markCompleted;
   const postResultHeartbeatMs = opts.postResultHeartbeatMs ?? POST_RESULT_HEARTBEAT_MS;
+  const postResultIdleExitMs = opts.postResultIdleExitMs ?? POST_RESULT_IDLE_EXIT_MS;
   const activePollIntervalMs = opts.activePollIntervalMs ?? ACTIVE_POLL_INTERVAL_MS;
   const resolveInitialBatch = (
     resolvedOutcome: Exclude<InitialBatchOutcome, 'interrupted'>,
@@ -503,9 +534,21 @@ export async function processQuery(
         // initial batch and follow-ups had mismatched thread_ids (e.g. a
         // host-generated welcome trigger with null thread vs a Discord DM reply).
         const newMessages = pending.filter((m) => m.kind !== 'system');
-        if (newMessages.length === 0) return;
+        if (newMessages.length === 0) {
+          if (
+            initialTurnCompleted &&
+            followUpsInFlight === 0 &&
+            Date.now() - lastPostResultActivity >= postResultIdleExitMs
+          ) {
+            idleExpired = true;
+            log(`Post-result idle window expired after ${postResultIdleExitMs}ms; releasing container slot`);
+            query.end();
+          }
+          return;
+        }
 
         const newIds = newMessages.map((m) => m.id);
+        lastPostResultActivity = Date.now();
         claimMessages(newIds);
 
         // Run pre-task scripts on follow-ups too — without this, a task that
@@ -537,10 +580,18 @@ export async function processQuery(
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
         taskBlockNudged = false;
-        query.push(prompt, () => {
-          writeOrchestrationResult(keptOrchestrationIds, 'result');
-          completeMessages(keptIds);
-        });
+        followUpsInFlight += 1;
+        try {
+          query.push(prompt, () => {
+            writeOrchestrationResult(keptOrchestrationIds, 'result');
+            completeMessages(keptIds);
+            followUpsInFlight = Math.max(0, followUpsInFlight - 1);
+            lastPostResultActivity = Date.now();
+          });
+        } catch (err) {
+          followUpsInFlight = Math.max(0, followUpsInFlight - 1);
+          throw err;
+        }
       } catch (err) {
         // Without this catch the rejection escapes the void IIFE and Node
         // terminates the container on unhandled-rejection. The initial-batch
@@ -657,6 +708,7 @@ export async function processQuery(
         resolveInitialBatch('result', event.usage);
         initialTurnCompleted = true;
         lastPostResultHeartbeat = Date.now();
+        lastPostResultActivity = lastPostResultHeartbeat;
         if (event.text) {
           if (isBareProviderUsageLimitError(event.text)) {
             if (!providerFailureNotified) {
@@ -747,7 +799,13 @@ export async function processQuery(
     });
   }
 
-  return { continuation: queryContinuation, outcome: outcome ?? 'interrupted', usage, error: terminalError };
+  return {
+    continuation: queryContinuation,
+    outcome: outcome ?? 'interrupted',
+    idleExpired,
+    usage,
+    error: terminalError,
+  };
 }
 
 function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {

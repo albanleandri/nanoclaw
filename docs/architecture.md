@@ -380,6 +380,13 @@ whether work is stale. It does not rely on an in-process idle timer. A fresh
 container receives a full processing window even when it picks up old
 backlog.
 
+After a provider completes a turn, the runner keeps its stream warm for a
+60-second follow-up window. If no new message arrives, it exits cleanly and
+releases its global container slot; the persisted provider continuation is
+resumed on the next wake. This bounds idle slot occupancy without interrupting
+active model or tool work. The outer poll loop applies the same bound when no
+provider stream exists, including script-gated tasks and command-only batches.
+
 `MAX_CONCURRENT_CONTAINERS` limits the union of active sessions and in-flight
 spawn reservations. Admission is reserved synchronously before asynchronous
 container setup; work deferred at capacity stays pending for a later sweep.

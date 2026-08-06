@@ -17,6 +17,8 @@ export interface StockMarketScreenParams {
   batchSize?: number;
   delaySec?: number;
   maxAgeHours?: number;
+  years?: number;
+  quarters?: number;
   limit?: number;
 }
 
@@ -121,6 +123,8 @@ function validateParams(params: unknown): StockMarketScreenParams {
     batchSize: numberValue(p.batchSize ?? p.batch_size, 'batchSize'),
     delaySec: numberValue(p.delaySec ?? p.delay_sec, 'delaySec'),
     maxAgeHours: numberValue(p.maxAgeHours ?? p.max_age_hours, 'maxAgeHours'),
+    years: numberValue(p.years, 'years'),
+    quarters: numberValue(p.quarters, 'quarters'),
     limit: numberValue(p.limit, 'limit'),
   };
   if (out.batchSize !== undefined && (!Number.isInteger(out.batchSize) || out.batchSize < 1 || out.batchSize > 500)) {
@@ -130,6 +134,10 @@ function validateParams(params: unknown): StockMarketScreenParams {
     throw new Error('limit must be a positive integer');
   if (out.delaySec !== undefined && out.delaySec < 0) throw new Error('delaySec must be non-negative');
   if (out.maxAgeHours !== undefined && out.maxAgeHours < 0) throw new Error('maxAgeHours must be non-negative');
+  if (out.years !== undefined && (!Number.isInteger(out.years) || out.years < 2 || out.years > 20))
+    throw new Error('years must be an integer between 2 and 20');
+  if (out.quarters !== undefined && (!Number.isInteger(out.quarters) || out.quarters < 4 || out.quarters > 40))
+    throw new Error('quarters must be an integer between 4 and 40');
   return out;
 }
 
@@ -150,6 +158,8 @@ export function buildStockMarketScreenCommand(ctx: JobContext, params: StockMark
   if (params.batchSize !== undefined) args.push('--batch-size', String(params.batchSize));
   if (params.delaySec !== undefined) args.push('--delay', String(params.delaySec));
   if (params.maxAgeHours !== undefined) args.push('--max-age-hours', String(params.maxAgeHours));
+  if (params.years !== undefined) args.push('--years', String(params.years));
+  if (params.quarters !== undefined) args.push('--quarters', String(params.quarters));
   if (params.limit !== undefined) args.push('--limit', String(params.limit));
 
   return { command: 'python3', args, cwd: process.cwd() };

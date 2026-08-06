@@ -416,7 +416,7 @@ not part of this loop.
 
 **Concurrent polling during active query:** While the provider is running a query, the agent-runner continues polling messages_in on a short interval (~500ms). New pending messages are marked `processing`, formatted, and pushed into the active query via `provider.push(prompt, ack)`. The poll loop marks those follow-up rows `completed` only when the provider calls `ack` after the follow-up turn produces a result. This lets follow-up messages arrive while the agent is processing without treating "input accepted" as "input processed." Claude handles pushed input through its SDK stream; Codex queues each follow-up as an explicit app-server turn so it has a reliable completion point.
 
-**Idle behavior:** When no messages are pending and no query is active, the agent-runner sleeps briefly (1s) and re-polls. The container stays warm until the host kills it (idle timeout).
+**Idle behavior:** When no messages are pending and no query is active, the agent-runner sleeps briefly (1s) and re-polls for up to 60 seconds. This also bounds command-only and script-gated task sessions that never open a provider query. After a provider result, its stream likewise stays warm for a 60-second follow-up window. With no follow-up, the runner exits cleanly to release the global container slot; the persisted continuation resumes on the next wake.
 
 **Idle detection exceptions:** The container should NOT be considered idle when:
 
