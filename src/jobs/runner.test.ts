@@ -1,9 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 
-import { createAgentGroup, closeDb, getJob, getJobEvents, initTestDb, runMigrations } from '../db/index.js';
+import {
+  createAgentGroup,
+  createJob,
+  closeDb,
+  getJob,
+  getJobEvents,
+  initTestDb,
+  runMigrations,
+  updateJobStatus,
+} from '../db/index.js';
 import { clearJobTypesForTesting, registerJobType } from './registry.js';
-import { cancelJob, getActiveJobIdsForTesting, resetJobsForTesting, startJob } from './runner.js';
+import {
+  cancelJob,
+  getActiveJobIdsForTesting,
+  reconcileInterruptedJobs,
+  resetJobsForTesting,
+  startJob,
+} from './runner.js';
 
 function now() {
   return new Date().toISOString();
@@ -106,5 +121,36 @@ describe('job runner', () => {
       'Unknown job type',
     );
     expect(getJob('job-1')).toBeUndefined();
+  });
+
+  it('fails stale persisted running jobs on startup with an audit event', () => {
+    createJob({ id: 'stale-1', type: 'node_fixture', agentGroupId: 'ag-1', params: {} });
+    updateJobStatus('stale-1', { status: 'running', progressCurrent: 50, progressTotal: 100 });
+
+    expect(reconcileInterruptedJobs()).toBe(1);
+    expect(getJob('stale-1')).toMatchObject({ status: 'failed', progress_current: 50, progress_total: 100 });
+    expect(getJobEvents('stale-1').at(-1)?.event_type).toBe('interrupted_on_startup');
+    expect(reconcileInterruptedJobs()).toBe(0);
+  });
+
+  it('reconciles every stale job when more than one query page is present', () => {
+    for (let index = 0; index < 205; index += 1) {
+      const id = `stale-${index}`;
+      createJob({ id, type: 'node_fixture', agentGroupId: 'ag-1', params: {} });
+      updateJobStatus(id, { status: 'running' });
+    }
+
+    expect(reconcileInterruptedJobs()).toBe(205);
+    expect(getJob('stale-0')?.status).toBe('failed');
+    expect(getJob('stale-204')?.status).toBe('failed');
+    expect(reconcileInterruptedJobs()).toBe(0);
+  });
+
+  it('does not reconcile a worker owned by the current runner', async () => {
+    registerNodeJob(`setTimeout(() => process.exit(0), 150);`);
+    startJob({ id: 'active-1', type: 'node_fixture', agentGroupId: 'ag-1', params: {} });
+    expect(reconcileInterruptedJobs()).toBe(0);
+    expect(getJob('active-1')?.status).toBe('running');
+    await waitFor(() => getJob('active-1')?.status === 'succeeded');
   });
 });

@@ -1,6 +1,14 @@
 import { spawn, type ChildProcess } from 'child_process';
 
-import { appendJobEvent, createJob, getJob, updateJobStatus, type JobEventLevel, type JobRecord } from '../db/jobs.js';
+import {
+  appendJobEvent,
+  createJob,
+  getJob,
+  listRecentJobs,
+  updateJobStatus,
+  type JobEventLevel,
+  type JobRecord,
+} from '../db/jobs.js';
 import { getJobType } from './registry.js';
 import type { ManagedJobEvent, StartJobInput } from './types.js';
 
@@ -13,6 +21,33 @@ interface ActiveJob {
 }
 
 const activeJobs = new Map<string, ActiveJob>();
+
+/** Close persisted running rows that this host cannot possibly still own. */
+export function reconcileInterruptedJobs(): number {
+  let reconciled = 0;
+  while (true) {
+    const interrupted = listRecentJobs({ status: 'running', limit: 200 }).filter((job) => !activeJobs.has(job.id));
+    if (interrupted.length === 0) break;
+    for (const job of interrupted) {
+      const timestamp = now();
+      updateJobStatus(job.id, {
+        status: 'failed',
+        error: 'Host restarted while job was running; no active worker is attached',
+        finishedAt: timestamp,
+      });
+      appendJobEvent(job.id, {
+        id: eventId(job.id),
+        level: 'error',
+        eventType: 'interrupted_on_startup',
+        message: 'Job interrupted by host restart; no active worker is attached',
+        data: { progressCurrent: job.progress_current, progressTotal: job.progress_total },
+        createdAt: timestamp,
+      });
+      reconciled += 1;
+    }
+  }
+  return reconciled;
+}
 
 function generateId(): string {
   return `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

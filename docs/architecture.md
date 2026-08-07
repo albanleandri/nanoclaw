@@ -580,6 +580,11 @@ groups and the normal destination ACL before use. Progress and terminal
 delivery revalidate the persisted route against the source session, so an
 outbound action or stale job row cannot select an arbitrary channel.
 
+At host startup, every persisted `running` job without a child owned by the new
+process is terminalized as failed with an `interrupted_on_startup` audit event.
+Reconciliation is paged and idempotent; external work is never silently
+replayed after a restart.
+
 `/screen-market` is the first guided host-owned job path. Its wizard state
 lives in the migration-017 tables (`src/modules/stock-screen-guided/`) and the
 host-side flow is gated behind `SCREEN_MARKET_GUIDED_HOST`, which defaults to

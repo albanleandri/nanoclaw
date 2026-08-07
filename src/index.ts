@@ -17,6 +17,7 @@ import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
+import { reconcileInterruptedJobs } from './jobs/runner.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { assertAccessEnforcementWired, routeInbound } from './router.js';
 import { installProcessErrorHandlers, log } from './log.js';
@@ -87,6 +88,8 @@ async function main(): Promise<void> {
   const db = initDb(dbPath);
   runMigrations(db);
   log.info('Central DB ready', { path: dbPath });
+  const interruptedJobs = reconcileInterruptedJobs();
+  if (interruptedJobs > 0) log.warn('Closed interrupted durable jobs after startup', { count: interruptedJobs });
 
   // 1a. Fail closed on a half-installed permissions state (see the helper's
   // doc comment). Count both roles and membership rows; zero of both is the
