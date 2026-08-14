@@ -22,3 +22,4 @@ import './orchestration-runs.js';
 import './memory.js';
 import './shared-resources.js';
 import './tasks.js';
+import './jobs.js';

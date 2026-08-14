@@ -580,6 +580,15 @@ groups and the normal destination ACL before use. Progress and terminal
 delivery revalidate the persisted route against the source session, so an
 outbound action or stale job row cannot select an arbitrary channel.
 
+The same lifecycle is available through the group-scoped `ncl jobs` control
+plane. `ncl jobs start --type <type> --params '<json>'` launches registered
+host work without requiring a model tool call and deduplicates an already
+queued/running job of the same type by default. This is the deterministic path
+for a scheduled task script that must initiate long work and then return
+`wakeAgent:false`; `--allow-duplicate true` is an explicit opt-out. Jobs
+started without a channel route remain silent, while their status and events
+stay durable in the central DB for `ncl jobs list|get` inspection.
+
 At host startup, every persisted `running` job without a child owned by the new
 process is terminalized as failed with an `interrupted_on_startup` audit event.
 Reconciliation is paged and idempotent; external work is never silently
