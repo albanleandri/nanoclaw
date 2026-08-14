@@ -15,7 +15,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection
 import { getPendingMessages } from './db/messages-in.js';
 import type { MessageInRow } from './db/messages-in.js';
 import { categorizeMessage, extractRouting, formatMessages, isClearCommand, stripInternalTags } from './formatter.js';
-import { TIMEZONE } from './timezone.js';
+import { TIMEZONE, formatLocalStamp, formatLocalTime } from './timezone.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -25,14 +25,19 @@ afterEach(() => {
   closeSessionDb();
 });
 
-function insertMessage(id: string, kind: string, content: object, opts?: { timestamp?: string }) {
+function insertMessage(
+  id: string,
+  kind: string,
+  content: object,
+  opts?: { timestamp?: string; processAfter?: string },
+) {
   const timestamp = opts?.timestamp ?? new Date().toISOString();
   getInboundDb()
     .prepare(
-      `INSERT INTO messages_in (id, kind, timestamp, status, content)
-       VALUES (?, ?, ?, 'pending', ?)`,
+      `INSERT INTO messages_in (id, kind, timestamp, status, process_after, content)
+       VALUES (?, ?, ?, 'pending', ?, ?)`,
     )
-    .run(id, kind, timestamp, JSON.stringify(content));
+    .run(id, kind, timestamp, opts?.processAfter ?? null, JSON.stringify(content));
 }
 
 describe('context timezone header', () => {
@@ -40,6 +45,7 @@ describe('context timezone header', () => {
     insertMessage('m1', 'chat', { sender: 'Alice', text: 'hello' });
     const result = formatMessages(getPendingMessages());
     expect(result).toContain(`<context timezone="${TIMEZONE}"`);
+    expect(result).not.toContain('current_time=');
   });
 
   it('includes the header even when the message list is empty', () => {
@@ -55,6 +61,39 @@ describe('context timezone header', () => {
     const firstMsgIdx = result.indexOf('<message ');
     expect(ctxIdx).toBeGreaterThanOrEqual(0);
     expect(firstMsgIdx).toBeGreaterThan(ctxIdx);
+  });
+});
+
+describe('task timestamps', () => {
+  const formattedAt = new Date('2026-01-05T12:34:00.000Z');
+
+  it('renders the effective scheduled time and deterministic current run time', () => {
+    const created = '2026-01-04T12:00:00.000Z';
+    const scheduled = '2026-01-05T12:00:00.000Z';
+    insertMessage('t1', 'task', { prompt: "prepare today's brief" }, { timestamp: created, processAfter: scheduled });
+
+    const result = formatMessages(getPendingMessages(), formattedAt);
+
+    expect(result).toContain(`time="${formatLocalTime(scheduled, TIMEZONE)}"`);
+    expect(result).not.toContain(`time="${formatLocalTime(created, TIMEZONE)}"`);
+    expect(result).toContain(`current_time="${formatLocalStamp(formattedAt, TIMEZONE)}"`);
+  });
+
+  it('falls back to row creation time for legacy tasks without process_after', () => {
+    const created = '2026-01-05T10:00:00.000Z';
+    insertMessage('t1', 'task', { prompt: 'legacy task' }, { timestamp: created });
+
+    const result = formatMessages(getPendingMessages(), formattedAt);
+
+    expect(result).toContain(`time="${formatLocalTime(created, TIMEZONE)}"`);
+    expect(result).toContain(`current_time="${formatLocalStamp(formattedAt, TIMEZONE)}"`);
+  });
+
+  it('keeps current_time off non-task elements', () => {
+    insertMessage('m1', 'chat', { sender: 'Alice', text: 'hello' });
+    insertMessage('w1', 'webhook', { source: 'test', event: 'ping', payload: {} });
+
+    expect(formatMessages(getPendingMessages(), formattedAt)).not.toContain('current_time=');
   });
 });
 

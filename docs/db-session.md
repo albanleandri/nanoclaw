@@ -81,6 +81,12 @@ Content shapes: see [api-details.md §Session DB Schema Details](api-details.md#
 **Writers (host):** `insertMessage()`, `insertTask()`, `insertRecurrence()` — all in `src/db/session-db.ts`. Each calls `nextEvenSeq()`.
 **Reader (container):** `container/agent-runner/src/db/messages-in.ts` — polls `status='pending' AND (process_after IS NULL OR process_after <= now)`.
 
+For a task prompt, the runner renders `process_after` as the effective
+scheduled `time`; legacy rows with no `process_after` fall back to `timestamp`.
+It separately adds a formatting-time `current_time`. Both are localized for
+the session and are prompt context only—the stored UTC values and due-time
+rules are not modified.
+
 ### 2.2 `delivered`
 
 Host writes here after handing a `messages_out` row to the channel adapter. Container reads `platform_message_id` to target edits and reactions.

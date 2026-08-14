@@ -11,24 +11,25 @@
  */
 import { getAllDestinations } from './destinations.js';
 
-const destinations = getAllDestinations();
-const names = destinations.map((d) => d.name);
+export function buildCompactInstructions(names: string[]): string {
+  return [
+    'Preserve the following in the compaction summary:',
+    '',
+    '1. For recent messages, keep the full XML structure including all attributes:',
+    '   - <message from="..." sender="..." time="..."> for chat messages',
+    '   - <task from="..." time="..." current_time="..."> for scheduled tasks',
+    '   - <webhook from="..." source="..." event="..."> for webhooks',
+    '   The message content can be summarized if long, but the XML tags and attributes must remain.',
+    '',
+    '2. Preserve the chronological message/reply sequence of recent exchanges.',
+    '   The agent needs to see: who said what, in what order, and from which destination.',
+    '',
+    '3. At the END of the compaction summary, include this verbatim reminder:',
+    '   "You MUST wrap all responses in <message to="name">...</message> blocks.',
+    `   Available destinations: ${names.length > 0 ? names.map((n) => `\`${n}\``).join(', ') : '(none)'}."`,
+  ].join('\n');
+}
 
-const instructions = [
-  'Preserve the following in the compaction summary:',
-  '',
-  '1. For recent messages, keep the full XML structure including all attributes:',
-  '   - <message from="..." sender="..." time="..."> for chat messages',
-  '   - <task from="..." time="..."> for scheduled tasks',
-  '   - <webhook from="..." source="..." event="..."> for webhooks',
-  '   The message content can be summarized if long, but the XML tags and attributes must remain.',
-  '',
-  '2. Preserve the chronological message/reply sequence of recent exchanges.',
-  '   The agent needs to see: who said what, in what order, and from which destination.',
-  '',
-  '3. At the END of the compaction summary, include this verbatim reminder:',
-  '   "You MUST wrap all responses in <message to="name">...</message> blocks.',
-  `   Available destinations: ${names.length > 0 ? names.map((n) => `\`${n}\``).join(', ') : '(none)'}."`,
-];
-
-console.log(instructions.join('\n'));
+if (import.meta.main) {
+  console.log(buildCompactInstructions(getAllDestinations().map((destination) => destination.name)));
+}

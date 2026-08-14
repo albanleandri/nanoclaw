@@ -1,7 +1,7 @@
 import { findByRouting } from './destinations.js';
 import type { MessageInRow } from './db/messages-in.js';
 import { getSessionRouting } from './db/session-routing.js';
-import { TIMEZONE, formatLocalTime } from './timezone.js';
+import { TIMEZONE, formatLocalStamp, formatLocalTime } from './timezone.js';
 
 /**
  * Command categories for messages starting with '/'.
@@ -131,8 +131,7 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
     channelType: first?.channel_type ?? null,
     threadId: first?.thread_id ?? null,
     inReplyTo: first?.id ?? null,
-    taskFire:
-      getSessionRouting().is_task === 1 && messages.length > 0 && messages.every((m) => m.kind === 'task'),
+    taskFire: getSessionRouting().is_task === 1 && messages.length > 0 && messages.every((m) => m.kind === 'task'),
   };
 }
 
@@ -148,7 +147,7 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
  *
  * Strips routing fields — the agent never sees platform_id, channel_type, thread_id.
  */
-export function formatMessages(messages: MessageInRow[]): string {
+export function formatMessages(messages: MessageInRow[], now = new Date()): string {
   const header = `<context timezone="${escapeXml(TIMEZONE)}" />\n`;
   if (messages.length === 0) return header;
 
@@ -167,7 +166,7 @@ export function formatMessages(messages: MessageInRow[]): string {
     parts.push(formatChatMessages(chatMessages));
   }
   if (taskMessages.length > 0) {
-    parts.push(...taskMessages.map(formatTaskMessage));
+    parts.push(...taskMessages.map((message) => formatTaskMessage(message, now)));
   }
   if (webhookMessages.length > 0) {
     parts.push(...webhookMessages.map(formatWebhookMessage));
@@ -223,16 +222,17 @@ function originAttr(msg: MessageInRow): string {
   return '';
 }
 
-function formatTaskMessage(msg: MessageInRow): string {
+function formatTaskMessage(msg: MessageInRow, now: Date): string {
   const content = parseContent(msg.content);
   const from = originAttr(msg);
-  const time = formatLocalTime(msg.timestamp, TIMEZONE);
+  const time = formatLocalTime(msg.process_after ?? msg.timestamp, TIMEZONE);
+  const currentTime = formatLocalStamp(now, TIMEZONE);
   const parts: string[] = [];
   if (content.scriptOutput) {
     parts.push('Script output:', JSON.stringify(content.scriptOutput, null, 2), '');
   }
   parts.push('Instructions:', content.prompt || '');
-  return `<task${from} time="${escapeXml(time)}">${parts.join('\n')}</task>`;
+  return `<task${from} time="${escapeXml(time)}" current_time="${escapeXml(currentTime)}">${parts.join('\n')}</task>`;
 }
 
 function formatWebhookMessage(msg: MessageInRow): string {

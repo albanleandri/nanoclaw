@@ -517,6 +517,13 @@ Simple scheduled session messages use `process_after` and optional
 `recurrence` on inbound rows. Host sweep wakes due trigger-bearing work and
 advances recurring occurrences without wall-clock drift.
 
+When the runner formats a task occurrence, its `<task>` element carries both
+`time` and `current_time` in the effective session timezone. `time` comes from
+the row's effective `process_after` value (falling back to `timestamp` for a
+legacy row); `current_time` is captured at prompt formatting. The distinction
+keeps delayed runs and relative instructions anchored without changing stored
+schedule semantics, and the Claude compaction hook preserves both attributes.
+
 ### `ncl tasks` control plane
 
 Scheduled tasks are `messages_in` rows with `kind: 'task'`, but they run in

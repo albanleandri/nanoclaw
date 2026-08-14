@@ -147,6 +147,13 @@ The router checks identity, role/membership, engagement rules, command
 authority, and wiring before writing an inbound row. Agent instructions cannot
 override these checks.
 
+Host-initiated cold DMs use the `user_dms` cache for approvals, pairing, and
+other privileged delivery. Resolution logs deliberately retain only stable
+event text and, where useful, the channel type. They omit user identities,
+handles, messaging-group and platform identifiers, and raw adapter errors or
+stacks. This is unconditional in `ensureUserDm()`, so a future caller cannot
+silently opt back into sensitive ordinary logs.
+
 ## Destination authorization
 
 Allowed channel and peer-agent destinations are projected into each session's

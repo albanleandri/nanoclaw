@@ -452,17 +452,21 @@ The agent-runner transforms messages_in rows into a prompt string. The provider 
 
   Attachments are listed inline. Images/PDFs that Claude handles natively are passed as content blocks (see Media Handling below).
 
-- **`task`** — task prompt, optionally with script output:
+- **`task`** — task XML, optionally with script output:
 
-  ```
-  [SCHEDULED TASK]
-
-  Script output:
-  {"data": ...}
+  ```xml
+  <task from="scheduler" time="Jan 5, 2026, 1:00 PM" current_time="2026-01-05 13:04">Script output:
+  {"data": …}
 
   Instructions:
-  Review open PRs
+  Review open PRs</task>
   ```
+
+  `time` is the occurrence's effective scheduled time (`process_after`, with
+  `timestamp` as the legacy-row fallback). `current_time` is captured when the
+  runner formats the prompt, so delayed runs and relative instructions such as
+  “today” have an execution-time anchor. Both values use the effective session
+  timezone. Claude's compaction hook preserves both attributes.
 
 - **`webhook`** — webhook payload:
 
@@ -486,13 +490,14 @@ The agent-runner transforms messages_in rows into a prompt string. The provider 
 
 ```xml
 <context timezone="America/Los_Angeles">
-<messages>
 <message sender="John" time="10:00">Check this PR</message>
 <message sender="Jane" time="10:01">Already on it</message>
-</messages>
 ```
 
-Mixed kinds (e.g., a chat message + a system response) are combined with clear delimiters. Each section is labeled by kind.
+There is deliberately no outer `<messages>` envelope: the Claude SDK can treat
+that shape as a synthetic no-response turn. Mixed kinds (for example, a chat
+message plus a system response) are combined as adjacent self-contained
+elements.
 
 **Command detection:** Messages starting with `/` are checked against a command list. Matching uses the complete first whitespace-delimited token, with an optional Telegram `@bot_name` suffix removed; command prefixes do not match. Recognized commands bypass formatting and are passed raw to the provider (for Claude's slash command handling) or intercepted by the agent-runner (for NanoClaw-level commands like session reset).
 

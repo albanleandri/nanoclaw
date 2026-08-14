@@ -151,7 +151,10 @@ CREATE TABLE user_dms (
 );
 ```
 
-Populated lazily by `ensureUserDm()` in `src/user-dm.ts`.
+Populated lazily by `ensureUserDm()` in
+`src/modules/permissions/user-dm.ts`. Ordinary resolution logs are
+data-minimized: they may retain the channel type but omit user identities,
+handles, messaging-group/platform identifiers, and raw adapter errors.
 
 ### 1.8 `sessions`
 
