@@ -886,7 +886,7 @@ function writeAuthErrorNotification(routing: RoutingContext): void {
 function isBareProviderAuthError(text: string): boolean {
   const trimmed = stripInternalTags(text).trim();
   return (
-    /^api error:/i.test(trimmed) &&
+    /^(?:failed to authenticate\.\s*)?api error:/i.test(trimmed) &&
     /(401|unauthorized|authentication[_ ]error|invalid x-api-key|invalid bearer token|oauth(?: access)? token (has )?expired|could not resolve authentication)/i.test(
       trimmed,
     )

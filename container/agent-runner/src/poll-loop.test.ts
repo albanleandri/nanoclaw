@@ -813,7 +813,10 @@ describe('auth error notification', () => {
     insertWithRouting('m1');
     const messages = getPendingMessages();
     const routing = extractRouting(messages);
-    const provider = new MockProvider({}, () => 'API Error: 401 OAuth access token has expired. Re-authenticate.');
+    const provider = new MockProvider(
+      {},
+      () => 'Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+    );
     const query = provider.query({ prompt: formatMessages(messages), cwd: '/tmp' });
 
     await processQuery(query, routing, ['m1'], 'mock');
