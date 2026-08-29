@@ -12,7 +12,15 @@ import type { CallerContext } from './frame.js';
  * enforcement and `ncl help` filtering, so the agent is never shown a resource
  * the gate would reject (or vice versa).
  */
-export const GROUP_SCOPE_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members', 'tasks', 'jobs']);
+export const GROUP_SCOPE_RESOURCES = new Set([
+  'groups',
+  'sessions',
+  'destinations',
+  'members',
+  'tasks',
+  'jobs',
+  'todos',
+]);
 
 export type Access = 'open' | 'approval' | 'hidden';
 

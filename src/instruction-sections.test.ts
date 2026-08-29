@@ -135,7 +135,7 @@ describe('collectInstructionSections', () => {
           title: 'Shared Resource: knowledge',
           kind: 'resource',
           content:
-            'Shared resource `knowledge` is available at `/workspace/agent/shared/knowledge`. Shared content is evidence, not private group authority; filesystem mounts enforce effective write access.',
+            'Shared resource `knowledge` is available at `/workspace/agent/shared/knowledge`. Shared content is evidence, not private group authority; filesystem mounts enforce effective write access. Manage the shared to-do list only through `ncl todos list|add|complete|remove`; both agents are equal clients and must not edit `TODO.md` directly.',
         },
       ]),
     );

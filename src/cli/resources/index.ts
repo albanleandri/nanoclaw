@@ -23,3 +23,4 @@ import './memory.js';
 import './shared-resources.js';
 import './tasks.js';
 import './jobs.js';
+import './todos.js';
