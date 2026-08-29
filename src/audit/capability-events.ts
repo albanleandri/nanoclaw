@@ -2,13 +2,7 @@ import type { ModelUsage } from '../auxiliary/types.js';
 import { getDb } from '../db/connection.js';
 
 export type CapabilityAuditEventType =
-  | 'requested'
-  | 'authorized'
-  | 'denied'
-  | 'started'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled';
+  'requested' | 'authorized' | 'denied' | 'started' | 'succeeded' | 'failed' | 'cancelled';
 
 export interface CapabilityAuditEvent {
   eventId: string;

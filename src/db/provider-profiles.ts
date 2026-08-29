@@ -215,8 +215,7 @@ export function createProviderProfile(input: ProviderProfileInput): ProviderProf
 
 export function getProviderProfile(idOrName: string): ProviderProfileRow | undefined {
   return getDb().prepare('SELECT * FROM provider_profiles WHERE id = ? OR name = ? LIMIT 1').get(idOrName, idOrName) as
-    | ProviderProfileRow
-    | undefined;
+    ProviderProfileRow | undefined;
 }
 
 export function listProviderProfiles(): ProviderProfileRow[] {

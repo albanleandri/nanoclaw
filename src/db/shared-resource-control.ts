@@ -16,8 +16,7 @@ export interface SharedResourceControl {
 
 export function getSharedResourceControl(resourceName: string): SharedResourceControl | undefined {
   return getDb().prepare('SELECT * FROM shared_resource_control WHERE resource_name = ?').get(resourceName) as
-    | SharedResourceControl
-    | undefined;
+    SharedResourceControl | undefined;
 }
 
 export function getAllSharedResourceControls(): SharedResourceControl[] {

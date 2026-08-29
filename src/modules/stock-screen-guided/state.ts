@@ -104,8 +104,7 @@ export function startWizard(origin: WizardOrigin, now = nowIso()): ScreenMarketW
 
 export function getWizard(id: string): ScreenMarketWizard | undefined {
   const row = getDb().prepare('SELECT * FROM screen_market_wizards WHERE id = ?').get(id) as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   return row ? parseWizard(row) : undefined;
 }
 
@@ -119,8 +118,7 @@ export function recordWizardQuestion(wizardId: string, step: WizardStep, questio
 
 export function getWizardQuestion(questionId: string): WizardQuestionRef | undefined {
   const row = getDb().prepare('SELECT * FROM screen_market_wizard_questions WHERE question_id = ?').get(questionId) as
-    | { question_id: string; wizard_id: string; step: WizardStep; created_at: string }
-    | undefined;
+    { question_id: string; wizard_id: string; step: WizardStep; created_at: string } | undefined;
   return row
     ? { questionId: row.question_id, wizardId: row.wizard_id, step: row.step, createdAt: row.created_at }
     : undefined;

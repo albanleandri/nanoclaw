@@ -193,8 +193,7 @@ export function recordSessionCapabilityAuthorization(
   updatedAt = new Date().toISOString(),
 ): void {
   const session = getDb().prepare('SELECT agent_group_id FROM sessions WHERE id=?').get(sessionId) as
-    | { agent_group_id: string }
-    | undefined;
+    { agent_group_id: string } | undefined;
   if (!session) throw new Error(`Session not found for capability authorization: ${sessionId}`);
   const normalized = [...new Set(capabilities)].sort();
   getDb()
@@ -324,8 +323,7 @@ export function queueApprovedFallbackAttempt(input: {
          WHERE decision_id=? AND run_id=? AND step_id=? AND source_attempt=?`,
       )
       .get(input.decisionId, input.runId, input.stepId, input.sourceAttempt) as
-      | { allowed: number; candidate_id: string; candidate_json: string }
-      | undefined;
+      { allowed: number; candidate_id: string; candidate_json: string } | undefined;
     if (!decision || decision.allowed !== 1) throw new Error('Fallback decision is not approved');
     const source = db
       .prepare(
@@ -519,8 +517,7 @@ export function releaseStepLease(input: {
   let runId = '';
   db.transaction(() => {
     const attempt = db.prepare('SELECT * FROM orchestration_step_attempts WHERE attempt_id=?').get(input.attemptId) as
-      | AttemptRow
-      | undefined;
+      AttemptRow | undefined;
     if (!attempt) throw new Error(`Orchestration attempt not found: ${input.attemptId}`);
     runId = attempt.run_id;
     const result = db
@@ -825,8 +822,7 @@ export function recordDirectDelivery(input: {
       });
       recomputeRun(owner.run_id, now);
       const sourceSession = db.prepare('SELECT session_id FROM orchestration_runs WHERE run_id=?').get(owner.run_id) as
-        | { session_id: string }
-        | undefined;
+        { session_id: string } | undefined;
       if (owner.execution_session_id && owner.execution_session_id !== sourceSession?.session_id) {
         db.prepare("UPDATE sessions SET status='closed' WHERE id=?").run(owner.execution_session_id);
       }
@@ -904,8 +900,7 @@ export function authorizeCorrelatedHostAction(input: {
        ORDER BY a.attempt DESC LIMIT 1`,
     )
     .get(input.inputMessageId, input.sourceSessionId) as
-    | { run_id: string; run_status: OrchestrationStatus; attempt_status: StepStatus }
-    | undefined;
+    { run_id: string; run_status: OrchestrationStatus; attempt_status: StepStatus } | undefined;
   if (!row) return { correlated: false };
   if (row.run_status !== 'running' || row.attempt_status !== 'running') {
     throw new Error(`Orchestration host action rejected for inactive run: ${row.run_id}`);

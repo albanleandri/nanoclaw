@@ -27,8 +27,7 @@ export async function handleSessionSearch(
     results,
   });
   const existing = _inDb.prepare('SELECT kind, content FROM messages_in WHERE id = ?').get(id) as
-    | { kind: string; content: string }
-    | undefined;
+    { kind: string; content: string } | undefined;
   if (existing) {
     if (existing.kind !== 'system' || existing.content !== response)
       throw new Error(`Session search response conflict`);

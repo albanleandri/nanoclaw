@@ -50,8 +50,7 @@ export function ensureAgentGroupMemoryControl(agentGroupId: string, now = new Da
 
 export function getAgentGroupMemoryControl(agentGroupId: string): AgentGroupMemoryControl | undefined {
   return getDb().prepare('SELECT * FROM agent_group_memory_control WHERE agent_group_id = ?').get(agentGroupId) as
-    | AgentGroupMemoryControl
-    | undefined;
+    AgentGroupMemoryControl | undefined;
 }
 
 export function isAgentGroupMemoryMaintenanceHeld(agentGroupId: string): boolean {
@@ -194,8 +193,7 @@ export function transferAgentGroupMemoryWriter(
     throw new Error(`Memory writer changed for agent group: ${agentGroupId}`);
   }
   const session = getDb().prepare('SELECT agent_group_id FROM sessions WHERE id = ?').get(writerSessionId) as
-    | { agent_group_id: string }
-    | undefined;
+    { agent_group_id: string } | undefined;
   if (!session || session.agent_group_id !== agentGroupId) {
     throw new Error(`Writer session does not belong to agent group: ${writerSessionId}`);
   }

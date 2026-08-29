@@ -304,8 +304,7 @@ export function writeSessionMessageIfAbsent(
   const db = openInboundDb(agentGroupId, sessionId);
   try {
     const existing = db.prepare('SELECT kind, content FROM messages_in WHERE id = ?').get(message.id) as
-      | { kind: string; content: string }
-      | undefined;
+      { kind: string; content: string } | undefined;
     if (existing) {
       if (existing.kind !== message.kind || existing.content !== message.content) {
         throw new Error(`Session message conflict for stable id ${message.id}`);

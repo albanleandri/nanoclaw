@@ -39,8 +39,7 @@ export function cancelOrchestrationExecution(input: { runId: string; agentGroupI
     try {
       const status = (
         inDb.prepare('SELECT status FROM messages_in WHERE id = ?').get(modelAttempt.input_message_id) as
-          | { status: string }
-          | undefined
+          { status: string } | undefined
       )?.status;
       if (status === 'pending' || status === 'processing') {
         markMessageFailed(inDb, modelAttempt.input_message_id);
