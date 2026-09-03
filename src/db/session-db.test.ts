@@ -235,6 +235,19 @@ describe('syncProcessingAcks', () => {
     expect(inDb.prepare("SELECT status FROM messages_in WHERE id = 'f1'").get()).toEqual({ status: 'failed' });
   });
 
+  it('records a provider-error ack as a failed occurrence', () => {
+    seedTaskRow(inDb, 'provider-f1');
+    outDb
+      .prepare(
+        "INSERT INTO processing_ack (message_id, status, status_changed) VALUES ('provider-f1', 'provider-error', datetime('now'))",
+      )
+      .run();
+
+    syncProcessingAcks(inDb, outDb);
+
+    expect(inDb.prepare("SELECT status FROM messages_in WHERE id = 'provider-f1'").get()).toEqual({ status: 'failed' });
+  });
+
   it('records a plain completed ack as a completed occurrence', () => {
     seedTaskRow(inDb, 'c1');
     outDb

@@ -319,7 +319,7 @@ describe('ncl-tasks port: series-aware task row API', () => {
     expect(trailingFailedRuns(db, 'watch-9f9f')).toBe(2);
   });
 
-  it('re-arms only failed occurrences proven to be gate-script errors', () => {
+  it('re-arms only failed occurrences proven to be retryable task errors', () => {
     db.prepare(
       `INSERT INTO messages_in (id, seq, timestamp, status, tries, process_after, recurrence, kind, content, series_id)
        VALUES ('f1', ?, datetime('now'), 'failed', 0, NULL, '*/15 * * * *', 'task', '{}', 'watch-9f9f')`,

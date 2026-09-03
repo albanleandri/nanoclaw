@@ -219,7 +219,7 @@ export function getMessageForRetry(
 export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Database): void {
   const completed = outDb
     .prepare(
-      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error')",
+      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error', 'provider-error')",
     )
     .all() as Array<{ message_id: string; status: string }>;
 
@@ -243,12 +243,20 @@ export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Data
   })();
 }
 
-/** IDs whose failed status specifically came from a pre-task gate script error. */
-export function getScriptErrorAckIds(outDb: Database.Database): Set<string> {
+/**
+ * Failed-ack cause per message id, for the acks whose task occurrence is
+ * allowed to re-arm. `script` — the pre-task gate script crashed;
+ * `provider` — the agent never reached its model provider (credential/quota).
+ *
+ * The cause is operator-facing, not just a filter: recurrence reports it in
+ * the series run log, where "fix the script" is wrong advice for a dead
+ * credential.
+ */
+export function getRetryableTaskErrorAcks(outDb: Database.Database): Map<string, 'script' | 'provider'> {
   const rows = outDb
-    .prepare("SELECT message_id FROM processing_ack WHERE status = 'script-skip:error'")
-    .all() as Array<{ message_id: string }>;
-  return new Set(rows.map((row) => row.message_id));
+    .prepare("SELECT message_id, status FROM processing_ack WHERE status IN ('script-skip:error', 'provider-error')")
+    .all() as Array<{ message_id: string; status: string }>;
+  return new Map(rows.map((row) => [row.message_id, row.status === 'provider-error' ? 'provider' : 'script']));
 }
 
 export function getStuckProcessingIds(outDb: Database.Database): string[] {

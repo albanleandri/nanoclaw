@@ -195,17 +195,18 @@ export interface RecurringMessage {
 }
 
 // Failed occurrences re-arm only when the caller proves they came from a
-// script-skip:error ack. Other terminal failures can retain recurrence in
-// legacy databases; treating all of them as script failures resurrects old
-// series on the first sweep after an upgrade.
+// retryable task-error ack (a crashed gate script, or a provider the agent
+// could not reach). Other terminal failures can retain recurrence in legacy
+// databases; treating all of them as re-armable resurrects old series on the
+// first sweep after an upgrade.
 export function getCompletedRecurring(
   db: Database.Database,
-  scriptErrorIds: ReadonlySet<string> = new Set(),
+  retryableErrorIds: ReadonlySet<string> = new Set(),
 ): RecurringMessage[] {
   const rows = db
     .prepare("SELECT * FROM messages_in WHERE status IN ('completed', 'failed') AND recurrence IS NOT NULL")
     .all() as Array<RecurringMessage & { status: string }>;
-  return rows.filter((row) => row.status === 'completed' || scriptErrorIds.has(row.id));
+  return rows.filter((row) => row.status === 'completed' || retryableErrorIds.has(row.id));
 }
 
 /**

@@ -273,6 +273,9 @@ because the image runs as `node` and the shell executor spawns in
   Claude Code interactively after the initial account authorization.
 - A failed refresh never overwrites OneCLI with a known-expired token. Failures
   are logged and retried while the last-known-good vault value is preserved.
+- If the host credential has neither an access token nor a refresh token,
+  automatic reconciliation cannot recover it. Run `claude` and `/login` on
+  the host; the next five-minute reconciliation publishes the new token.
 - `nanoclaw-refresh-token.timer`, where installed, is only an additional
   recovery mechanism; the running host owns the primary refresh lifecycle.
 
@@ -281,6 +284,21 @@ because the image runs as `node` and the shell executor spawns in
 - If the provider returns a classified quota/auth error, or a recognized bare
   429/401 result, the runner writes a short user-facing notification instead
   of failing silently.
+- For scheduled task fires, credential and quota failures are recorded as
+  failed occurrences and the recurrence is re-armed with exponential backoff.
+  This prevents an authentication error returned as result text from being
+  counted as a successful run or silently consuming the schedule. Other
+  non-retryable provider errors, and any failure raised after the agent had
+  already acted, ack the fire as completed instead: the schedule advances
+  rather than replaying work that may have had side effects.
+- Every re-armed failed occurrence writes a line to the series run log naming
+  the cause (`provider unreachable (credential or quota)` or `pre-task script
+  error`) and the next attempt, so a failing series leaves a history rather
+  than a gap.
+- A series that accumulates eight consecutive failed occurrences — from any
+  cause, including a prolonged credential outage — is auto-paused at its next
+  cron time and must be revived with `ncl tasks resume <series>`. The run-log
+  pause note names the last cause and the matching remedy.
 - Authentication notices are limited to one per session per 24 hours. A
   successful provider result clears the cooldown. Late authentication errors
   from an already-completed persistent query are ignored so they cannot be

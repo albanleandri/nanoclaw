@@ -18,7 +18,7 @@ vi.mock('./run-log.js', () => ({
 import { TIMEZONE } from '../../config.js';
 import { ensureSchema, openInboundDb, openOutboundDbRw } from '../../db/session-db.js';
 import { insertTask, insertTaskRow } from './db.js';
-import { handleRecurrence, scriptBackoffMinutes } from './recurrence.js';
+import { failureBackoffMinutes, handleRecurrence } from './recurrence.js';
 import { appendRunLog } from './run-log.js';
 import type { Session } from '../../types.js';
 
@@ -44,6 +44,14 @@ function recordScriptError(outDb: ReturnType<typeof freshOutboundDb>, messageId:
   outDb
     .prepare(
       "INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, 'script-skip:error', datetime('now'))",
+    )
+    .run(messageId);
+}
+
+function recordProviderError(outDb: ReturnType<typeof freshOutboundDb>, messageId: string): void {
+  outDb
+    .prepare(
+      "INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, 'provider-error', datetime('now'))",
     )
     .run(messageId);
 }
@@ -159,9 +167,9 @@ function seedCompletedSeries(db: ReturnType<typeof freshDb>, seriesId: string, o
   db.prepare(`UPDATE messages_in SET status = 'completed' WHERE id = ?`).run(seriesId);
 }
 
-describe('scriptBackoffMinutes', () => {
+describe('failureBackoffMinutes', () => {
   it('doubles from 2 minutes and caps at 60', () => {
-    expect([1, 2, 3, 4, 5, 6, 7, 8].map(scriptBackoffMinutes)).toEqual([2, 4, 8, 16, 32, 60, 60, 60]);
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map(failureBackoffMinutes)).toEqual([2, 4, 8, 16, 32, 60, 60, 60]);
   });
 });
 
@@ -202,11 +210,58 @@ describe('handleRecurrence script-failure backoff', () => {
       .prepare("SELECT status FROM messages_in WHERE series_id = 'watch-9f9f' AND status IN ('pending','paused')")
       .get() as { status: string };
     expect(row.status).toBe('paused');
+    const note = appendRunLogSpy.mock.calls.at(-1)![2];
+    expect(note).toContain('auto-paused after 8 consecutive failed runs');
+    expect(note).toContain('fix the script');
+    expect(note).toContain('ncl tasks resume watch-9f9f');
+  });
+
+  // A prolonged credential outage reaches the same pause cap as a broken gate
+  // script. Telling the operator to "fix the script" sends them after code that
+  // is not broken, so the note must name the cause it actually saw.
+  it('names the provider as the cause when a credential outage pauses the series', async () => {
+    seedFailedSeries(db, 'watch-9f9f', { fails: 8, recurrence: '*/5 * * * *' });
+    const outDb = freshOutboundDb();
+    recordProviderError(outDb, 'watch-9f9f');
+    await handleRecurrence(db, session, outDb);
+    outDb.close();
+
+    const note = appendRunLogSpy.mock.calls.at(-1)![2];
+    expect(note).toContain('auto-paused after 8 consecutive failed runs');
+    expect(note).toContain('provider unreachable (credential or quota)');
+    expect(note).toContain('restore provider access');
+    expect(note).not.toContain('fix the script');
+  });
+
+  // A failed fire writes nothing to the run log on its own — the runner's
+  // auto-append only covers a turn that produced result text, which an auth or
+  // quota failure never does. Without a host-written line the series log shows
+  // an unexplained gap where the occurrence should be.
+  it('logs each re-armed failure with its cause and next attempt', async () => {
+    seedFailedSeries(db, 'watch-9f9f', { fails: 2, recurrence: '*/5 * * * *' });
+    const outDb = freshOutboundDb();
+    recordProviderError(outDb, 'watch-9f9f');
+    await handleRecurrence(db, session, outDb);
+    outDb.close();
+
+    const next = db
+      .prepare("SELECT process_after FROM messages_in WHERE status = 'pending' AND series_id = 'watch-9f9f'")
+      .get() as { process_after: string };
     expect(appendRunLogSpy).toHaveBeenCalledWith(
       session.agent_group_id,
       'watch-9f9f',
-      expect.stringContaining('auto-paused after 8 consecutive script failures'),
+      `run failed (provider unreachable (credential or quota)); failure 2 in a row, next attempt ${next.process_after}`,
     );
+  });
+
+  it('does not write a failure note for a healthy run', async () => {
+    seedCompletedSeries(db, 'daily-1a2b', { recurrence: '0 9 * * *' });
+    const outDb = freshOutboundDb();
+
+    await handleRecurrence(db, session, outDb);
+    outDb.close();
+
+    expect(appendRunLogSpy).not.toHaveBeenCalled();
   });
 
   it('does not back off a healthy series', async () => {

@@ -109,12 +109,35 @@ export function markProcessing(ids: string[]): void {
   })();
 }
 
-/** Mark messages as completed — updates processing_ack in outbound.db. */
+/**
+ * Mark messages as completed — updates processing_ack in outbound.db.
+ *
+ * Only claims still in 'processing' are advanced. `markCompleted` doubles as
+ * the poll loop's idempotent safety net, so a blind INSERT OR REPLACE would
+ * overwrite a terminal ack written earlier in the same batch — turning a
+ * `provider-error` task fire back into a successful run on any path where the
+ * loop reaches the safety net without knowing the batch already failed
+ * (notably processQuery throwing after it acked).
+ */
 export function markCompleted(ids: string[]): void {
   if (ids.length === 0) return;
   const db = getOutboundDb();
   const stmt = db.prepare(
-    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'completed', ?)",
+    `INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, 'completed', ?)
+       ON CONFLICT(message_id) DO UPDATE SET status = 'completed', status_changed = excluded.status_changed
+        WHERE processing_ack.status = 'processing'`,
+  );
+  db.transaction(() => {
+    for (const id of ids) stmt.run(id, new Date().toISOString());
+  })();
+}
+
+/** Mark task messages as failed because the provider could not process them. */
+export function markProviderFailed(ids: string[]): void {
+  if (ids.length === 0) return;
+  const db = getOutboundDb();
+  const stmt = db.prepare(
+    "INSERT OR REPLACE INTO processing_ack (message_id, status, status_changed) VALUES (?, 'provider-error', ?)",
   );
   db.transaction(() => {
     for (const id of ids) stmt.run(id, new Date().toISOString());

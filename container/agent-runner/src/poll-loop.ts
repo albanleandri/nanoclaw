@@ -3,6 +3,7 @@ import {
   getPendingMessages,
   markProcessing,
   markCompleted,
+  markProviderFailed,
   markScriptSkipped,
   type MessageInRow,
 } from './db/messages-in.js';
@@ -328,11 +329,13 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       );
     }
 
-    // Safety net: processQuery completes the batch in every terminal branch
+    // Safety net: processQuery acks the batch in every terminal branch
     // (result, terminal-error, silent-close). This idempotent call also covers
     // the throw path above, where processQuery exited via exception.
+    // markCompleted never downgrades a terminal ack, so a task fire already
+    // acked `provider-error` stays failed and re-arms with backoff.
     markCompleted(processingIds);
-    log(`Completed ${ids.length} message(s)`);
+    log(`Finished ${ids.length} message(s)`);
   }
 }
 
@@ -471,7 +474,11 @@ export async function processQuery(
     outcome = resolvedOutcome;
     usage = resolvedUsage;
     terminalError = resolvedError;
-    completeMessages(initialBatchIds);
+    if (resolvedOutcome === 'terminal-error' && routing.taskFire && isRearmableTaskError(resolvedError)) {
+      markProviderFailed(initialBatchIds);
+    } else {
+      completeMessages(initialBatchIds);
+    }
     opts.onInitialBatchTerminal?.({
       continuation: queryContinuation,
       outcome: resolvedOutcome,
@@ -699,6 +706,27 @@ export async function processQuery(
         });
         break;
       } else if (event.type === 'result') {
+        // A bare provider failure arrives as result TEXT, not as a classified
+        // error event. Classify it BEFORE the turn resolves as a success:
+        // otherwise a task fire is acked `completed`, recurrence advances, and
+        // a dead credential or exhausted quota silently consumes the schedule
+        // while reporting successful runs.
+        const bareFailure = event.text ? classifyBareProviderFailure(event.text) : undefined;
+        if (bareFailure) {
+          resolveInitialBatch('terminal-error', event.usage, {
+            classification: bareFailure,
+            retryable: false,
+            sideEffectBoundaryCrossed: null,
+          });
+          if (!providerFailureNotified) {
+            providerFailureNotified = true;
+            if (bareFailure === 'auth') writeAuthErrorNotification(routing);
+            else writeUsageLimitNotification(routing);
+          }
+          query.end();
+          break;
+        }
+
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for
@@ -710,28 +738,6 @@ export async function processQuery(
         lastPostResultHeartbeat = Date.now();
         lastPostResultActivity = lastPostResultHeartbeat;
         if (event.text) {
-          if (isBareProviderUsageLimitError(event.text)) {
-            if (!providerFailureNotified) {
-              providerFailureNotified = true;
-              writeUsageLimitNotification(routing);
-            }
-            query.end();
-            break;
-          }
-
-          if (isBareProviderAuthError(event.text)) {
-            // The provider surfaced a bare authentication error as result text
-            // (e.g. an expired/invalid credential). Without this the text would
-            // be treated as unwrapped scratchpad and the user would get
-            // silence. Tell them instead, then stop the turn.
-            if (!providerFailureNotified) {
-              providerFailureNotified = true;
-              writeAuthErrorNotification(routing);
-            }
-            query.end();
-            break;
-          }
-
           clearAuthFailureNotice();
           const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskFire === true, taskBlocks, taskBlockNudged);
@@ -853,6 +859,35 @@ function writeUsageLimitNotification(routing: RoutingContext): void {
   });
 }
 
+/**
+ * Which bare provider failure, if any, this result text represents.
+ *
+ * Quota is tested first to preserve the precedence these two checks had when
+ * they lived inline in the result branch.
+ */
+function classifyBareProviderFailure(text: string): 'quota' | 'auth' | undefined {
+  if (isBareProviderUsageLimitError(text)) return 'quota';
+  if (isBareProviderAuthError(text)) return 'auth';
+  return undefined;
+}
+
+/**
+ * Should a terminal provider error re-arm a task fire as a FAILED occurrence
+ * (host records the failure and backs the series off) rather than ack it
+ * `completed` (schedule simply advances)?
+ *
+ * Only credential and quota failures. Those abort the turn before the agent
+ * can act, so replaying the occurrence cannot duplicate work. Any other
+ * non-retryable error may have surfaced mid-turn after tool calls —
+ * `sideEffectBoundaryCrossed` is the runner's own record of exactly that — and
+ * re-arming would repeat whatever the agent already did (messages sent, files
+ * written). A missed occurrence is cheaper than a duplicated one.
+ */
+function isRearmableTaskError(error: QueryResult['error']): boolean {
+  if (!error || error.sideEffectBoundaryCrossed === true) return false;
+  return error.classification === 'auth' || error.classification === 'quota';
+}
+
 function isBareProviderUsageLimitError(text: string): boolean {
   const trimmed = stripInternalTags(text).trim();
   return (
@@ -885,6 +920,7 @@ function writeAuthErrorNotification(routing: RoutingContext): void {
 // `authentication_error` body when the credential is missing/expired/invalid.
 function isBareProviderAuthError(text: string): boolean {
   const trimmed = stripInternalTags(text).trim();
+  if (/^invalid api key(?:\s*[·:.-].*)?$/i.test(trimmed)) return true;
   return (
     /^(?:failed to authenticate\.\s*)?api error:/i.test(trimmed) &&
     /(401|unauthorized|authentication[_ ]error|invalid x-api-key|invalid bearer token|oauth(?: access)? token (has )?expired|could not resolve authentication)/i.test(

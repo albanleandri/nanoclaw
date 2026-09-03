@@ -828,6 +828,87 @@ describe('auth error notification', () => {
     expect(content.text).not.toContain('OAuth access token has expired');
   });
 
+  it('marks a task fire failed when authentication is returned as result text', async () => {
+    insertMessage('task-1', 'task', { prompt: 'daily work' });
+    const routing = { ...extractRouting(getPendingMessages()), taskFire: true };
+    const { query } = makeResultQuery({
+      type: 'result',
+      text: 'Invalid API key · Fix external API key',
+      isError: true,
+    } as ProviderEvent);
+
+    const result = await processQuery(query, routing, ['task-1'], 'mock');
+
+    expect(result.outcome).toBe('terminal-error');
+    expect(result.error?.classification).toBe('auth');
+    expect(
+      getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get(),
+    ).toEqual({ status: 'provider-error' });
+  });
+
+  // Same defect as the auth case: a bare 429 arrives as result TEXT, so
+  // resolving it as a success acked the fire `completed` and advanced
+  // recurrence while the account was rate-limited.
+  it('marks a task fire failed when a usage limit is returned as result text', async () => {
+    insertMessage('task-1', 'task', { prompt: 'daily work' });
+    const routing = { ...extractRouting(getPendingMessages()), taskFire: true };
+    const { query } = makeResultQuery({
+      type: 'result',
+      text: 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"usage limit reached"}}',
+    } as ProviderEvent);
+
+    const result = await processQuery(query, routing, ['task-1'], 'mock');
+
+    expect(result.outcome).toBe('terminal-error');
+    expect(result.error?.classification).toBe('quota');
+    expect(getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get()).toEqual({
+      status: 'provider-error',
+    });
+    const out = getUndeliveredMessages();
+    expect(JSON.parse(out[0].content).text).toContain('Usage limit reached');
+  });
+
+  // Only auth/quota re-arm. Other non-retryable errors can surface mid-turn
+  // after the agent has already sent messages or written files; re-running the
+  // occurrence would duplicate that work, so the fire is acked completed and
+  // the schedule simply advances.
+  it('does not re-arm a task fire on a non-auth, non-quota terminal error', async () => {
+    insertMessage('task-1', 'task', { prompt: 'daily work' });
+    const routing = { ...extractRouting(getPendingMessages()), taskFire: true };
+    const { query } = makeResultQuery({
+      type: 'error',
+      message: 'model returned a malformed tool call',
+      retryable: false,
+      classification: 'protocol',
+    } as ProviderEvent);
+
+    const result = await processQuery(query, routing, ['task-1'], 'mock');
+
+    expect(result.outcome).toBe('terminal-error');
+    expect(getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get()).toEqual({
+      status: 'completed',
+    });
+  });
+
+  it('does not re-arm a task fire when the provider crossed the side-effect boundary', async () => {
+    insertMessage('task-1', 'task', { prompt: 'daily work' });
+    const routing = { ...extractRouting(getPendingMessages()), taskFire: true };
+    const { query } = makeResultQuery({
+      type: 'error',
+      message: '401 Unauthorized',
+      retryable: false,
+      classification: 'auth',
+      sideEffectBoundaryCrossed: true,
+    } as ProviderEvent);
+
+    const result = await processQuery(query, routing, ['task-1'], 'mock');
+
+    expect(result.outcome).toBe('terminal-error');
+    expect(getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get()).toEqual({
+      status: 'completed',
+    });
+  });
+
   it('suppresses a late auth error after the initial persistent turn completed', async () => {
     insertWithRouting('m1');
     const messages = getPendingMessages();
