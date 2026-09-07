@@ -7,3 +7,4 @@
 
 import './descriptors/index.js';
 import './codex.js';
+import './opencode.js';

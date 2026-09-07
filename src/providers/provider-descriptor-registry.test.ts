@@ -17,12 +17,18 @@ describe('provider descriptor registry', () => {
       'codex',
       'mock',
       'openai-compatible',
+      'opencode',
     ]);
     expect(listProviderContainerConfigNames()).toEqual([]);
   });
 
   it('offers only explicitly selectable providers during setup', () => {
-    expect(listSetupProviderDescriptors().map((item) => item.name)).toEqual(['claude', 'codex', 'openai-compatible']);
+    expect(listSetupProviderDescriptors().map((item) => item.name)).toEqual([
+      'claude',
+      'codex',
+      'openai-compatible',
+      'opencode',
+    ]);
     expect(getProviderDescriptor('MOCK')?.setup?.selectable).toBe(false);
   });
 
@@ -33,6 +39,8 @@ describe('provider descriptor registry', () => {
   });
 
   it('reports installed descriptors for unknown names', () => {
-    expect(() => requireProviderDescriptor('missing')).toThrow(/Installed: claude, codex, mock, openai-compatible/);
+    expect(() => requireProviderDescriptor('missing')).toThrow(
+      /Installed: claude, codex, mock, openai-compatible, opencode/,
+    );
   });
 });

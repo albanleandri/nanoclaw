@@ -16,7 +16,7 @@ describe('provider CLI resources', () => {
   it('lists installed descriptors without profile credentials', async () => {
     const command = lookup('providers-list')!;
     const result = (await command.handler({}, { caller: 'host' })) as Array<Record<string, unknown>>;
-    expect(result.map((item) => item.name)).toEqual(['claude', 'codex', 'mock', 'openai-compatible']);
+    expect(result.map((item) => item.name)).toEqual(['claude', 'codex', 'mock', 'openai-compatible', 'opencode']);
   });
 
   it('creates and lists a redacted generic profile', async () => {

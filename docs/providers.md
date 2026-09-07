@@ -9,7 +9,24 @@ NanoClaw separates installed provider code from local endpoint configuration:
 - A **container provider** executes turns inside the Bun agent-runner.
 - An optional **host contribution** supplies provider-specific mounts or environment.
 
-Claude remains the default. Codex remains a native app-server provider. `openai-compatible` is a generic, text-only endpoint adapter; it is not the Codex runtime.
+Claude remains the default. Codex remains a native app-server provider. OpenCode is installed as a native harness and can use OpenAI-compatible services through its provider configuration. `openai-compatible` is a generic, text-only endpoint adapter; it is not the Codex or OpenCode runtime.
+
+## OpenCode with Proton Lumo
+
+This checkout includes the OpenCode provider and pins both the SDK and CLI to `1.4.17`. Configure Proton Lumo on the host with non-secret values only:
+
+```env
+OPENCODE_PROVIDER=openai
+OPENCODE_MODEL=openai/lumo
+OPENCODE_SMALL_MODEL=openai/lumo
+ANTHROPIC_BASE_URL=https://lumo.proton.me/api/ai/v1
+```
+
+Store the Lumo key in OneCLI as an `Authorization` header using `Bearer {value}`, scoped to host `lumo.proton.me` and path `/api/ai/v1/*`. Do not place the key in `.env`; OneCLI injects it at the outbound proxy. Select `opencode` in the group's DB-backed container configuration and set its assistant name separately, for example `Pinova Lumo`.
+
+For the dedicated Telegram identity, set `TELEGRAM_LUMO_BOT_TOKEN` in the ignored host `.env`. The host registers it as channel type `telegram_lumo`; create a messaging group with that channel type and wire it only to the Lumo-backed agent group.
+
+The live compatibility check uses `POST /chat/completions` beneath that base URL with model `lumo`. Keep the OpenCode model name in `provider/model` form (`openai/lumo`) even though the upstream request carries the bare model name.
 
 The runtime/model split is currently additive. Spawn still uses the compatibility provider fields, while the host resolves an `EffectiveRuntimeSelection` in shadow and verifies model, effort, profile, and state-key parity. Explicit runtime IDs are not yet persisted.
 

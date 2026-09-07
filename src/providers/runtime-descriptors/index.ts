@@ -14,6 +14,7 @@ const MAPPING: Array<{ provider: string; runtimeId: string; kind: AgentRuntimeKi
   { provider: 'claude', runtimeId: 'claude-sdk', kind: 'native-harness' },
   { provider: 'codex', runtimeId: 'codex-app-server', kind: 'native-harness' },
   { provider: 'openai-compatible', runtimeId: 'openai-protocol-loop', kind: 'protocol-loop' },
+  { provider: 'opencode', runtimeId: 'opencode-server', kind: 'native-harness' },
 ];
 
 for (const { provider, runtimeId, kind } of MAPPING) {

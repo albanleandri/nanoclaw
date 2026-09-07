@@ -83,7 +83,7 @@ This fork stays close to upstream NanoClaw's host/container/session-DB architect
 - **Fail-closed capability compilation** — code-owned capability manifests are resolved against the selected runtime and deterministic local availability before spawn; native NanoClaw tools and external MCP attachment are filtered by the compiled plan, while runtimes without tool support receive no MCP server configuration.
 - **Approval-gated manifested skills** — the effective built-in/custom skill directory is hashed deterministically; changed or unapproved manifested content is not activated, and its required capabilities are compiled before spawn.
 - **Shared resources across providers** — shared mounts and resources are resolved once and exposed through provider-specific docs and runtime config.
-- **Built-in Telegram adapter and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, and optional pool routing via explicit `bot_index`.
+- **Built-in Telegram adapters and bot-pool routing** — Telegram is included here, with pairing support, Markdown sanitization, dedicated Claude/Codex/Lumo bot identities, and optional pool routing via explicit `bot_index`.
 - **Private skills submodule** — fork-specific skills can live in `container/skills/custom` as a private submodule while the public tree stays generic.
 - **Durable job/action framework** — host-side long-running jobs can persist progress, expose delivery actions, and report failures through the normal messaging path.
 - **Deterministic scheduled long work** — group-scoped `ncl jobs start` lets a pre-task gate launch a deduplicated durable host job without depending on a model to perform an expensive mandatory step.
@@ -201,9 +201,9 @@ We don't want configuration sprawl. NanoClaw has DB-backed runtime config for pr
 
 **Can I use third-party or open-source models?**
 
-Yes. Provider is configurable per agent group. Codex support exists in the current provider stack, and OpenAI-compatible endpoints can be configured as DB-backed provider profiles without copying brand-specific runtime code. Generic profiles are text-only by default; endpoints that pass `ncl providers verify-tools` can use the bounded canonical NanoClaw tool loop. Use `ncl providers list` to inspect installed descriptors and see [docs/providers.md](docs/providers.md) for profile creation, verification, capability limits, and native-provider installation.
+Yes. Provider is configurable per agent group. Claude, Codex, and OpenCode are installed in this checkout. OpenCode can route an agent through an OpenAI-compatible service such as Proton Lumo while keeping the API key in OneCLI. OpenAI-compatible endpoints can also be configured as DB-backed provider profiles without copying brand-specific runtime code. Generic profiles are text-only by default; endpoints that pass `ncl providers verify-tools` can use the bounded canonical NanoClaw tool loop. Use `ncl providers list` to inspect installed descriptors and see [docs/providers.md](docs/providers.md) for profile creation, verification, capability limits, and native-provider configuration.
 
-Optional native providers such as OpenCode (`/add-opencode`) are installed through provider skills. Local runtimes such as Ollama should use an OpenAI-compatible profile when they expose that protocol; otherwise they need a small native adapter.
+Local runtimes such as Ollama should use an OpenAI-compatible profile when they expose that protocol; otherwise they need a small native adapter.
 
 For one-off Claude-compatible endpoint experiments, `.env` can override the Anthropic endpoint:
 

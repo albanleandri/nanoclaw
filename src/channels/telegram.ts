@@ -305,3 +305,15 @@ registerChannelAdapter('telegram_codex', {
     });
   },
 });
+
+registerChannelAdapter('telegram_lumo', {
+  factory: () => {
+    const env = readEnvFile(['TELEGRAM_LUMO_BOT_TOKEN']);
+    if (!env.TELEGRAM_LUMO_BOT_TOKEN) return null;
+    return createTelegramChannelAdapter({
+      registrationName: 'telegram_lumo',
+      channelType: 'telegram_lumo',
+      token: env.TELEGRAM_LUMO_BOT_TOKEN,
+    });
+  },
+});
