@@ -161,6 +161,40 @@ describe('approval response authorization', () => {
     expect(getPendingApproval('appr-2')).toBeUndefined();
   });
 
+  it('authorizes the same Telegram owner through a dedicated bot alias', async () => {
+    upsertUser({ id: 'telegram:owner', kind: 'telegram', display_name: 'Owner', created_at: now() });
+    grantRole({ user_id: 'telegram:owner', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
+
+    const { registerApprovalHandler } = await import('./primitive.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    const handler = vi.fn().mockResolvedValue(undefined);
+    registerApprovalHandler('telegram_alias_authz_allowed', handler);
+
+    createPendingApproval({
+      approval_id: 'appr-telegram-alias',
+      session_id: 'sess-1',
+      request_id: 'appr-telegram-alias',
+      action: 'telegram_alias_authz_allowed',
+      payload: JSON.stringify({}),
+      created_at: now(),
+      title: 'Alias approval',
+      options_json: JSON.stringify([]),
+    });
+
+    await expect(
+      handleApprovalsResponse({
+        questionId: 'appr-telegram-alias',
+        value: 'approve',
+        userId: 'telegram_lumo:owner',
+        channelType: 'telegram_lumo',
+        platformId: 'telegram:owner',
+        threadId: null,
+      }),
+    ).resolves.toBe(true);
+
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ userId: 'telegram:owner' }));
+  });
+
   it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
     upsertUser({ id: 'telegram:global-admin', kind: 'telegram', display_name: 'Global Admin', created_at: now() });
     grantRole({

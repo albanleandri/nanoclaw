@@ -23,3 +23,23 @@ export function namespacedPlatformId(channel: string, raw: string): string {
   if (channel === 'deltachat') return raw;
   return `${channel}:${raw}`;
 }
+
+/**
+ * Namespace a human identity independently from the bot identity that received
+ * the message. Dedicated Telegram bots use channel types such as
+ * `telegram_codex` and `telegram_lumo`, but the same Telegram account must map
+ * to one permissions row across all of them.
+ */
+export function namespacedUserId(channel: string, raw: string): string {
+  const canonicalChannel = channel === 'telegram' || channel.startsWith('telegram_') ? 'telegram' : channel;
+
+  if (!raw.includes(':')) return `${canonicalChannel}:${raw}`;
+
+  const separator = raw.indexOf(':');
+  const rawChannel = raw.slice(0, separator);
+  const rawId = raw.slice(separator + 1);
+  if (rawChannel === 'telegram' || rawChannel.startsWith('telegram_')) {
+    return `telegram:${rawId}`;
+  }
+  return raw;
+}

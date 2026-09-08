@@ -16,17 +16,20 @@ Claude remains the default. Codex remains a native app-server provider. OpenCode
 This checkout includes the OpenCode provider and pins both the SDK and CLI to `1.4.17`. Configure Proton Lumo on the host with non-secret values only:
 
 ```env
-OPENCODE_PROVIDER=openai
-OPENCODE_MODEL=openai/lumo
-OPENCODE_SMALL_MODEL=openai/lumo
+OPENCODE_PROVIDER=proton-lumo
+OPENCODE_PROVIDER_NPM=@ai-sdk/openai-compatible
+OPENCODE_MODEL=proton-lumo/lumo-max
+OPENCODE_SMALL_MODEL=proton-lumo/lumo-lite
 ANTHROPIC_BASE_URL=https://lumo.proton.me/api/ai/v1
 ```
 
 Store the Lumo key in OneCLI as an `Authorization` header using `Bearer {value}`, scoped to host `lumo.proton.me` and path `/api/ai/v1/*`. Do not place the key in `.env`; OneCLI injects it at the outbound proxy. Select `opencode` in the group's DB-backed container configuration and set its assistant name separately, for example `Pinova Lumo`.
 
-For the dedicated Telegram identity, set `TELEGRAM_LUMO_BOT_TOKEN` in the ignored host `.env`. The host registers it as channel type `telegram_lumo`; create a messaging group with that channel type and wire it only to the Lumo-backed agent group.
+For the dedicated Telegram identity, set `TELEGRAM_LUMO_BOT_TOKEN` in the ignored host `.env`. The host registers it as channel type `telegram_lumo`; create a messaging group with that channel type and wire it only to the Lumo-backed agent group. Dedicated `telegram_*` bot channel types retain separate routing while normalizing human identities to the canonical `telegram:<user-id>` namespace, so an existing owner/admin/member remains the same person on every bot.
 
-The live compatibility check uses `POST /chat/completions` beneath that base URL with model `lumo`. Keep the OpenCode model name in `provider/model` form (`openai/lumo`) even though the upstream request carries the bare model name.
+Provider modules with provider-specific dependencies must defer importing those dependencies until that provider is selected. The provider registration barrel is evaluated for every agent runner; a top-level optional dependency import would otherwise make an image missing that one package fail before Claude, Codex, or another unrelated provider can start.
+
+The live compatibility check uses `POST /chat/completions` beneath that base URL. Keep OpenCode model names in `provider/model` form (`proton-lumo/lumo-max` or `proton-lumo/lumo-lite`); the upstream request carries the bare model name. Set the group effort to `max` for the Lumo Max model when you want its maximum reasoning mode.
 
 The runtime/model split is currently additive. Spawn still uses the compatibility provider fields, while the host resolves an `EffectiveRuntimeSelection` in shadow and verifies model, effort, profile, and state-key parity. Explicit runtime IDs are not yet persisted.
 

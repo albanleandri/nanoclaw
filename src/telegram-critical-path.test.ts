@@ -30,6 +30,8 @@ import {
   runMigrations,
 } from './db/index.js';
 import { getSession, updateSession } from './db/sessions.js';
+import { grantRole } from './modules/permissions/db/user-roles.js';
+import { getUser, upsertUser } from './modules/permissions/db/users.js';
 import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
 import { _sweepSessionForTesting } from './host-sweep.js';
 import { resetCommandInterceptorForTesting, routeInbound, setCommandInterceptor } from './router.js';
@@ -88,6 +90,70 @@ afterEach(() => {
 });
 
 describe('Telegram main receive/reply critical path', () => {
+  it('treats a dedicated Telegram bot alias as the same known owner identity', async () => {
+    createAgentGroup({
+      id: 'ag-lumo',
+      name: 'Telegram Lumo',
+      folder: 'telegram-lumo',
+      agent_provider: 'opencode',
+      created_at: now(),
+    });
+    createMessagingGroup({
+      id: 'mg-lumo',
+      channel_type: 'telegram_lumo',
+      platform_id: 'telegram:6413334350',
+      name: 'Lumo Telegram',
+      is_group: 0,
+      unknown_sender_policy: 'strict',
+      created_at: now(),
+    });
+    createMessagingGroupAgent({
+      id: 'mga-lumo',
+      messaging_group_id: 'mg-lumo',
+      agent_group_id: 'ag-lumo',
+      engage_mode: 'pattern',
+      engage_pattern: '.',
+      sender_scope: 'known',
+      ignored_message_policy: 'drop',
+      session_mode: 'shared',
+      priority: 0,
+      created_at: now(),
+    });
+    upsertUser({ id: 'telegram:6413334350', kind: 'telegram', display_name: 'Owner', created_at: now() });
+    grantRole({
+      user_id: 'telegram:6413334350',
+      role: 'owner',
+      agent_group_id: null,
+      granted_by: null,
+      granted_at: now(),
+    });
+
+    await routeInbound({
+      channelType: 'telegram_lumo',
+      platformId: 'telegram:6413334350',
+      threadId: null,
+      message: {
+        id: '6413334350:3001',
+        kind: 'chat-sdk',
+        content: JSON.stringify({
+          text: 'test',
+          senderId: 'telegram_lumo:6413334350',
+          senderName: 'Owner',
+          author: { userId: 'telegram_lumo:6413334350', fullName: 'Owner' },
+        }),
+        timestamp: now(),
+        isMention: true,
+        isGroup: false,
+      },
+    });
+
+    expect(mockWakeContainer).toHaveBeenCalledOnce();
+    expect(getUser('telegram:6413334350')).toMatchObject({ kind: 'telegram' });
+    expect(getUser('telegram_lumo:6413334350')).toBeUndefined();
+    const session = getSession((mockWakeContainer.mock.calls[0]?.[0] as { id: string }).id);
+    expect(session?.agent_group_id).toBe('ag-lumo');
+  });
+
   it('routes an inbound Telegram message into the session DB and wakes the agent', async () => {
     seedTelegramMain();
 

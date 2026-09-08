@@ -4,6 +4,7 @@ import { buildOpenCodeConfig } from './opencode.js';
 
 const ENV_KEYS = [
   'OPENCODE_PROVIDER',
+  'OPENCODE_PROVIDER_NPM',
   'OPENCODE_MODEL',
   'OPENCODE_SMALL_MODEL',
   'ANTHROPIC_BASE_URL',
@@ -54,6 +55,21 @@ describe('buildOpenCodeConfig provider transport', () => {
     const config = buildOpenCodeConfig({});
     const entry = (config.provider as Record<string, Record<string, unknown>>).openrouter;
     expect(entry.npm).toBeUndefined();
+  });
+
+  it('uses an explicitly configured transport for a custom provider id', () => {
+    process.env.OPENCODE_PROVIDER = 'proton-lumo';
+    process.env.OPENCODE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+    process.env.OPENCODE_MODEL = 'proton-lumo/lumo-max';
+    process.env.ANTHROPIC_BASE_URL = 'https://lumo.proton.me/api/ai/v1';
+    const config = buildOpenCodeConfig({ effort: 'max' });
+    const entry = (config.provider as Record<string, Record<string, unknown>>)['proton-lumo'];
+    expect(entry.npm).toBe('@ai-sdk/openai-compatible');
+    expect(entry.options).toEqual({ apiKey: 'placeholder', baseURL: 'https://lumo.proton.me/api/ai/v1' });
+    expect((entry.models as Record<string, Record<string, unknown>>)['lumo-max'].options).toEqual({
+      reasoningEffort: 'max',
+    });
+    expect(config.model).toBe('proton-lumo/lumo-max');
   });
 
   it('openai with a base URL still pins the Chat Completions transport', () => {

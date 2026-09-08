@@ -2,13 +2,12 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
 import { pathToFileURL } from 'url';
 
-import { createOpencodeClient, type FilePartInput, type OpencodeClient } from '@opencode-ai/sdk';
+import type { FilePartInput, OpencodeClient } from '@opencode-ai/sdk';
 // The root `@opencode-ai/sdk` client (pinned ^1.4.3, resolves 1.4.11 on this
 // branch) has no `.question` surface at all — reply/reject/list for the
 // interactive `question` tool only exist on the `/v2` subpath client (present
 // in both 1.4.11 and 1.4.17; verified via `npm pack` .d.ts). Import it
 // separately so the session/event client above is untouched.
-import { createOpencodeClient as createOpencodeQuestionClient } from '@opencode-ai/sdk/v2';
 
 import { registerProvider } from './provider-registry.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
@@ -44,7 +43,10 @@ function killProcessTree(proc: ChildProcess): void {
   }
 }
 
-function spawnOpencodeServer(config: Record<string, unknown>, timeoutMs = 10_000): Promise<{ url: string; proc: ChildProcess }> {
+function spawnOpencodeServer(
+  config: Record<string, unknown>,
+  timeoutMs = 10_000,
+): Promise<{ url: string; proc: ChildProcess }> {
   return new Promise((resolve, reject) => {
     const hostname = '127.0.0.1';
     const port = 4096;
@@ -210,6 +212,7 @@ function parseLimitEnv(varName: string, raw: string | undefined): number | undef
 
 export function buildOpenCodeConfig(options: ProviderOptions): Record<string, unknown> {
   const provider = process.env.OPENCODE_PROVIDER || 'anthropic';
+  const providerNpm = process.env.OPENCODE_PROVIDER_NPM;
   const model = process.env.OPENCODE_MODEL;
   const smallModel = process.env.OPENCODE_SMALL_MODEL;
   const proxyUrl = process.env.ANTHROPIC_BASE_URL;
@@ -261,9 +264,7 @@ export function buildOpenCodeConfig(options: ProviderOptions): Record<string, un
     })
     .filter((entry) => entry !== 'text');
   const modelModalities =
-    requestedModalities.length > 0
-      ? { input: ['text', ...requestedModalities], output: ['text'] }
-      : undefined;
+    requestedModalities.length > 0 ? { input: ['text', ...requestedModalities], output: ['text'] } : undefined;
 
   const providerOptions: Record<string, unknown> =
     provider === 'anthropic'
@@ -278,7 +279,11 @@ export function buildOpenCodeConfig(options: ProviderOptions): Record<string, un
             // (e.g. `openrouter`, set alongside ANTHROPIC_BASE_URL per the
             // documented OpenRouter config) ship their own native ai-sdk
             // package and must keep OpenCode's default transport resolution.
-            ...(provider === 'openai' && proxyUrl ? { npm: '@ai-sdk/openai-compatible' } : {}),
+            ...(providerNpm
+              ? { npm: providerNpm }
+              : provider === 'openai' && proxyUrl
+                ? { npm: '@ai-sdk/openai-compatible' }
+                : {}),
             options: { apiKey: 'placeholder', baseURL: proxyUrl },
             ...(modelsToRegister.length > 0
               ? {
@@ -298,6 +303,7 @@ export function buildOpenCodeConfig(options: ProviderOptions): Record<string, un
                           id: mid,
                           name: mid,
                           tool_call: true,
+                          ...(isMainModel && options.effort ? { options: { reasoningEffort: options.effort } } : {}),
                           ...(isMainModel && modelLimit ? { limit: modelLimit } : {}),
                           ...(isMainModel && modelModalities ? { attachment: true, modalities: modelModalities } : {}),
                         },
@@ -406,6 +412,13 @@ async function ensureSharedRuntime(options: ProviderOptions): Promise<SharedRunt
       destroySharedRuntime();
     }
     const config = buildOpenCodeConfig(options);
+    // OpenCode is optional. Load its SDK only after this provider is selected,
+    // so a stale/custom image missing the dependency cannot crash Claude,
+    // Codex, or another registered provider while the provider barrel loads.
+    const [{ createOpencodeClient }, { createOpencodeClient: createOpencodeQuestionClient }] = await Promise.all([
+      import('@opencode-ai/sdk'),
+      import('@opencode-ai/sdk/v2'),
+    ]);
     const { url, proc } = await spawnOpencodeServer(config);
     const client = createOpencodeClient({ baseUrl: url });
     const questionClient = createOpencodeQuestionClient({ baseUrl: url });

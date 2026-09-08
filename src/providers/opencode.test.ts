@@ -29,8 +29,9 @@ describe('opencode provider container config', () => {
       groupDir: path.join(tmp, 'group'),
       selectedSkills: [],
       hostEnv: {
-        OPENCODE_PROVIDER: 'openai',
-        OPENCODE_MODEL: 'openai/lumo',
+        OPENCODE_PROVIDER: 'proton-lumo',
+        OPENCODE_PROVIDER_NPM: '@ai-sdk/openai-compatible',
+        OPENCODE_MODEL: 'proton-lumo/lumo-max',
         ANTHROPIC_BASE_URL: 'https://lumo.proton.me/api/ai/v1',
       },
     });
@@ -42,8 +43,9 @@ describe('opencode provider container config', () => {
       XDG_STATE_HOME: '/opencode-xdg/state',
       XDG_CONFIG_HOME: '/opencode-xdg/config',
       XDG_CACHE_HOME: '/opencode-xdg/cache',
-      OPENCODE_PROVIDER: 'openai',
-      OPENCODE_MODEL: 'openai/lumo',
+      OPENCODE_PROVIDER: 'proton-lumo',
+      OPENCODE_PROVIDER_NPM: '@ai-sdk/openai-compatible',
+      OPENCODE_MODEL: 'proton-lumo/lumo-max',
       ANTHROPIC_BASE_URL: 'https://lumo.proton.me/api/ai/v1',
     });
     for (const child of ['', 'data', 'state', 'config', 'cache']) {

@@ -54,6 +54,7 @@ import { hasAdminPrivilege } from './db/user-roles.js';
 import { getUser, upsertUser } from './db/users.js';
 import { requestSenderApproval } from './sender-approval.js';
 import { ensureUserDm } from './user-dm.js';
+import { namespacedUserId } from '../../platform-id.js';
 
 // ── Free-text name input state ──
 // Tracks approvers waiting for a text reply with the agent name. Keyed by
@@ -91,11 +92,11 @@ function extractAndUpsertUser(event: InboundEvent): string | null {
   const rawHandle = senderIdField ?? senderField ?? authorUserId;
   if (!rawHandle) return null;
 
-  const userId = rawHandle.includes(':') ? rawHandle : `${event.channelType}:${rawHandle}`;
+  const userId = namespacedUserId(event.channelType, rawHandle);
   if (!getUser(userId)) {
     upsertUser({
       id: userId,
-      kind: event.channelType,
+      kind: userId.slice(0, userId.indexOf(':')),
       display_name: senderName ?? null,
       created_at: new Date().toISOString(),
     });
@@ -233,15 +234,7 @@ async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<b
   const row = getPendingSenderApproval(payload.questionId);
   if (!row) return false;
 
-  // payload.userId is the raw platform userId (e.g. "6037840640"); namespace it
-  // with the channel type so it matches users(id) format. Some platforms
-  // (e.g. Teams "29:xxx") already include a colon — mirror resolveOrCreateUser
-  // logic and only prefix when the raw id has no colon.
-  const clickerId = payload.userId
-    ? payload.userId.includes(':')
-      ? payload.userId
-      : `${payload.channelType}:${payload.userId}`
-    : null;
+  const clickerId = payload.userId ? namespacedUserId(payload.channelType, payload.userId) : null;
   const isAuthorized =
     clickerId !== null && (clickerId === row.approver_user_id || hasAdminPrivilege(clickerId, row.agent_group_id));
   if (!isAuthorized) {
@@ -318,11 +311,7 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   const row = getPendingChannelApproval(payload.questionId);
   if (!row) return false;
 
-  const clickerId = payload.userId
-    ? payload.userId.includes(':')
-      ? payload.userId
-      : `${payload.channelType}:${payload.userId}`
-    : null;
+  const clickerId = payload.userId ? namespacedUserId(payload.channelType, payload.userId) : null;
   const isAuthorized =
     clickerId !== null && (clickerId === row.approver_user_id || hasAdminPrivilege(clickerId, row.agent_group_id));
   if (!isAuthorized) {

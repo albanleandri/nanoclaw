@@ -13,6 +13,7 @@
  * core iterates handlers and the first one to return `true` claims the response.
  */
 import { wakeContainer } from '../../container-runner.js';
+import { namespacedUserId as namespaceUserId } from '../../platform-id.js';
 import { claimPendingApproval, deletePendingApproval, getPendingApproval, getSession } from '../../db/sessions.js';
 import type { ResponsePayload } from '../../response-registry.js';
 import { log } from '../../log.js';
@@ -129,7 +130,7 @@ async function handleRegisteredApproval(
 
 function namespacedUserId(payload: ResponsePayload): string | null {
   if (!payload.userId) return null;
-  return payload.userId.includes(':') ? payload.userId : `${payload.channelType}:${payload.userId}`;
+  return namespaceUserId(payload.channelType, payload.userId);
 }
 
 function isAuthorizedApprovalClick(approval: PendingApproval, payload: ResponsePayload): boolean {

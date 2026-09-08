@@ -209,8 +209,8 @@ describe('unknown-channel registration flow', () => {
       const claimed = await handler({
         questionId: pending.messaging_group_id,
         value: 'connect:ag-1',
-        userId: 'owner', // raw platform id — handler namespaces it
-        channelType: 'telegram',
+        userId: 'telegram_codex:owner',
+        channelType: 'telegram_codex',
         platformId: 'dm-owner',
         threadId: null,
       });

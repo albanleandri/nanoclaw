@@ -17,6 +17,7 @@ import { registerProviderContainerConfig } from './provider-container-registry.j
 
 const PASSTHROUGH_KEYS = [
   'OPENCODE_PROVIDER',
+  'OPENCODE_PROVIDER_NPM',
   'OPENCODE_MODEL',
   'OPENCODE_SMALL_MODEL',
   'ANTHROPIC_BASE_URL',

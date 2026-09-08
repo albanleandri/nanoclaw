@@ -206,11 +206,10 @@ describe('unknown-sender request_approval flow', () => {
       const claimed = await handler({
         questionId: pending.id,
         value: 'approve',
-        // Chat SDK's onAction surfaces the raw platform userId (e.g. Telegram
-        // chat id). The permissions handler namespaces it with channelType to
-        // match users(id).
-        userId: 'owner',
-        channelType: 'telegram',
+        // A dedicated Telegram bot alias must still resolve to the canonical
+        // owner identity that received the approval card.
+        userId: 'telegram_lumo:owner',
+        channelType: 'telegram_lumo',
         platformId: 'dm-owner',
         threadId: null,
       });
