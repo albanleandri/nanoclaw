@@ -54,6 +54,7 @@ import { readEnvFileByPrefix } from './env.js';
 import { ensureRtkClaudeHook } from './rtk.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
 import { validatePackageLists } from './package-names.js';
+import { SHARED_TODO_FILENAME, SHARED_TODO_RESOURCE } from './todos.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
 import './providers/index.js';
@@ -726,6 +727,25 @@ export function buildSharedResourceMounts(
       containerPath,
       readonly: !writable,
     });
+    // TODO.md is host-managed even when this group owns the surrounding
+    // reconciled knowledge resource. Overlay the file read-only so every
+    // provider must use the serialized `ncl todos` API instead of creating a
+    // second writer path through its native filesystem tools.
+    if (name === SHARED_TODO_RESOURCE) {
+      const todoHostPath = path.join(projectRoot, 'groups', 'shared', name, SHARED_TODO_FILENAME);
+      try {
+        if (!fs.lstatSync(todoHostPath).isFile()) {
+          throw new Error(`Canonical shared Todo must be a regular file: ${todoHostPath}`);
+        }
+        mounts.push({
+          hostPath: todoHostPath,
+          containerPath: path.posix.join(containerPath, SHARED_TODO_FILENAME),
+          readonly: true,
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
   }
   return mounts;
 }

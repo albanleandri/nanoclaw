@@ -243,12 +243,14 @@ mounts are contributed by provider adapters. API-key profiles normally remain
 behind OneCLI and are not stored in runtime JSON; explicitly enabled host-file
 or direct-secret modes are mounted into the container.
 
-The household to-do list is a deliberate exception to shared-resource writer
-identity. Agents granted the `knowledge` resource are equal clients of the
-host-managed `ncl todos` interface. The host validates list/add/complete/remove
-operations and atomically replaces `groups/shared/knowledge/TODO.md`, so the
-human-readable Markdown remains canonical without granting either provider a
-direct multi-writer mount.
+The household Todo list is a deliberate exception to shared-resource writer
+identity. Every agent granted the `knowledge` resource is an equal client of
+the host-managed `ncl todos` interface. The host validates
+list/add/update/complete/remove operations and atomically replaces
+`groups/shared/knowledge/TODO.md`. A nested read-only bind protects that file
+inside every agent container, including the reconciled knowledge owner, so the
+human-readable Markdown remains canonical without a provider-side writer path.
+See [todos.md](todos.md) for the authority and operator contract.
 
 Claude and Codex receive the `runtime.shell` capability through the built-in
 NanoClaw MCP server. Its `run_shell` tool asks RTK to rewrite the command,

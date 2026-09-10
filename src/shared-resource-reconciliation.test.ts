@@ -113,6 +113,55 @@ afterEach(() => {
 });
 
 describe('shared-resource owner transfer policy', () => {
+  it('keeps the host-managed Todo file read-only even for the knowledge owner', () => {
+    const knowledgeDir = path.join(TEST_ROOT, 'groups', 'shared', 'knowledge');
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+    const todoPath = path.join(knowledgeDir, 'TODO.md');
+    fs.writeFileSync(todoPath, '# Todo List\n');
+    updateContainerConfigJson(OWNER, 'shared_resources', ['knowledge']);
+
+    const reportRelative = 'shared-resource-reconciliation/knowledge/classification.json';
+    const reportPath = path.join(TEST_ROOT, 'data', reportRelative);
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, '{"resource_name":"knowledge","pilot_markers_removed":true,"entries":[]}');
+    const reportHash = createHash('sha256').update(fs.readFileSync(reportPath)).digest('hex');
+
+    ensureSharedResourceControl('knowledge');
+    const reconciling = transitionSharedResourceControl('knowledge', 1, 'pilot', {
+      state: 'reconciling',
+      ownerAgentGroupId: OWNER,
+    });
+    const validated = transitionSharedResourceControl('knowledge', reconciling.version, 'reconciling', {
+      state: 'validated',
+      ownerAgentGroupId: OWNER,
+      classificationReportPath: reportRelative,
+      classificationReportSha256: reportHash,
+      validationReportJson: '{"ok":true}',
+    });
+    transitionSharedResourceControl('knowledge', validated.version, 'validated', {
+      state: 'reconciled',
+      ownerAgentGroupId: OWNER,
+      approvedAt: '2026-07-27T00:00:00.000Z',
+    });
+
+    expect(
+      buildSharedResourceMounts(
+        OWNER,
+        {
+          mcpServers: {},
+          packages: { apt: [], npm: [] },
+          additionalMounts: [],
+          skills: 'all',
+          sharedResources: ['knowledge'],
+        },
+        TEST_ROOT,
+      ),
+    ).toEqual([
+      { hostPath: knowledgeDir, containerPath: '/app/shared/knowledge', readonly: false },
+      { hostPath: todoPath, containerPath: '/app/shared/knowledge/TODO.md', readonly: true },
+    ]);
+  });
+
   it('transfers between granted stopped groups and reverses effective mount access', () => {
     const before = getSharedResourceControl(RESOURCE)!;
     const transferred = transferSharedResourceReconciliationOwner(RESOURCE, PEER, OWNER, before.version, RESOURCE);

@@ -49,7 +49,7 @@ export const SELECTABLE_RUNTIME_TOOLS = [
   ['TeamCreate', 'Create agent teams for parallel work.', false],
   ['TeamDelete', 'Delete agent teams.', false],
   ['SendMessage', 'Use Claude Code messaging primitives while working.', true],
-  ['TodoWrite', 'Maintain structured working todo lists.', true],
+  ['TodoWrite', 'Maintain provider-local turn plans (not the shared personal Todo list).', true],
   ['ToolSearch', 'Search the runtime tool catalog.', true],
   ['Skill', 'Invoke installed runtime skills.', true],
   ['NotebookEdit', 'Edit Claude notebook state.', false],

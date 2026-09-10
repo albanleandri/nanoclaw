@@ -24,7 +24,8 @@ Run `ncl help` for the full list. Common resources:
 | sessions     | list, get                                                                                                                                 | Active sessions (read-only)                             |
 | destinations | list, add, remove                                                                                                                         | Where an agent group can send messages                  |
 | members      | list, add, remove                                                                                                                         | Unprivileged access gate for an agent group             |
-| tasks        | list, get, create, update, cancel, pause, resume, delete, run, append-log                                                                | Scheduled tasks for your agent group                     |
+| tasks        | list, get, create, update, cancel, pause, resume, delete, run, append-log                                                                 | Scheduled tasks for your agent group                    |
+| todos        | list, add, update, complete, remove                                                                                                       | Canonical shared personal Todo list                     |
 
 Additional resources (available under `global` scope only): messaging-groups, wirings, users, roles, user-dms, dropped-messages, approvals.
 
@@ -35,6 +36,7 @@ Additional resources (available under `global` scope only): messaging-groups, wi
 - **Checking who's in your group** — `ncl members list`.
 - **Seeing your destinations** — `ncl destinations list`.
 - **Scheduling work** — `ncl tasks create`, then `ncl tasks list/get/update/cancel/pause/resume/delete`; `ncl tasks run <id>` fires one extra run now (testing) without changing the schedule. Each task run auto-logs its final text to the run log; `ncl tasks append-log --msg "…"` is for extra mid-run notes (host-timestamped, not a message). See `ncl tasks create --help` for schedules, the `--script` gate contract, and failure backoff.
+- **Managing the shared Todo list** — use `ncl todos list/add/update/complete/remove`. `ncl tasks` is the scheduled-work system, and provider-native TodoWrite/planning tools are temporary turn planning; neither is the shared personal Todo list. Never create or edit a workspace `TODO.md` as a substitute.
 - **Answering questions about the system** — query `ncl` rather than guessing.
 
 ### Access rules
@@ -64,6 +66,10 @@ ncl sessions list
 ncl destinations list
 ncl members list
 ncl tasks list
+ncl todos list
+ncl todos add --text "Call the dentist" --due 2026-10-01
+ncl todos update --match "dentist" --text "Call the stomatologist"
+ncl todos complete --match "stomatologist"
 
 # ncl tasks is open access (no approval needed), but its writes are still worth
 # a moment's care since they change what runs unattended:

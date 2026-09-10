@@ -9,7 +9,14 @@ export interface TodoItem {
   due: string | null;
 }
 
-const TODO_PATH = path.join(GROUPS_DIR, 'shared', 'knowledge', 'TODO.md');
+export const SHARED_TODO_RESOURCE = 'knowledge';
+export const SHARED_TODO_FILENAME = 'TODO.md';
+
+export function sharedTodoPath(groupsDir = GROUPS_DIR): string {
+  return path.join(groupsDir, 'shared', SHARED_TODO_RESOURCE, SHARED_TODO_FILENAME);
+}
+
+const TODO_PATH = sharedTodoPath();
 const ITEM_RE = /^- \[([ xX])\] (.*?)(?: 📅 (\d{4}-\d{2}-\d{2}))?$/;
 
 function validateText(value: unknown, name: string): string {
@@ -31,7 +38,16 @@ function validateDue(value: unknown): string | null {
 }
 
 function readDocument(todoPath = TODO_PATH): string {
-  if (!fs.existsSync(todoPath)) throw new Error(`to-do list not found: ${todoPath}`);
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(todoPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`to-do list not found: ${todoPath}`, { cause: error });
+    }
+    throw error;
+  }
+  if (!stat.isFile()) throw new Error(`to-do list must be a regular file: ${todoPath}`);
   return fs.readFileSync(todoPath, 'utf8');
 }
 
@@ -47,12 +63,21 @@ function atomicWrite(todoPath: string, content: string): void {
   try {
     fs.writeFileSync(tempPath, content, { encoding: 'utf8', mode, flag: 'wx' });
     fs.renameSync(tempPath, todoPath);
-  } finally {
+  } catch (error) {
     try {
       fs.unlinkSync(tempPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    } catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new AggregateError(
+          [error, cleanupError],
+          `failed to update and clean temporary to-do file: ${tempPath}`,
+          {
+            cause: cleanupError,
+          },
+        );
+      }
     }
+    throw error;
   }
 }
 
@@ -96,6 +121,33 @@ export function addTodo(rawText: unknown, rawDue?: unknown, todoPath = TODO_PATH
   const insertAt = markerIndex + marker.length;
   const line = `\n- [ ] ${text}${due ? ` 📅 ${due}` : ''}`;
   atomicWrite(todoPath, document.slice(0, insertAt) + line + document.slice(insertAt));
+  return { text, completed: false, due };
+}
+
+export function updateTodo(rawMatch: unknown, rawText?: unknown, rawDue?: unknown, todoPath = TODO_PATH): TodoItem {
+  const hasText = rawText !== undefined;
+  const hasDue = rawDue !== undefined;
+  if (!hasText && !hasDue) throw new Error('provide text and/or due to update');
+
+  const document = readDocument(todoPath);
+  const lines = document.split('\n');
+  const found = findMatch(lines, rawMatch, false);
+  const text = hasText ? validateText(rawText, 'text') : found.item.text;
+  const clearDue =
+    hasDue &&
+    (rawDue === null ||
+      (typeof rawDue === 'string' && (rawDue.trim() === '' || rawDue.trim().toLowerCase() === 'none')));
+  const due = clearDue ? null : hasDue ? validateDue(rawDue) : found.item.due;
+
+  const duplicate = lines.some((line, index) => {
+    if (index === found.index) return false;
+    const item = parseLine(line);
+    return item !== null && !item.completed && item.text.toLocaleLowerCase() === text.toLocaleLowerCase();
+  });
+  if (duplicate) throw new Error(`active to-do already exists: ${text}`);
+
+  lines[found.index] = `- [ ] ${text}${due ? ` 📅 ${due}` : ''}`;
+  atomicWrite(todoPath, lines.join('\n'));
   return { text, completed: false, due };
 }
 
