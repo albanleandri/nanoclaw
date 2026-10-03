@@ -1,3 +1,7 @@
+[install]
+# Match the host's three-day supply-chain hold for newly published versions.
+minimumReleaseAge = 259200
+
 [test]
 # Emit lcov so `scripts/check-coverage.ts` can enforce a PROJECT-WIDE floor.
 # bunfig's own `coverageThreshold` is applied per file, which makes it unusable
