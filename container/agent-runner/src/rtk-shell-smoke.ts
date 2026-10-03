@@ -4,9 +4,9 @@ import type { ShellInput, ShellResult } from './shell-executor.js';
 /**
  * Provider-neutral acceptance checks for the NanoClaw `run_shell` MCP tool.
  *
- * Claude and Codex both reach this tool through the same `mcp:nanoclaw`
+ * Claude, Codex, and OpenCode reach this tool through the same `mcp:nanoclaw`
  * entrypoint, so verifying the catalog entry, its capability gate, and a real
- * RTK round trip inside the image covers both runtimes without a paid provider
+ * RTK round trip inside the image covers all three native runtimes without a paid provider
  * call. The per-runtime adapter list itself is asserted host-side in
  * `src/capabilities/builtins/index.test.ts`.
  *

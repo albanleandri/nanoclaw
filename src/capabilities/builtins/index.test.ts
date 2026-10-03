@@ -15,9 +15,9 @@ describe('built-in capabilities', () => {
     );
   });
 
-  it('scopes browser MCP to tool-capable core runtimes', () => {
+  it('scopes browser MCP to every native tool-capable runtime', () => {
     const adapter = getCapability('web.browse')?.adapters.find((item) => item.kind === 'mcp');
-    expect(adapter?.runtimeIds).toEqual(expect.arrayContaining(['claude-sdk', 'codex-app-server']));
+    expect(adapter?.runtimeIds).toEqual(expect.arrayContaining(['claude-sdk', 'codex-app-server', 'opencode-server']));
     expect(adapter?.availabilityCheck).toBe('mcp-server-configured');
   });
 
@@ -25,12 +25,12 @@ describe('built-in capabilities', () => {
     expect(getCapability('repo.edit')?.requirements.workspace).toBe('write');
   });
 
-  it('keeps arbitrary RTK shell execution on the native container runtimes', () => {
+  it('keeps arbitrary RTK shell execution on every native container runtime', () => {
     const capability = getCapability('runtime.shell');
     expect(capability?.adapters).toEqual([
       expect.objectContaining({
         kind: 'mcp',
-        runtimeIds: ['claude-sdk', 'codex-app-server'],
+        runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
         entrypoint: 'mcp:nanoclaw',
       }),
     ]);

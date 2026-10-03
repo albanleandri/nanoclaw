@@ -74,7 +74,7 @@ registerCapability({
   adapters: [
     {
       kind: 'mcp',
-      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
       entrypoint: 'mcp:configured',
     },
   ],
@@ -148,7 +148,7 @@ registerCapability({
   adapters: [
     {
       kind: 'mcp',
-      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
       entrypoint: 'mcp:nanoclaw',
     },
   ],
@@ -165,7 +165,7 @@ registerCapability({
   adapters: [
     {
       kind: 'mcp',
-      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
       entrypoint: 'mcp:browser',
       availabilityCheck: 'mcp-server-configured',
     },
@@ -182,7 +182,7 @@ registerCapability({
   adapters: [
     {
       kind: 'native-runtime',
-      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
       entrypoint: 'native:fs',
     },
     {
@@ -203,7 +203,7 @@ registerCapability({
   adapters: [
     {
       kind: 'mcp',
-      runtimeIds: ['claude-sdk', 'codex-app-server'],
+      runtimeIds: ['claude-sdk', 'codex-app-server', 'opencode-server'],
       entrypoint: 'mcp:nanoclaw',
     },
   ],

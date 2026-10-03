@@ -65,7 +65,7 @@ external services, so least privilege still matters.
 - **Skill provenance and capability audit** — optional strict container-skill manifests bind reviewed content hashes to capability/runtime requirements, while canonical tool calls emit redacted, correlated lifecycle events
 - **Durable direct orchestration seam** — normal engaged messages compile to a versioned `direct@1` model→delivery plan, with dependency-ready leases, timeout recovery, cancellation, source-derived host-action authorization, provider usage, and delivery completion; restricted pre-tool fallback can dispatch through an isolated provider-profile session, but its code-owned policy remains default-off
 - **Web access** — search and fetch content from the web
-- **Provider-neutral token-efficient shell** — Claude and Codex can execute
+- **Provider-neutral token-efficient shell** — Claude, Codex, and OpenCode/Lumo can execute
   bounded shell commands through the same audited NanoClaw MCP tool, with RTK
   rewriting/output filtering and persistent per-agent-group recovery output;
   Claude's native Bash hook remains as a compatibility path

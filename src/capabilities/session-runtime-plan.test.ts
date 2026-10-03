@@ -57,6 +57,29 @@ describe('compileSessionRuntimePlan', () => {
     expect(plan.capabilities).toEqual([{ id: 'web.browse', adapter: 'mcp', entrypoint: 'mcp:browser' }]);
   });
 
+  it('gives the native OpenCode runtime the same container capability adapters', () => {
+    const opencodeDescriptor = requireRuntimeDescriptor('opencode-server');
+    const plan = compileSessionRuntimePlan({
+      runtime: { runtimeId: opencodeDescriptor.id, runtimeStateKey: 'opencode' },
+      runtimeDescriptor: opencodeDescriptor,
+      capabilityProfile: {
+        requested: ['runtime.shell', 'nanoclaw.browse-web', 'nanoclaw.external-mcp', 'web.browse', 'repo.edit'],
+        allowDegraded: [],
+      },
+      availability: withBrowser,
+      policy,
+    });
+
+    expect(plan.capabilities).toEqual([
+      { id: 'runtime.shell', adapter: 'mcp', entrypoint: 'mcp:nanoclaw' },
+      { id: 'nanoclaw.browse-web', adapter: 'mcp', entrypoint: 'mcp:nanoclaw' },
+      { id: 'nanoclaw.external-mcp', adapter: 'mcp', entrypoint: 'mcp:configured' },
+      { id: 'web.browse', adapter: 'mcp', entrypoint: 'mcp:browser' },
+      { id: 'repo.edit', adapter: 'native-runtime', entrypoint: 'native:fs' },
+    ]);
+    expect(plan.rejectedCapabilities).toEqual([]);
+  });
+
   it('compiles verified generic runtime host capabilities to protocol tools', () => {
     const genericDescriptor = requireRuntimeDescriptor('openai-protocol-loop');
     const plan = compileSessionRuntimePlan({

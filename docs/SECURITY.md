@@ -295,8 +295,8 @@ The container image pins Bun and global CLI versions in the Dockerfile. RTK
 uses architecture-specific release assets with repository-pinned SHA-256
 digests and an image-build version check.
 
-The `runtime.shell` capability does not expand the container boundary: Claude
-and Codex already have unrestricted native shell execution inside their
+The `runtime.shell` capability does not expand the container boundary: Claude,
+Codex, and OpenCode already have unrestricted native shell execution inside their
 container. It provides a common audited and bounded execution path. RTK
 rewriting is invoked without a shell, deny/ask verdicts fail closed, command
 output and duration are bounded, and timeout termination targets the command

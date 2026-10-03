@@ -252,7 +252,7 @@ inside every agent container, including the reconciled knowledge owner, so the
 human-readable Markdown remains canonical without a provider-side writer path.
 See [todos.md](todos.md) for the authority and operator contract.
 
-Claude and Codex receive the `runtime.shell` capability through the built-in
+Claude, Codex, and OpenCode/Lumo receive the `runtime.shell` capability through the built-in
 NanoClaw MCP server. Its `run_shell` tool asks RTK to rewrite the command,
 executes the resulting command with a bounded timeout and output capture, and
 records tool-in-flight state for host stuck detection. RTK deny/approval

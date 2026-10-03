@@ -200,7 +200,7 @@ silently rewritten.
 
 ### Token-efficient shell
 
-The built-in `run_shell` MCP tool is shared by Claude and Codex. It invokes
+The built-in `run_shell` MCP tool is shared by Claude, Codex, and OpenCode. It invokes
 `rtk rewrite` without a shell, interprets RTK's allow/passthrough/deny/ask
 verdict, and only then executes the selected command through Bash in
 `/workspace/agent`. Execution defaults to a 120-second timeout, allows at most

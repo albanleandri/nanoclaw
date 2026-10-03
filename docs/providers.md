@@ -91,10 +91,10 @@ policy has no candidate profiles and keeps fallback disabled.
 
 Before spawn, the host compiles a session runtime plan from code-owned capability manifests, the selected runtime descriptor, policy, and deterministic local availability checks. The built-ins cover message delivery, scheduling, durable jobs and agent tasks, agent management, self-modification, CLI dispatch, browser access, configured external MCP access, workspace editing, and the bounded RTK-backed `runtime.shell` capability.
 
-Required capability loss throws before container materialization. Explicitly optional loss is recorded as rejected instead. Claude and Codex receive the compiled plan in runtime JSON; their NanoClaw MCP subprocess filters tool discovery and calls by capability ID, and configured external servers are attached only with the compiled external-MCP grant. The `openai-protocol-loop` runtime always receives an empty `mcpServers` map; verified tools are supplied only through compiled `protocol-tool` bindings.
+Required capability loss throws before container materialization. Explicitly optional loss is recorded as rejected instead. Claude, Codex, and OpenCode/Lumo receive the compiled plan in runtime JSON; their NanoClaw MCP subprocess filters tool discovery and calls by capability ID, and configured external servers are attached only with the compiled external-MCP grant. The `openai-protocol-loop` runtime always receives an empty `mcpServers` map; verified tools are supplied only through compiled `protocol-tool` bindings.
 
-`runtime.shell` resolves through the built-in NanoClaw MCP server only for
-`claude-sdk` and `codex-app-server`. It is explicitly optional in the default
+`runtime.shell` resolves through the built-in NanoClaw MCP server for the native
+`claude-sdk`, `codex-app-server`, and `opencode-server` runtimes. It is explicitly optional in the default
 profile so generic protocol profiles record it as unavailable instead of
 failing startup. It has no `protocol-tool` adapter: verifying generic function
 calling must never grant arbitrary shell execution.
