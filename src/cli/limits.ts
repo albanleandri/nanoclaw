@@ -1,0 +1,3 @@
+export const MAX_CLI_FRAME_BYTES = 96 * 1024;
+export const MAX_CREDENTIAL_INPUT_BYTES = 64 * 1024;
+export const MAX_CREDENTIAL_FIELD_BYTES = 32 * 1024;

@@ -536,6 +536,33 @@ dispatch. Result, delivery, authorization, cancellation, and active-capability
 lookups use this execution owner rather than assuming every attempt runs in
 the source session.
 
+### 1.23 Host integration profiles, grants, and invocation audit
+
+Migration 035 adds the central metadata layer for narrow host-owned
+integrations. `integration_profiles` pins an exact code-registered adapter
+version, canonical non-secret configuration, a generated opaque credential
+reference, backend and security tier. New profiles are always disabled and use
+an optimistic `version` for updates. `integration_profile_grants` authorizes
+one registered read-only operation for one agent group.
+
+`integration_invocations` is a metadata-only lifecycle audit. It snapshots the
+safe profile label, adapter/version, operation, trusted caller scope, status,
+result class, and timing. It must never contain arguments, raw or normalized
+results, protected selectors, credential references, cookies, or upstream
+material. Startup changes leftover `running` rows to `interrupted` with
+`result_class=interrupted_on_restart`.
+
+Protected payloads are not part of the central schema or its backups. The
+`credential_ref` column is only an opaque generated handle into the separately
+hardened host credential store. The active management layer is host-only; the
+runtime invoker requires an enabled profile, an exact agent-group operation
+grant, a registered adapter version, and a safe credential. The first
+production adapter is the read-only `family-agenda@1` adapter.
+
+- **Readers/writers:** `src/db/integration-profiles.ts`,
+  `src/db/integration-invocations.ts`, `src/integrations/administration.ts`,
+  and `src/integrations/invoker.ts`
+
 ---
 
 ## 2. Migration system
@@ -580,6 +607,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 032 | `032-user-role-global-uniqueness.ts`      | Deduplicate legacy global role grants and enforce one `(user_id, role, NULL)` row with a partial unique index                                                        |
 | 033 | `033-agent-group-memory-control.ts`       | Group-scoped neutral-memory mode, migration state, designated writer, maintenance fence, and default-row trigger                                                     |
 | 034 | `034-shared-resource-control.ts`          | Shared-resource reconciliation state and approved writer-owner control                                                                                               |
+| 035 | `035-host-integrations.ts`                | Host integration profiles, per-group operation grants, and metadata-only invocation audit                                                                            |
 
 Numbered files jump 002 → 008: the early `pending_approvals` / `agent_destinations` / title-options migrations were refactored into the three name-keyed `module-*` migrations listed above, and no `003`–`007` numbered files exist. Because the runner keys on `name` (not the numeric `version`), the gap is cosmetic.
 

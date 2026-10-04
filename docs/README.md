@@ -36,6 +36,7 @@ Start here:
 | Backup and restore                | [backup.md](backup.md)                             |
 | Debugging                         | [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)           |
 | Security                          | [SECURITY.md](SECURITY.md)                         |
+| Trusted-host integrations         | [host-integrations.md](host-integrations.md)       |
 
 ## Current fork feature map
 
@@ -59,7 +60,10 @@ The implementation currently includes:
 - reconciled shared-resource ownership with one approved writer-owner and
   read-only non-owner grants;
 - OneCLI-backed credential injection, optional egress lockdown, redacted
-  capability audit, and approval-gated sensitive host actions; and
+  capability audit, and approval-gated sensitive host actions;
+- a profile-gated trusted-host integration path for reviewed bespoke
+  authentication, with host-only credential storage, exact operation grants,
+  typed agent facades, and metadata-only invocation audit; and
 - Docker as the default container runtime, with Apple Container and Docker
   Sandboxes documented as explicit alternatives.
 

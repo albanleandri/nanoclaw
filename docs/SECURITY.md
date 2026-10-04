@@ -32,6 +32,7 @@ session DB rows from the container       untrusted requests
 host process                             trusted policy enforcement
 central DB                               trusted admin/durable state
 OneCLI gateway                           trusted credential boundary
+host integration credential store        trusted host-secret boundary
 ```
 
 The host does not grant authority because a prompt or model response says it
@@ -267,6 +268,24 @@ Provider-native local state such as `.claude-shared` and `.codex-shared` is
 scoped per agent group. DB-backed runtime/profile keys further prevent one
 endpoint profile from resuming another profile's continuation state.
 
+Reviewed trusted-host integrations are a narrower exception for services that
+cannot use OneCLI request injection. Their protected payloads are stored as
+owner-only local files under `data/private-integrations/v1/`; central profiles
+contain only generated opaque references. The files are never backed up or
+mounted into agent containers, and status commands return only
+`available`/`missing`/`unsafe`/`unsupported` rather than the reference or
+payload.
+
+The host-only administration resource is reachable only through the
+owner-only local CLI socket. Agent invocation requires a code-owned typed
+facade, an enabled exact-version profile, and an exact
+agent-group/profile/operation grant. Authorization runs before credential or
+adapter access and before distinguishable profile errors. Registered adapters
+are read-only in v1 and own their allowed origins, paths, methods, redirects,
+deadlines, schemas, and input/output bounds. Invocation audit is metadata-only
+and excludes inputs, outputs, configuration, credential references, and raw
+errors. See [host-integrations.md](host-integrations.md).
+
 ## Network controls
 
 By default, a container can use Docker's normal outbound network. This is
@@ -280,6 +299,11 @@ explicitly reviewed gateway route is added.
 
 Docker `--add-host=host.docker.internal:host-gateway` is added on Linux in
 normal mode for cross-platform host addressing.
+
+Trusted-host integration traffic originates in the host process, not an agent
+container, so container egress lockdown does not govern it. Its network
+boundary is the reviewed adapter's exact HTTPS origin/path/method policy and
+bounded redirect handling.
 
 ## Supply-chain controls
 
@@ -314,6 +338,9 @@ host and runner tests plus coverage, and checks formatting.
   agent container.
 - Keep `.env`, OneCLI state, local handoffs, DB backups, and private skills
   out of the public repository.
+- Enter or rotate trusted-host integration credentials only through
+  `ncl integrations credential set|rotate`; do not place them in flags, shell
+  expansion, profile configuration, prompts, or skills.
 - Use `pnpm run backup` before writable maintenance.
 - Inspect SQLite with the read-only wrapper documented in [db.md](db.md).
 - Rebuild host TypeScript before restarting after `src/` changes.
@@ -329,6 +356,9 @@ host and runner tests plus coverage, and checks formatting.
 - Writable agent workspaces allow the model to change its own durable files.
 - Sessions in the same agent group intentionally share those files.
 - Default Docker networking permits general egress unless lockdown is enabled.
+- Local-file trusted-host credentials are plaintext at rest unless the host
+  disk is encrypted; root or compromise of the NanoClaw Unix account can read
+  them.
 - Containers reduce host exposure but do not protect data deliberately mounted
   into them.
 - A tool with external side effects can still make a bad authorized decision;

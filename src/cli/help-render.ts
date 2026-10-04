@@ -100,7 +100,7 @@ export function renderVerbHelp(res: ResourceDef, verb: string): string | undefin
   lines.push('');
   lines.push(op ? op.description : genericSummary(res, generic!));
 
-  const flags = op ? (op.args ?? []) : genericFlags(res, generic!);
+  const flags = (op ? (op.args ?? []) : genericFlags(res, generic!)).filter((flag) => !flag.hidden);
   if (flags.length > 0) {
     lines.push('');
     lines.push('Flags:');

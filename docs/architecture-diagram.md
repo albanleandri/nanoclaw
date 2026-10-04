@@ -17,7 +17,7 @@ flowchart TB
     Runner["Container Runner<br/>(src/container-runner.ts)<br/>OneCLI ensureAgent + spawn"]
     Delivery["Delivery Poller<br/>(src/delivery.ts)<br/>1s active / 60s sweep"]
     Sweep["Host Sweep<br/>(src/host-sweep.ts)<br/>heartbeat, retry, recurrence"]
-    Central[("Central DB<br/>data/v2.db<br/>identity + wiring + sessions<br/>providers + capabilities + audit<br/>memory/shared control + orchestration")]
+    Central[("Central DB<br/>data/v2.db<br/>identity + wiring + sessions<br/>providers + capabilities + integrations<br/>memory/shared control + orchestration")]
   end
 
   subgraph OneCLI["OneCLI Gateway (@onecli-sh/sdk 2.2.1)"]
@@ -66,6 +66,30 @@ flowchart TB
   Approvals --> Central
   Provider -.API calls.-> Vault
 ```
+
+## Trusted-Host Integration Boundary
+
+```mermaid
+flowchart LR
+  Agent["Authorized agent"] -->|"typed command only"| Facade["Typed facade<br/>fixed profile + operation"]
+  Operator["Host operator"] -->|"owner-only data/ncl.sock"| Admin["Integration administration"]
+
+  subgraph HostBoundary["Trusted host"]
+    Facade --> Invoker["Profile-gated invoker<br/>grant first, then credential"]
+    Admin --> Policy[("Central DB<br/>profile + exact grant<br/>metadata-only audit")]
+    Admin --> Store[("Owner-only credential store<br/>generated references<br/>excluded from backups")]
+    Invoker --> Policy
+    Invoker --> Store
+    Invoker --> Adapter["Code-registered adapter<br/>schema + deadline + size bounds"]
+  end
+
+  Adapter -->|"exact HTTPS origins<br/>paths + methods"| Upstream["Reviewed upstream service"]
+```
+
+Agents have no generic integration management or arbitrary HTTP surface.
+OneCLI remains the default credential plane; this host-only path is reserved
+for reviewed authentication flows it cannot support. See
+[host-integrations.md](host-integrations.md).
 
 ## Message Flow (inbound -> agent -> outbound)
 

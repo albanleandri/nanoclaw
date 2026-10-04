@@ -14,6 +14,7 @@ import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { startClaudeTokenMaintenance, stopClaudeTokenMaintenance } from './claude-token-maintenance.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
+import { reconcileInterruptedIntegrationInvocations } from './db/integration-invocations.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
@@ -61,6 +62,10 @@ import './channels/index.js';
 // append registry-based modules. Imported for side effects (registrations).
 import './modules/index.js';
 
+// Reviewed host integrations self-register here. Registration alone does not
+// create or enable a profile or provision credentials.
+import './integrations/index.js';
+
 // CLI command barrel — populates the `ncl` registry before the CLI server
 // accepts connections.
 import './cli/commands/index.js';
@@ -90,6 +95,10 @@ async function main(): Promise<void> {
   log.info('Central DB ready', { path: dbPath });
   const interruptedJobs = reconcileInterruptedJobs();
   if (interruptedJobs > 0) log.warn('Closed interrupted durable jobs after startup', { count: interruptedJobs });
+  const interruptedIntegrations = reconcileInterruptedIntegrationInvocations();
+  if (interruptedIntegrations > 0) {
+    log.warn('Closed interrupted host integration invocations after startup', { count: interruptedIntegrations });
+  }
 
   // 1a. Fail closed on a half-installed permissions state (see the helper's
   // doc comment). Count both roles and membership rows; zero of both is the

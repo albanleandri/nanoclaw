@@ -83,6 +83,50 @@ cd container/agent-runner && bun test
 cd container/agent-runner && bun run test:coverage
 ```
 
+## Trusted-host integrations
+
+Host integration administration is available only to the host operator over
+the owner-only local CLI socket. Safe read-only inspection does not reveal a
+credential reference or protected value:
+
+```bash
+ncl integrations list
+ncl integrations get <profile>
+ncl integrations grants <profile>
+ncl integrations test <profile>
+```
+
+New profiles start disabled. Enter and rotate credentials through the
+protected-input flow, never a command-line flag, shell expansion, profile
+configuration, prompt, or skill:
+
+```bash
+ncl integrations credential set <profile>
+ncl integrations credential rotate <profile>
+```
+
+To stop access without deleting the credential, disable the profile. To remove
+the credential, use the revoke command: it disables first and uses the
+displayed profile version as its concurrency guard.
+
+```bash
+ncl integrations disable <profile> --expected-version <version>
+ncl integrations credential revoke <profile> --expected-version <version>
+```
+
+The generic `test` command checks local file safety and schema only; it never
+contacts upstream. For the provisioned family-agenda adapter, the live
+read-only verifier exercises the typed facade, denial path, and terminal safe
+audit while emitting metadata only:
+
+```bash
+pnpm run verify:family-agenda-cutover
+```
+
+The `systemd` credential-backend value is reserved and unsupported in v1.
+See [host-integrations.md](host-integrations.md) for lifecycle, security, and
+restore details.
+
 ## Runtime Guardrails
 
 - Keep the Claude agent-runner path on `@anthropic-ai/claude-agent-sdk`.
@@ -292,9 +336,9 @@ because the image runs as `node` and the shell executor spawns in
   already acted, ack the fire as completed instead: the schedule advances
   rather than replaying work that may have had side effects.
 - Every re-armed failed occurrence writes a line to the series run log naming
-  the cause (`provider unreachable (credential or quota)` or `pre-task script
-  error`) and the next attempt, so a failing series leaves a history rather
-  than a gap.
+  the cause and next attempt. It records either
+  `provider unreachable (credential or quota)` or `pre-task script error`, so
+  a failing series leaves a history rather than a gap.
 - A series that accumulates eight consecutive failed occurrences — from any
   cause, including a prolonged credential outage — is auto-paused at its next
   cron time and must be revived with `ncl tasks resume <series>`. The run-log

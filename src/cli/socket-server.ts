@@ -13,6 +13,7 @@ import net from 'net';
 import { log } from '../log.js';
 import { dispatch } from './dispatch.js';
 import type { CallerContext, RequestFrame, ResponseFrame } from './frame.js';
+import { MAX_CLI_FRAME_BYTES } from './limits.js';
 import { DEFAULT_SOCKET_PATH } from './socket-client.js';
 
 let server: net.Server | null = null;
@@ -29,7 +30,7 @@ export async function startCliServer(socketPath: string = DEFAULT_SOCKET_PATH): 
     }
   }
 
-  const s = net.createServer((conn) => handleConnection(conn));
+  const s = net.createServer({ allowHalfOpen: true }, (conn) => handleConnection(conn));
   server = s;
   await new Promise<void>((resolve, reject) => {
     // Restrict permissions at socket CREATION time, not after listen()
@@ -80,39 +81,46 @@ export async function stopCliServer(): Promise<void> {
 }
 
 function handleConnection(conn: net.Socket): void {
-  let buffer = '';
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let rejected = false;
   conn.on('data', (chunk) => {
-    buffer += chunk.toString('utf8');
-    let idx: number;
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim();
-      buffer = buffer.slice(idx + 1);
-      if (!line) continue;
-      void handleFrame(conn, line);
+    if (rejected) return;
+    bytes += chunk.byteLength;
+    if (bytes > MAX_CLI_FRAME_BYTES) {
+      rejected = true;
+      conn.pause();
+      write(conn, transportError('request frame exceeds the safe size limit'));
+      return;
     }
+    chunks.push(Buffer.from(chunk));
+  });
+  conn.on('end', () => {
+    if (rejected) return;
+    void handleFrame(conn, Buffer.concat(chunks));
   });
   conn.on('error', (err) => {
     log.warn('ncl CLI server connection error', { err });
   });
 }
 
-async function handleFrame(conn: net.Socket, line: string): Promise<void> {
+async function handleFrame(conn: net.Socket, bytes: Buffer): Promise<void> {
   let req: RequestFrame;
+  /* eslint-disable no-catch-all/no-catch-all -- malformed frames must receive one generic non-reflecting error */
   try {
-    const parsed: unknown = JSON.parse(line);
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    const newline = text.indexOf('\n');
+    if (newline < 0 || !text.slice(0, newline).trim() || text.slice(newline + 1).trim()) {
+      throw new Error('invalid frame boundary');
+    }
+    const parsed: unknown = JSON.parse(text.slice(0, newline));
     if (!isRequestFrame(parsed)) throw new Error('bad request shape');
     req = parsed;
-  } catch (e) {
-    write(conn, {
-      id: 'unknown',
-      ok: false,
-      error: {
-        code: 'transport-error',
-        message: `bad frame: ${e instanceof Error ? e.message : String(e)}`,
-      },
-    });
+  } catch {
+    write(conn, transportError('bad request frame'));
     return;
   }
+  /* eslint-enable no-catch-all/no-catch-all */
 
   // Host caller — connecting to data/ncl.sock requires file-system access
   // to a 0600 socket owned by the host user, so we treat the socket path
@@ -124,7 +132,11 @@ async function handleFrame(conn: net.Socket, line: string): Promise<void> {
 
 function write(conn: net.Socket, frame: ResponseFrame): void {
   try {
-    conn.write(JSON.stringify(frame) + '\n');
+    let serialized = `${JSON.stringify(frame)}\n`;
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_CLI_FRAME_BYTES) {
+      serialized = `${JSON.stringify(transportError('response frame exceeds the safe size limit'))}\n`;
+    }
+    conn.write(serialized);
     conn.end();
   } catch (err) {
     log.warn('Failed to write ncl CLI response', { err });
@@ -134,5 +146,15 @@ function write(conn: net.Socket, frame: ResponseFrame): void {
 function isRequestFrame(x: unknown): x is RequestFrame {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
-  return typeof o.id === 'string' && typeof o.command === 'string' && typeof o.args === 'object' && o.args !== null;
+  return (
+    typeof o.id === 'string' &&
+    typeof o.command === 'string' &&
+    typeof o.args === 'object' &&
+    o.args !== null &&
+    !Array.isArray(o.args)
+  );
+}
+
+function transportError(message: string): ResponseFrame {
+  return { id: 'unknown', ok: false, error: { code: 'transport-error', message } };
 }

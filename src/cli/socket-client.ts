@@ -10,6 +10,7 @@ import path from 'path';
 
 import { DATA_DIR } from '../config.js';
 import type { RequestFrame, ResponseFrame } from './frame.js';
+import { MAX_CLI_FRAME_BYTES } from './limits.js';
 import type { Transport } from './transport.js';
 
 export const DEFAULT_SOCKET_PATH = path.join(DATA_DIR, 'ncl.sock');
@@ -21,6 +22,7 @@ export class SocketTransport implements Transport {
     return new Promise((resolve, reject) => {
       const client = net.createConnection(this.socketPath);
       let buffer = '';
+      let responseBytes = 0;
       let settled = false;
 
       const settle = (action: 'resolve' | 'reject', valueOrErr: ResponseFrame | Error): void => {
@@ -36,10 +38,20 @@ export class SocketTransport implements Transport {
       };
 
       client.on('connect', () => {
-        client.write(JSON.stringify(req) + '\n');
+        const serialized = `${JSON.stringify(req)}\n`;
+        if (Buffer.byteLength(serialized, 'utf8') > MAX_CLI_FRAME_BYTES) {
+          settle('reject', new Error('request frame exceeds the safe size limit'));
+          return;
+        }
+        client.end(serialized);
       });
 
       client.on('data', (chunk) => {
+        responseBytes += chunk.byteLength;
+        if (responseBytes > MAX_CLI_FRAME_BYTES) {
+          settle('reject', new Error('response frame exceeds the safe size limit'));
+          return;
+        }
         buffer += chunk.toString('utf8');
         const idx = buffer.indexOf('\n');
         if (idx < 0) return;

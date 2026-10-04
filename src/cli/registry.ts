@@ -29,6 +29,8 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
   name: string;
   description: string;
   access: Access;
+  /** Reject non-host callers before argument parsing or approval handling. */
+  hostOnly?: boolean;
   /** Resource this command belongs to (for help grouping). */
   resource?: string;
   /**

@@ -31,6 +31,7 @@ import { migration031 } from './031-capability-audit-tenant-scope.js';
 import { migration032 } from './032-user-role-global-uniqueness.js';
 import { migration033 } from './033-agent-group-memory-control.js';
 import { migration034 } from './034-shared-resource-control.js';
+import { migration035 } from './035-host-integrations.js';
 import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 
@@ -73,6 +74,7 @@ export const migrations: readonly Migration[] = [
   migration032,
   migration033,
   migration034,
+  migration035,
 ];
 
 export function runMigrations(db: Database.Database, plan: readonly Migration[] = migrations): void {

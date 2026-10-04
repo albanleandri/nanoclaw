@@ -41,7 +41,7 @@ responses over stdout. Session databases are the message transport. A
 The host entrypoint is `src/index.ts`. Its main responsibilities are:
 
 - initialize `data/v2.db` and run numbered migrations;
-- load installed channel and provider registrations;
+- load installed channel, provider, and trusted-host integration registrations;
 - receive normalized inbound channel events;
 - apply identity, membership, role, engagement, and command gates;
 - resolve an agent group and session;
@@ -62,6 +62,8 @@ Important modules:
 | `src/delivery.ts`              | Outbound polling, host actions, destination validation, external delivery ledger       |
 | `src/host-sweep.ts`            | Ack reconciliation, liveness/stuck detection, due work, retry, orchestration recovery  |
 | `src/orchestration/`           | Versioned plans, attempts, leases, cancellation, delivery gating, default-off fallback |
+| `src/integrations/`            | Registered trusted-host adapters, credential boundary, administration, and invocation  |
+| `src/cli/`                     | Host/operator and scoped agent command transport and dispatch                          |
 | `src/db/`                      | Central and session DB access                                                          |
 
 ## Identity, routing, and isolation
@@ -91,11 +93,11 @@ the wiring's engagement policy, and only then writes a session message.
 
 NanoClaw uses one central DB and two SQLite files per session:
 
-| Database      | Writer    | Readers            | Purpose                                                              |
-| ------------- | --------- | ------------------ | -------------------------------------------------------------------- |
-| `data/v2.db`  | host      | host               | Identity, wiring, permissions, sessions, jobs, audit, orchestration  |
-| `inbound.db`  | host      | host and container | Host-to-runner messages, delivery ledger, routing projections        |
-| `outbound.db` | container | host and container | Runner-to-host messages, processing acknowledgements, provider state |
+| Database      | Writer    | Readers            | Purpose                                                                           |
+| ------------- | --------- | ------------------ | --------------------------------------------------------------------------------- |
+| `data/v2.db`  | host      | host               | Identity, wiring, permissions, sessions, jobs, integrations, audit, orchestration |
+| `inbound.db`  | host      | host and container | Host-to-runner messages, delivery ledger, routing projections                     |
+| `outbound.db` | container | host and container | Runner-to-host messages, processing acknowledgements, provider state              |
 
 Each SQLite file has one normal writer side: the host owns `inbound.db`, while
 runner processes own `outbound.db`. A narrow exception lets the host write an
@@ -486,6 +488,30 @@ Examples include:
 Canonical tool calls emit redacted lifecycle audit events. Raw prompts, model
 output, secrets, and tool payloads are not copied into the audit log.
 
+## Trusted-host integrations
+
+Trusted-host integrations are a separate, deliberately narrow exception for
+bespoke services whose authentication cannot use OneCLI request injection.
+Adapters and operation bounds are registered in code. Central DB profiles pin
+an exact adapter version and non-secret configuration; exact per-agent-group
+operation grants authorize use; metadata-only invocation rows record terminal
+outcomes. Protected payloads remain in an owner-only host credential store
+outside databases, backups, session folders, prompts, skills, and container
+mounts.
+
+The owner-only host CLI socket exposes profile and credential administration.
+Agents receive no generic integration administration or invocation command:
+an installed typed facade selects a fixed profile and operation. The invoker
+checks an agent grant before distinguishable profile, adapter, or credential
+errors, rereads and validates the credential on every call, applies the
+registered queue/deadline/output bounds, and emits only safe result classes
+and normalized output. Registered adapters own exact HTTPS origins, paths,
+methods, redirect policy, schemas, and size limits.
+
+The first production adapter is the read-only `family-agenda@1` adapter. See
+[host-integrations.md](host-integrations.md) for its boundary, safe management
+commands, and restore procedure.
+
 ## Direct orchestration
 
 Every engaged direct message is represented by a validated, versioned
@@ -628,7 +654,10 @@ route with.
 - One writer per SQLite file.
 - Session DBs use DELETE journaling across bind mounts.
 - API-key credentials normally use OneCLI and are not stored in prompts or
-  runtime configuration; explicit direct-secret/host-auth modes are exceptions.
+  runtime configuration; explicit direct-secret/host-auth modes and reviewed
+  host-only integrations are documented exceptions.
+- Trusted-host integration credentials never enter the central/session DBs or
+  agent containers; exact grants and typed facades bound their use.
 - Mount destinations are unique and additional mounts are validated.
 - The host is authoritative for permissions, destinations, capabilities, and
   external delivery.
@@ -648,5 +677,6 @@ route with.
 - [providers.md](providers.md) — descriptors, profiles, tool verification
 - [agent-runner-details.md](agent-runner-details.md) — runner/provider details
 - [isolation-model.md](isolation-model.md) — channel/session isolation choices
+- [host-integrations.md](host-integrations.md) — trusted-host integration boundary and operations
 - [OPERATIONS.md](OPERATIONS.md) — canonical build, test, and service commands
 - [ncl-tasks-migration.md](ncl-tasks-migration.md) — `ncl tasks` migration and legacy-task notes

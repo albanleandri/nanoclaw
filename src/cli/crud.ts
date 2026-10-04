@@ -35,6 +35,8 @@ export interface ColumnDef {
   defaultFrom?: string;
   /** Allowed values (shown in help). */
   enum?: string[];
+  /** Accepted on the internal frame but omitted from generated operator help. */
+  hidden?: boolean;
 }
 
 export interface CustomOperation {
@@ -75,6 +77,8 @@ export interface ResourceDef {
    * destinations, members). When absent, post-handler filtering fails closed.
    */
   scopeField?: string;
+  /** Reject every resource command from agents before parsing or approval. */
+  hostOnly?: boolean;
   columns: ColumnDef[];
   /** Which standard CRUD operations are enabled. */
   operations: {
@@ -331,6 +335,7 @@ export function registerResource(def: ResourceDef): void {
       name: `${def.plural}-list`,
       description: `List all ${def.plural}.`,
       access: def.operations.list,
+      hostOnly: def.hostOnly,
       resource: def.plural,
       generic: 'list',
       parseArgs: (raw) => normalizeArgs(raw),
@@ -343,6 +348,7 @@ export function registerResource(def: ResourceDef): void {
       name: `${def.plural}-get`,
       description: `Get a ${def.name} by ID.`,
       access: def.operations.get,
+      hostOnly: def.hostOnly,
       resource: def.plural,
       generic: 'get',
       parseArgs: (raw) => normalizeArgs(raw),
@@ -355,6 +361,7 @@ export function registerResource(def: ResourceDef): void {
       name: `${def.plural}-create`,
       description: `Create a new ${def.name}.`,
       access: def.operations.create,
+      hostOnly: def.hostOnly,
       resource: def.plural,
       parseArgs: (raw) => normalizeArgs(raw),
       handler: genericCreate(def),
@@ -366,6 +373,7 @@ export function registerResource(def: ResourceDef): void {
       name: `${def.plural}-update`,
       description: `Update a ${def.name}.`,
       access: def.operations.update,
+      hostOnly: def.hostOnly,
       resource: def.plural,
       parseArgs: (raw) => normalizeArgs(raw),
       handler: genericUpdate(def),
@@ -377,6 +385,7 @@ export function registerResource(def: ResourceDef): void {
       name: `${def.plural}-delete`,
       description: `Delete a ${def.name}.`,
       access: def.operations.delete,
+      hostOnly: def.hostOnly,
       resource: def.plural,
       parseArgs: (raw) => normalizeArgs(raw),
       handler: genericDelete(def),
@@ -393,6 +402,7 @@ export function registerResource(def: ResourceDef): void {
         name: `${def.plural}-${verb.replace(/ /g, '-')}`,
         description: op.description,
         access: op.access,
+        hostOnly: def.hostOnly,
         resource: def.plural,
         parseArgs: declared
           ? (raw) => {

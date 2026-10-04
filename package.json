@@ -39,6 +39,7 @@
     "service:restart": "bash scripts/service-restart.sh",
     "service:status": "bash scripts/service-status.sh",
     "backup": "bash scripts/backup.sh",
+    "verify:family-agenda-cutover": "LOG_LEVEL=fatal tsx scripts/verify-family-agenda-cutover.ts",
     "smoke:rtk-shell": "bash scripts/rtk-shell-smoke.sh",
     "audit:model-neutral": "tsx scripts/model-neutral-audit.ts"
   },

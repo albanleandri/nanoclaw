@@ -23,6 +23,9 @@ register({
   handler: async (_args, ctx) => {
     const cliScope = getCliScope(ctx);
     let resources = getResources();
+    if (ctx.caller === 'agent') {
+      resources = resources.filter((resource) => !resource.hostOnly);
+    }
     if (cliScope === 'group') {
       resources = resources.filter((r) => GROUP_SCOPE_RESOURCES.has(r.plural));
     }
@@ -77,6 +80,7 @@ export function registerResourceHelpCommands(): void {
         name: `${res.plural}-help`,
         description: `Show ${res.name} resource details.`,
         access: 'open',
+        hostOnly: res.hostOnly,
         resource: res.plural,
         parseArgs: (raw) => raw,
         handler: async (args, ctx) => {
@@ -129,7 +133,7 @@ export function registerResourceHelpCommands(): void {
           const autoFilledFields =
             cliScope === 'group' ? new Set(['id', 'agent_group_id', 'group']) : new Set<string>();
           lines.push('Fields:');
-          for (const col of res.columns) {
+          for (const col of res.columns.filter((column) => !column.hidden)) {
             const tags: string[] = [];
             if (autoFilledFields.has(col.name)) tags.push('auto-filled');
             if (col.generated) tags.push('auto');

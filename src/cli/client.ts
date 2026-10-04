@@ -19,6 +19,13 @@ import { randomUUID } from 'crypto';
 
 import { formatResponse } from './format.js';
 import type { RequestFrame } from './frame.js';
+import {
+  type CredentialWriteInvocation,
+  parseCredentialSchema,
+  parseCredentialWriteInvocation,
+  promptForCredential,
+  readCredentialJson,
+} from './secret-entry.js';
 import { SocketTransport } from './socket-client.js';
 import type { Transport } from './transport.js';
 import { formatTransportError } from './transport-errors.js';
@@ -31,9 +38,56 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const { command, args, json } = parseArgv(argv);
-  const req: RequestFrame = { id: randomUUID(), command, args };
   const transport: Transport = pickTransport();
+  let credentialInvocation: CredentialWriteInvocation | undefined;
+  /* eslint-disable no-catch-all/no-catch-all -- protected command parsing must return a bounded CLI error */
+  try {
+    credentialInvocation = parseCredentialWriteInvocation(argv);
+  } catch (error) {
+    process.stderr.write(`ncl: ${error instanceof Error ? error.message : 'invalid credential command'}\n`);
+    process.exit(2);
+  }
+  /* eslint-enable no-catch-all/no-catch-all */
+
+  const parsed = parseArgv(argv);
+  let req: RequestFrame = { id: randomUUID(), command: parsed.command, args: parsed.args };
+
+  if (credentialInvocation) {
+    let schemaResponse;
+    /* eslint-disable no-catch-all/no-catch-all -- executable transport boundary */
+    try {
+      schemaResponse = await transport.sendFrame({
+        id: randomUUID(),
+        command: 'integrations-credential-schema',
+        args: { id: credentialInvocation.profile },
+      });
+    } catch (e) {
+      process.stderr.write(formatTransportError(e));
+      process.exit(2);
+    }
+    /* eslint-enable no-catch-all/no-catch-all */
+    if (!schemaResponse.ok) {
+      process.stdout.write(formatResponse(schemaResponse, parsed.json ? 'json' : 'human'));
+      process.exit(1);
+    }
+
+    /* eslint-disable no-catch-all/no-catch-all -- protected input errors must remain bounded and non-reflecting */
+    try {
+      const schema = parseCredentialSchema(schemaResponse.data);
+      const protectedPayload = process.stdin.isTTY
+        ? await promptForCredential(schema, process.stdin, process.stderr)
+        : await readCredentialJson(process.stdin);
+      req = {
+        id: randomUUID(),
+        command: `integrations-credential-${credentialInvocation.action}`,
+        args: { id: credentialInvocation.profile, protected_payload: protectedPayload },
+      };
+    } catch (error) {
+      process.stderr.write(`ncl: ${error instanceof Error ? error.message : 'credential entry failed'}\n`);
+      process.exit(2);
+    }
+    /* eslint-enable no-catch-all/no-catch-all */
+  }
 
   let res;
   try {
@@ -43,7 +97,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  process.stdout.write(formatResponse(res, json ? 'json' : 'human'));
+  process.stdout.write(formatResponse(res, parsed.json ? 'json' : 'human'));
   process.exit(res.ok ? 0 : 1);
 }
 

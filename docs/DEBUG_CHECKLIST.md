@@ -166,6 +166,39 @@ Provider-specific checks:
 - A stale configured skill is omitted with a wake warning; an installed but
   invalid/unapproved manifested skill fails closed.
 
+## Trusted-host integration failures
+
+Inspect redacted host state first; do not open or print credential files:
+
+```bash
+ncl integrations list
+ncl integrations get <profile>
+ncl integrations grants <profile>
+ncl integrations test <profile>
+```
+
+- `disabled`: use the displayed profile version after fixing the underlying
+  issue, then enable explicitly.
+- `missing`: enter the credential through `ncl integrations credential set`.
+- `unsafe`: repair ownership/mode/type through the documented safe workflow;
+  do not relax the store checks.
+- `unsupported`: the profile selected the reserved `systemd` backend, for
+  which v1 has no reader or writer.
+- `not_authorized`: confirm the exact profile/group/operation grant. The
+  denial deliberately does not reveal whether other profile state exists.
+- `busy` or `upstream_timeout`: inspect request volume and the registered
+  operation deadline; do not bypass the one-active-invocation bound.
+
+For the installed family-agenda adapter, the safe live check is:
+
+```bash
+pnpm run verify:family-agenda-cutover
+```
+
+It performs a real read-only upstream call and validates a terminal
+metadata-only audit without printing event values or identifiers. See
+[host-integrations.md](host-integrations.md) for the full contract.
+
 ## Stuck-work and heartbeat checks
 
 ```bash

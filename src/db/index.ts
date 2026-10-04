@@ -53,6 +53,8 @@ export * from './provider-profiles.js';
 export * from './schedule-admin-grants.js';
 export * from './agent-group-memory-control.js';
 export * from './shared-resource-control.js';
+export * from './integration-profiles.js';
+export * from './integration-invocations.js';
 export {
   getContainerConfig,
   getAllContainerConfigs,

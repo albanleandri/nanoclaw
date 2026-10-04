@@ -37,7 +37,14 @@ export async function dispatch(req: RequestFrame, ctx: CallerContext): Promise<R
   }
 
   if (!cmd) {
-    return err(req.id, 'unknown-command', unknownCommandMessage(req.command));
+    return err(req.id, 'unknown-command', unknownCommandMessage(req.command, ctx));
+  }
+
+  // Host-only resources reject agents before argument parsing, help
+  // rendering, or approval persistence. In particular, credential-bearing
+  // frames can never enter the ordinary approval path.
+  if (ctx.caller === 'agent' && cmd.hostOnly) {
+    return err(req.id, 'forbidden', 'This command is available only to the host operator.');
   }
 
   // CLI scope enforcement for agent callers
@@ -254,11 +261,16 @@ function commandHelp(name: string, resource: string | undefined, description: st
  * Resource detection walks dash-prefixes longest-first, same as the ID
  * fallback above, so multi-word plurals (messaging-groups, user-dms) resolve.
  */
-function unknownCommandMessage(command: string): string {
+function unknownCommandMessage(command: string, ctx: CallerContext): string {
   const parts = command.split('-');
   for (let i = parts.length; i > 0; i--) {
     const res = getResource(parts.slice(0, i).join('-'));
     if (res) {
+      // Treat command discovery as part of the host-only boundary. An agent
+      // must not be able to enumerate operator-only verbs by misspelling one.
+      if (ctx.caller === 'agent' && res.hostOnly) {
+        return `no command "${command}". Run \`ncl help\`.`;
+      }
       return (
         `no command "${command}" — verbs for ${res.plural}: ${listVerbs(res).join(', ')}. ` +
         `Run \`ncl ${res.plural} help <verb>\` for flags and examples.`

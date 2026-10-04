@@ -1,16 +1,10 @@
-import {
-  fetchFamilyAgenda,
-  loadFamilyAgendaCredential,
-  type FamilyAgendaEvent,
-  type FamilyAgendaResult,
-} from '../../integrations/family-agenda.js';
+import type { FamilyAgendaEvent, FamilyAgendaResult } from '../../integrations/family-agenda.js';
+import { hostIntegrationInvoker, type HostIntegrationInvocationResult } from '../../integrations/invoker.js';
 import { registerResource } from '../crud.js';
 import type { CallerContext } from '../frame.js';
 
-function requireAuthorizedCaller(ctx: CallerContext, allowedAgentGroupId: string): void {
-  if (ctx.caller === 'host') return;
-  if (ctx.agentGroupId !== allowedAgentGroupId) throw new Error('Family agenda is not configured for this agent group');
-}
+const PROFILE_NAME = 'family-agenda';
+const OPERATION_NAME = 'agenda.read';
 
 function localDate(): string {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -29,7 +23,7 @@ function eventLine(event: FamilyAgendaEvent): string {
 }
 
 function formatAgenda(data: unknown): string {
-  const result = data as FamilyAgendaResult;
+  const result = (data as HostIntegrationInvocationResult).data as FamilyAgendaResult;
   if (result.events.length === 0) return `No family agenda events from ${result.from} through ${result.through}.`;
   const sections = new Map<string, FamilyAgendaEvent[]>();
   for (const event of result.events) {
@@ -38,6 +32,23 @@ function formatAgenda(data: unknown): string {
     sections.set(event.date, events);
   }
   return [...sections.entries()].map(([date, events]) => `${date}\n${events.map(eventLine).join('\n')}`).join('\n\n');
+}
+
+export async function invokeFamilyAgendaFacade(
+  args: Record<string, unknown>,
+  ctx: CallerContext,
+): Promise<HostIntegrationInvocationResult> {
+  const input = {
+    from: args.from === undefined ? localDate() : String(args.from),
+    days: Number(args.days),
+  };
+
+  return hostIntegrationInvoker.invoke({
+    caller: ctx,
+    profile: PROFILE_NAME,
+    operation: OPERATION_NAME,
+    input,
+  });
 }
 
 registerResource({
@@ -62,14 +73,7 @@ registerResource({
         { name: 'days', type: 'number', description: 'Number of days to include (1–31).', default: 3 },
       ],
       examples: ['ncl family-agenda show --days 3', 'ncl family-agenda show --from 2026-10-03 --days 7 --json'],
-      handler: async (args, ctx) => {
-        const credential = loadFamilyAgendaCredential();
-        requireAuthorizedCaller(ctx, credential.agentGroupId);
-        return fetchFamilyAgenda(credential, {
-          from: args.from === undefined ? localDate() : String(args.from),
-          days: Number(args.days),
-        });
-      },
+      handler: invokeFamilyAgendaFacade,
       formatHuman: formatAgenda,
     },
   },

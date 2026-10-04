@@ -38,6 +38,7 @@ uses the host's even sequence lane.
 ```
 data/
   v2.db                                   ← CENTRAL (host ↔ host)
+  private-integrations/v1/                ← owner-only host credentials; not a DB or backup input
   v2-sessions/
     <agent_group_id>/
       .claude-shared/                     ← shared Claude state for the agent group
@@ -82,6 +83,8 @@ Writable maintenance still requires an explicit writable path and should not use
 | Destination ACL                   | central (+ projection per session)       | Source of truth centrally; fast local lookup per session   |
 | Session registry (ids, status)    | central                                  | Host orchestrates lifecycle                                |
 | Runtime/provider configuration    | central                                  | Group/session selection and spawn policy                   |
+| Integration profiles and grants   | central                                  | Host-owned policy and exact operation authorization        |
+| Integration protected payloads    | host credential store, outside databases | Excluded from DB backups and every container               |
 | Memory and shared control         | central                                  | Rollout state, writer ownership, maintenance fences        |
 | Jobs, tasks, audit, orchestration | central                                  | Durable cross-session coordination and diagnostics         |
 | Approvals & pending questions     | central                                  | Survive container restarts, admin-visible                  |
@@ -145,6 +148,9 @@ These rules are enforced by convention in `src/session-manager.ts` and `containe
 | `jobs`, `agent_tasks`        | central  | `src/db/jobs.ts`, `src/db/agent-tasks.ts`                                                                      | job runner, delegation, delivery                            |
 | `capability_audit_events`    | central  | `src/audit/capability-events.ts`                                                                               | scoped audit CLI and orchestration correlation              |
 | `orchestration_*`            | central  | `src/orchestration/run-store.ts`                                                                               | orchestration engine, delivery, sweep                       |
+| `integration_profiles`       | central  | `src/db/integration-profiles.ts`, `src/integrations/administration.ts`                                         | host management and `src/integrations/invoker.ts`           |
+| `integration_profile_grants` | central  | `src/db/integration-profiles.ts`, `src/integrations/administration.ts`                                         | integration invoker authorization                           |
+| `integration_invocations`    | central  | `src/db/integration-invocations.ts`, `src/integrations/invoker.ts`                                             | startup reconciliation and integration diagnostics          |
 | `messages_in`                | inbound  | `src/db/session-db.ts`                                                                                         | `container/agent-runner/src/db/messages-in.ts`              |
 | `delivered`                  | inbound  | `src/db/session-db.ts` (`markDelivered`)                                                                       | container edit/reaction targeting                           |
 | `destinations`               | inbound  | `writeDestinations()` in `src/session-manager.ts`                                                              | container routing / ACL                                     |

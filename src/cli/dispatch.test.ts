@@ -145,6 +145,17 @@ register({
   handler: async (args) => ({ echo: args }),
 });
 
+const hostOnlyParse = vi.fn((raw: Record<string, unknown>) => raw);
+register({
+  name: 'host-only-secret-probe',
+  description: 'host-only test command',
+  resource: 'integrations',
+  access: 'approval',
+  hostOnly: true,
+  parseArgs: hostOnlyParse,
+  handler: async () => ({ ok: true }),
+});
+
 // Commands that return data shaped like real resources (for post-handler filtering tests)
 register({
   name: 'groups-list-data',
@@ -221,7 +232,11 @@ beforeEach(async () => {
     members: 'agent_group_id',
   };
   mockGetResource.mockImplementation((plural: string) =>
-    scopeFields[plural] ? { scopeField: scopeFields[plural] } : actual.getResource(plural),
+    plural === 'integrations'
+      ? { plural, hostOnly: true }
+      : scopeFields[plural]
+        ? { scopeField: scopeFields[plural] }
+        : actual.getResource(plural),
   );
 });
 
@@ -431,6 +446,32 @@ describe('CLI scope enforcement', () => {
     const resp = await dispatch({ id: '1', command: 'test-cmd', args: {} }, agentCtx());
 
     expect(resp.ok).toBe(true);
+  });
+
+  it('rejects host-only commands before parsing or entering the approval path', async () => {
+    mockGetContainerConfig.mockReturnValue({ cli_scope: 'global' });
+    const approvals = await import('../modules/approvals/index.js');
+    const sentinel = 'SENTINEL_APPROVAL_SECRET';
+
+    const resp = await dispatch(
+      { id: '1', command: 'host-only-secret-probe', args: { protected_payload: sentinel } },
+      agentCtx(),
+    );
+
+    expect(resp).toMatchObject({ ok: false, error: { code: 'forbidden' } });
+    expect(hostOnlyParse).not.toHaveBeenCalled();
+    expect(approvals.requestApproval).not.toHaveBeenCalled();
+    expect(JSON.stringify(resp)).not.toContain(sentinel);
+  });
+
+  it('does not enumerate host-only verbs for an agent unknown-command probe', async () => {
+    const resp = await dispatch({ id: '1', command: 'integrations-not-a-command', args: {} }, agentCtx());
+
+    expect(resp).toMatchObject({ ok: false, error: { code: 'unknown-command' } });
+    if (!resp.ok) {
+      expect(resp.error.message).toBe('no command "integrations-not-a-command". Run `ncl help`.');
+      expect(resp.error.message).not.toContain('verbs for integrations');
+    }
   });
 
   it('global: does not auto-fill --id', async () => {

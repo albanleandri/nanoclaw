@@ -167,6 +167,51 @@ export interface ProviderProfileRow {
   updated_at: string;
 }
 
+export type IntegrationCredentialBackend = 'local-file' | 'systemd';
+export type IntegrationSecurityTier = 'trusted-host';
+
+export interface IntegrationProfileRow {
+  id: string;
+  name: string;
+  adapter_id: string;
+  adapter_version: number;
+  config_json: string;
+  credential_backend: IntegrationCredentialBackend;
+  credential_ref: string;
+  security_tier: IntegrationSecurityTier;
+  enabled: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationProfileGrantRow {
+  profile_id: string;
+  agent_group_id: string;
+  operation: string;
+  granted_at: string;
+}
+
+export type IntegrationInvocationCallerType = 'host' | 'agent';
+export type IntegrationInvocationStatus = 'running' | 'succeeded' | 'failed' | 'interrupted';
+
+export interface IntegrationInvocationRow {
+  id: string;
+  profile_id: string | null;
+  profile_name: string;
+  adapter_id: string;
+  adapter_version: number;
+  operation: string;
+  caller_type: IntegrationInvocationCallerType;
+  agent_group_id: string | null;
+  session_id: string | null;
+  status: IntegrationInvocationStatus;
+  result_class: string | null;
+  duration_ms: number | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 // ── Session DB entities ──
 
 export type MessageInKind = 'chat' | 'chat-sdk' | 'task' | 'webhook' | 'system';

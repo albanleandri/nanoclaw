@@ -25,3 +25,4 @@ import './tasks.js';
 import './jobs.js';
 import './todos.js';
 import './family-agenda.js';
+import './integrations.js';
