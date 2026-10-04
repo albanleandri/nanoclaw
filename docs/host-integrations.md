@@ -125,8 +125,13 @@ normalized event fields. JSON mode now preserves the host invocation envelope:
 the response frame's `data` contains `observed_at`, profile identity, exact
 adapter version, operation name, and a nested `data` object containing `from`,
 `through`, and `events`. Human rendering continues to show only the agenda.
-The private family-agenda skill reads only the nested normalized object and
-does not contain a profile or credential identifier.
+It produces a deterministic Telegram-friendly view: short windows include
+empty weekdays, longer windows group identical daily schedules by week,
+distinct bookings remain distinct, and a common location is printed once.
+Unknown event text is rendered literally, and missing structured times are not
+mislabelled as all-day events. The private family-agenda skill relays this
+host-rendered view once without adding inferences; it does not contain a
+profile or credential identifier.
 
 After a build and restart, run:
 
