@@ -15,6 +15,7 @@ import { startClaudeTokenMaintenance, stopClaudeTokenMaintenance } from './claud
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { reconcileInterruptedIntegrationInvocations } from './db/integration-invocations.js';
+import { listIntegrationProfileRows } from './db/integration-profiles.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startJobDeliveryPoll, stopJobDeliveryPoll } from './jobs/delivery.js';
@@ -23,6 +24,7 @@ import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { assertAccessEnforcementWired, routeInbound } from './router.js';
 import { installProcessErrorHandlers, log } from './log.js';
 import { hardenProjectSecretFiles } from './private-files.js';
+import { assertEnabledIntegrationPluginsAvailable, loadHostIntegrationPlugins } from './integrations/plugin-loader.js';
 
 installProcessErrorHandlers();
 
@@ -62,10 +64,6 @@ import './channels/index.js';
 // append registry-based modules. Imported for side effects (registrations).
 import './modules/index.js';
 
-// Reviewed host integrations self-register here. Registration alone does not
-// create or enable a profile or provision credentials.
-import './integrations/index.js';
-
 // CLI command barrel — populates the `ncl` registry before the CLI server
 // accepts connections.
 import './cli/commands/index.js';
@@ -88,10 +86,18 @@ async function main(): Promise<void> {
   // 0. Circuit breaker — backoff on rapid restarts
   await enforceStartupBackoff();
 
+  // Trusted host plugins are selected only by the fixed operator manifest.
+  // Profiles, agents, and invocation input can never provide module paths.
+  const loadedIntegrationPlugins = await loadHostIntegrationPlugins();
+  if (loadedIntegrationPlugins > 0) {
+    log.info('Trusted host integration plugins loaded', { count: loadedIntegrationPlugins });
+  }
+
   // 1. Init central DB
   const dbPath = path.join(DATA_DIR, 'v2.db');
   const db = initDb(dbPath);
   runMigrations(db);
+  assertEnabledIntegrationPluginsAvailable(listIntegrationProfileRows());
   log.info('Central DB ready', { path: dbPath });
   const interruptedJobs = reconcileInterruptedJobs();
   if (interruptedJobs > 0) log.warn('Closed interrupted durable jobs after startup', { count: interruptedJobs });

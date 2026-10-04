@@ -42,6 +42,9 @@ function registry(): HostIntegrationRegistry {
         totalDeadlineMs: 1_000,
         network: {
           maxRedirects: 0,
+          requestDeadlineMs: 500,
+          maxCookies: 4,
+          retry: { methods: [], statuses: [], maxAttempts: 1, maxRetryAfterMs: 0 },
           destinations: [
             {
               origin: 'https://audit.example.test',

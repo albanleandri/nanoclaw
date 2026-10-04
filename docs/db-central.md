@@ -556,12 +556,12 @@ Protected payloads are not part of the central schema or its backups. The
 `credential_ref` column is only an opaque generated handle into the separately
 hardened host credential store. The active management layer is host-only; the
 runtime invoker requires an enabled profile, an exact agent-group operation
-grant, a registered adapter version, and a safe credential. The first
-production adapter is the read-only `family-agenda@1` adapter.
+grant, a plugin-registered adapter version, and a safe credential. Adapter
+implementations and service-specific schemas are not part of the public tree.
 
 - **Readers/writers:** `src/db/integration-profiles.ts`,
   `src/db/integration-invocations.ts`, `src/integrations/administration.ts`,
-  and `src/integrations/invoker.ts`
+  `src/integrations/invoker.ts`, and `src/integrations/plugin-loader.ts`
 
 ---
 

@@ -11,6 +11,9 @@ const OPERATION_NAME = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 const MAX_TOTAL_DEADLINE_MS = 5 * 60_000;
 const MAX_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024;
 const MAX_REDIRECTS = 10;
+const MAX_COOKIES = 128;
+const MAX_RETRY_ATTEMPTS = 3;
+const MAX_RETRY_AFTER_MS = 30_000;
 const RESPONSE_LIMIT_NAMES = ['maxHeaderBytes', 'maxCookieBytes', 'maxBodyBytes', 'maxNormalizedOutputBytes'] as const;
 
 export interface HostIntegrationRegistry {
@@ -99,6 +102,13 @@ function validateOperation<Config extends object, ProtectedPayload extends objec
   }
   requirePositiveInteger(operation.totalDeadlineMs, `${adapterId}.${key} total deadline`, MAX_TOTAL_DEADLINE_MS);
   requireNonNegativeInteger(operation.network.maxRedirects, `${adapterId}.${key} redirect limit`, MAX_REDIRECTS);
+  requirePositiveInteger(
+    operation.network.requestDeadlineMs,
+    `${adapterId}.${key} request deadline`,
+    operation.totalDeadlineMs,
+  );
+  requirePositiveInteger(operation.network.maxCookies, `${adapterId}.${key} cookie limit`, MAX_COOKIES);
+  validateRetryPolicy(adapterId, key, operation.network.retry);
   if (operation.network.destinations.length === 0) {
     throw new Error(`Host integration operation ${adapterId}.${key} must declare a network destination`);
   }
@@ -116,6 +126,34 @@ function validateOperation<Config extends object, ProtectedPayload extends objec
   }
   for (const name of RESPONSE_LIMIT_NAMES) {
     requirePositiveInteger(operation.responseLimits[name], `${adapterId}.${key} ${name}`, MAX_RESPONSE_LIMIT_BYTES);
+  }
+}
+
+function validateRetryPolicy(
+  adapterId: string,
+  operationName: string,
+  retry: HostIntegrationOperation<object, object>['network']['retry'],
+): void {
+  if (!retry || typeof retry !== 'object') {
+    throw new Error(`Host integration operation ${adapterId}.${operationName} must declare a retry policy`);
+  }
+  if (retry.methods.some((method) => method !== 'GET') || new Set(retry.methods).size !== retry.methods.length) {
+    throw new Error(`Host integration operation ${adapterId}.${operationName} may retry only idempotent GET requests`);
+  }
+  if (
+    retry.statuses.some((status) => ![502, 503, 504].includes(status)) ||
+    new Set(retry.statuses).size !== retry.statuses.length
+  ) {
+    throw new Error(`Host integration operation ${adapterId}.${operationName} has invalid retry statuses`);
+  }
+  requirePositiveInteger(retry.maxAttempts, `${adapterId}.${operationName} retry attempts`, MAX_RETRY_ATTEMPTS);
+  requireNonNegativeInteger(
+    retry.maxRetryAfterMs,
+    `${adapterId}.${operationName} retry-after limit`,
+    MAX_RETRY_AFTER_MS,
+  );
+  if (retry.methods.length === 0 && retry.maxAttempts !== 1) {
+    throw new Error(`Host integration operation ${adapterId}.${operationName} cannot retry without a method`);
   }
 }
 
@@ -182,6 +220,11 @@ function snapshotAdapter<Config extends object, ProtectedPayload extends object>
           ...operation,
           network: Object.freeze({
             ...operation.network,
+            retry: Object.freeze({
+              ...operation.network.retry,
+              methods: Object.freeze([...operation.network.retry.methods]),
+              statuses: Object.freeze([...operation.network.retry.statuses]),
+            }),
             destinations: Object.freeze(
               operation.network.destinations.map((destination) =>
                 Object.freeze({ ...destination, methods: Object.freeze([...destination.methods]) }),

@@ -236,6 +236,7 @@ export function hasIntegrationProfileGrant(profileId: string, agentGroupId: stri
 export function listGrantedIntegrationProfileRows(
   agentGroupId: string,
   adapterId: string,
+  adapterVersion: number,
   operation: string,
 ): IntegrationProfileRow[] {
   return getDb()
@@ -243,10 +244,10 @@ export function listGrantedIntegrationProfileRows(
       `SELECT p.*
        FROM integration_profiles p
        JOIN integration_profile_grants g ON g.profile_id = p.id
-       WHERE g.agent_group_id = ? AND p.adapter_id = ? AND g.operation = ?
+       WHERE g.agent_group_id = ? AND p.adapter_id = ? AND p.adapter_version = ? AND g.operation = ?
        ORDER BY p.name, p.id`,
     )
-    .all(agentGroupId, adapterId, operation) as IntegrationProfileRow[];
+    .all(agentGroupId, adapterId, adapterVersion, operation) as IntegrationProfileRow[];
 }
 
 function materializeProfile(row: IntegrationProfileRow, registry: RegistryReader): IntegrationProfile {

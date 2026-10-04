@@ -61,9 +61,10 @@ The implementation currently includes:
   read-only non-owner grants;
 - OneCLI-backed credential injection, optional egress lockdown, redacted
   capability audit, and approval-gated sensitive host actions;
-- a profile-gated trusted-host integration path for reviewed bespoke
-  authentication, with host-only credential storage, exact operation grants,
-  typed agent facades, and metadata-only invocation audit; and
+- a profile-gated trusted-host plugin path for reviewed bespoke
+  authentication, with host-only credential storage, hash-pinned static
+  loading, exact operation grants, generic agent invocation, and metadata-only
+  audit; and
 - Docker as the default container runtime, with Apple Container and Docker
   Sandboxes documented as explicit alternatives.
 

@@ -277,14 +277,17 @@ mounted into agent containers, and status commands return only
 payload.
 
 The host-only administration resource is reachable only through the
-owner-only local CLI socket. Agent invocation requires a code-owned typed
-facade, an enabled exact-version profile, and an exact
-agent-group/profile/operation grant. Authorization runs before credential or
-adapter access and before distinguishable profile errors. Registered adapters
-are read-only in v1 and own their allowed origins, paths, methods, redirects,
-deadlines, schemas, and input/output bounds. Invocation audit is metadata-only
-and excludes inputs, outputs, configuration, credential references, and raw
-errors. See [host-integrations.md](host-integrations.md).
+owner-only local CLI socket. Agent invocation uses a distinct generic resource
+that accepts no URL, method, credential, or module path. It selects only an
+enabled exact-version profile with an exact agent-group operation grant.
+Authorization runs before credential or adapter access and before
+distinguishable profile errors. Adapters come only from an owner-controlled,
+hash-pinned startup manifest; installed plugins are trusted host code and stay
+outside container mounts. They own exact origins, paths, methods, redirects,
+retries, deadlines, content types, schemas, and bounds. Invocation audit is
+metadata-only and excludes inputs, outputs, configuration, credential
+references, renderer output, and raw errors. See
+[host-integrations.md](host-integrations.md).
 
 ## Network controls
 
@@ -302,8 +305,9 @@ normal mode for cross-platform host addressing.
 
 Trusted-host integration traffic originates in the host process, not an agent
 container, so container egress lockdown does not govern it. Its network
-boundary is the reviewed adapter's exact HTTPS origin/path/method policy and
-bounded redirect handling.
+boundary is the reviewed plugin's exact HTTPS origin/path/query/method policy
+and the core runtime's bounded cookie, redirect, response, retry, deadline, and
+cancellation handling.
 
 ## Supply-chain controls
 

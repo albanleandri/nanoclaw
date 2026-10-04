@@ -134,6 +134,9 @@ function createHarness(
         totalDeadlineMs: options.deadlineMs ?? 1_000,
         network: {
           maxRedirects: 0,
+          requestDeadlineMs: Math.min(500, options.deadlineMs ?? 1_000),
+          maxCookies: 4,
+          retry: { methods: [], statuses: [], maxAttempts: 1, maxRetryAfterMs: 0 },
           destinations: [
             {
               origin: 'https://invoker.example.test',

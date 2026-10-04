@@ -77,6 +77,9 @@ function adapter(
         totalDeadlineMs: 5_000,
         network: {
           maxRedirects: 0,
+          requestDeadlineMs: 1_000,
+          maxCookies: 4,
+          retry: { methods: [], statuses: [], maxAttempts: 1, maxRetryAfterMs: 0 },
           destinations: [
             {
               origin: 'https://portal.example.test',
@@ -286,7 +289,7 @@ describe('integration profile grants', () => {
     grantIntegrationProfileOperation(profile.id, 'agent-a', 'records.read', registryValue, '2026-10-03T08:30:00Z');
     expect(hasIntegrationProfileGrant(profile.id, 'agent-a', 'records.read')).toBe(true);
     expect(listIntegrationProfileGrants(profile.id)).toHaveLength(1);
-    expect(listGrantedIntegrationProfileRows('agent-a', 'test-portal', 'records.read')).toEqual([
+    expect(listGrantedIntegrationProfileRows('agent-a', 'test-portal', 1, 'records.read')).toEqual([
       getIntegrationProfileRow(profile.id),
     ]);
     expect(revokeIntegrationProfileGrant(profile.id, 'agent-a', 'records.read')).toBe(true);

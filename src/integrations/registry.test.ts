@@ -27,8 +27,8 @@ function adapter(
       { name: 'password', sensitivity: 'secret', label: 'Portal password' },
     ],
     operations: {
-      'agenda.read': {
-        name: 'agenda.read',
+      'records.read': {
+        name: 'records.read',
         sideEffects: 'none',
         validateInput: (value) => value,
         validateOutput: (value) => value,
@@ -42,6 +42,9 @@ function adapter(
             },
           ],
           maxRedirects: 3,
+          requestDeadlineMs: 8_000,
+          maxCookies: 32,
+          retry: { methods: ['GET'], statuses: [502, 503, 504], maxAttempts: 2, maxRetryAfterMs: 1_000 },
         },
         responseLimits: {
           maxHeaderBytes: 16_384,
@@ -85,7 +88,7 @@ describe('host integration registry', () => {
     expect(() => registry.register(adapter())).toThrow(/already registered/);
     expect(registry.require('test-portal', 1).version).toBe(1);
     expect(registry.require('test-portal', 2).version).toBe(2);
-    expect(registry.requireOperation('test-portal', 1, 'agenda.read').name).toBe('agenda.read');
+    expect(registry.requireOperation('test-portal', 1, 'records.read').name).toBe('records.read');
     expect(() => registry.require('test-portal', 3)).toThrow(/Unknown host integration adapter/);
     expect(() => registry.requireOperation('test-portal', 1, 'agenda.write')).toThrow(
       /Unknown host integration operation/,
@@ -98,11 +101,11 @@ describe('host integration registry', () => {
     const source = adapter();
     registry.register(source);
     source.protectedFields[0]!.label = 'Changed after review';
-    (source.operations['agenda.read']!.network.destinations[0]!.methods as string[])[0] = 'POST';
+    (source.operations['records.read']!.network.destinations[0]!.methods as string[])[0] = 'POST';
 
     const stored = registry.require('test-portal', 1);
     expect(stored.protectedFields[0]?.label).toBe('Portal username');
-    expect(stored.operations['agenda.read']?.network.destinations[0]?.methods).toEqual(['GET', 'POST']);
+    expect(stored.operations['records.read']?.network.destinations[0]?.methods).toEqual(['GET', 'POST']);
     expect(Object.isFrozen(stored)).toBe(true);
     expect(Object.isFrozen(stored.operations)).toBe(true);
   });
@@ -128,9 +131,9 @@ describe('host integration registry', () => {
   });
 
   it('rejects write operations, mismatched names, unsafe origins, and unbounded declarations', () => {
-    const original = adapter().operations['agenda.read']!;
+    const original = adapter().operations['records.read']!;
     const invalid = (operation: object): HostIntegrationAdapter<TestConfig, TestPayload> =>
-      adapter({ operations: { 'agenda.read': { ...original, ...operation } } });
+      adapter({ operations: { 'records.read': { ...original, ...operation } } });
 
     expect(() => validateHostIntegrationAdapter(invalid({ sideEffects: 'external-write' }))).toThrow(/read-only/);
     expect(() => validateHostIntegrationAdapter(invalid({ name: 'other.read' }))).toThrow(/mismatched/);

@@ -115,13 +115,10 @@ ncl integrations credential revoke <profile> --expected-version <version>
 ```
 
 The generic `test` command checks local file safety and schema only; it never
-contacts upstream. For the provisioned family-agenda adapter, the live
-read-only verifier exercises the typed facade, denial path, and terminal safe
-audit while emitting metadata only:
-
-```bash
-pnpm run verify:family-agenda-cutover
-```
+contacts upstream. Service-specific live verification belongs in the private
+plugin checkout and must emit metadata only. Before restart, verify the
+manifest/module ownership and modes, bundle digest, private tests, and that no
+durable job is queued or running.
 
 The `systemd` credential-backend value is reserved and unsupported in v1.
 See [host-integrations.md](host-integrations.md) for lifecycle, security, and

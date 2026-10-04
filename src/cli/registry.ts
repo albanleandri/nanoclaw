@@ -20,7 +20,7 @@ export const GROUP_SCOPE_RESOURCES = new Set([
   'tasks',
   'jobs',
   'todos',
-  'family-agenda',
+  'integration',
 ]);
 
 export type Access = 'open' | 'approval' | 'hidden';

@@ -189,15 +189,11 @@ ncl integrations test <profile>
 - `busy` or `upstream_timeout`: inspect request volume and the registered
   operation deadline; do not bypass the one-active-invocation bound.
 
-For the installed family-agenda adapter, the safe live check is:
-
-```bash
-pnpm run verify:family-agenda-cutover
-```
-
-It performs a real read-only upstream call and validates a terminal
-metadata-only audit without printing event values or identifiers. See
-[host-integrations.md](host-integrations.md) for the full contract.
+Use the service-specific privacy-safe verifier from the private plugin
+checkout. It should exercise the generic invocation resource, exact grant,
+optional renderer, terminal metadata-only audit, and an ungranted denial
+without printing normalized values or identifiers. See
+[host-integrations.md](host-integrations.md) for the generic contract.
 
 ## Stuck-work and heartbeat checks
 

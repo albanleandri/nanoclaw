@@ -22,6 +22,16 @@ export interface HostIntegrationDestination<Config> {
 export interface HostIntegrationNetworkPolicy<Config> {
   destinations: readonly HostIntegrationDestination<Config>[];
   maxRedirects: number;
+  /** Per-request bound inside the whole-operation deadline. */
+  requestDeadlineMs: number;
+  maxCookies: number;
+  retry: {
+    /** Only idempotent methods may be declared retryable. */
+    methods: readonly HostIntegrationHttpMethod[];
+    statuses: readonly number[];
+    maxAttempts: number;
+    maxRetryAfterMs: number;
+  };
 }
 
 export interface HostIntegrationResponseLimits {

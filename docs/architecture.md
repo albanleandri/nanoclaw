@@ -492,7 +492,8 @@ output, secrets, and tool payloads are not copied into the audit log.
 
 Trusted-host integrations are a separate, deliberately narrow exception for
 bespoke services whose authentication cannot use OneCLI request injection.
-Adapters and operation bounds are registered in code. Central DB profiles pin
+Adapters and operation bounds are registered by trusted host-only plugins
+loaded from a fixed owner-controlled, hash-pinned startup manifest. Central DB profiles pin
 an exact adapter version and non-secret configuration; exact per-agent-group
 operation grants authorize use; metadata-only invocation rows record terminal
 outcomes. Protected payloads remain in an owner-only host credential store
@@ -500,17 +501,16 @@ outside databases, backups, session folders, prompts, skills, and container
 mounts.
 
 The owner-only host CLI socket exposes profile and credential administration.
-Agents receive no generic integration administration or invocation command:
-an installed typed facade selects a fixed profile and operation. The invoker
-checks an agent grant before distinguishable profile, adapter, or credential
-errors, rereads and validates the credential on every call, applies the
-registered queue/deadline/output bounds, and emits only safe result classes
-and normalized output. Registered adapters own exact HTTPS origins, paths,
-methods, redirect policy, schemas, and size limits.
-
-The first production adapter is the read-only `family-agenda@1` adapter. See
-[host-integrations.md](host-integrations.md) for its boundary, safe management
-commands, and restore procedure.
+Agents receive no integration administration. The separate singular
+`integration invoke` resource accepts only an adapter ID, exact version,
+operation, optional authorized profile selector, and JSON input; it accepts no
+URL, method, header, credential, or module path. Grant-filtered profile
+selection and the invoker run before distinguishable profile, adapter, or
+credential errors. Registered adapters own exact HTTPS origins, paths,
+methods, redirect/retry policy, schemas, content types, deadlines, and size
+limits. Optional plugin renderers affect only human output. Service-specific
+code and verification remain outside the public checkout. See
+[host-integrations.md](host-integrations.md).
 
 ## Direct orchestration
 
@@ -657,7 +657,8 @@ route with.
   runtime configuration; explicit direct-secret/host-auth modes and reviewed
   host-only integrations are documented exceptions.
 - Trusted-host integration credentials never enter the central/session DBs or
-  agent containers; exact grants and typed facades bound their use.
+  agent containers; exact grants and the generic policy-enforced invocation
+  surface bound their use.
 - Mount destinations are unique and additional mounts are validated.
 - The host is authoritative for permissions, destinations, capabilities, and
   external delivery.

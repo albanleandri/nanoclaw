@@ -24,5 +24,5 @@ import './shared-resources.js';
 import './tasks.js';
 import './jobs.js';
 import './todos.js';
-import './family-agenda.js';
+import './integration.js';
 import './integrations.js';
