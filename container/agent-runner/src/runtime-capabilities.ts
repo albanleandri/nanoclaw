@@ -44,7 +44,6 @@ export const SELECTABLE_RUNTIME_TOOLS = [
   ['WebSearch', 'Search the web for information.', true],
   ['WebFetch', 'Fetch and read web pages directly.', true],
   ['Task', 'Run delegated sub-tasks.', false],
-  ['TaskOutput', 'Inspect delegated task output.', false],
   ['TaskStop', 'Stop delegated tasks.', false],
   ['TeamCreate', 'Create agent teams for parallel work.', false],
   ['TeamDelete', 'Delete agent teams.', false],

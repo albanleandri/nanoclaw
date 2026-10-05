@@ -102,7 +102,7 @@ const TOOL_ALLOWLIST = [
   'WebSearch',
   'WebFetch',
   'Task',
-  'TaskOutput',
+  // TaskOutput was removed in Claude Code 2.1.277.
   'TaskStop',
   'TeamCreate',
   'TeamDelete',
@@ -112,6 +112,8 @@ const TOOL_ALLOWLIST = [
   'Skill',
   'NotebookEdit',
 ];
+
+export const CLAUDE_FLAG_SETTINGS = { syncClaudeAiSkills: false, syncClaudeAiPlugins: false } as const;
 
 // MCP server names are sanitized by the SDK when forming tool prefixes:
 // any character outside [A-Za-z0-9_-] becomes '_'. Mirror that here so our
@@ -503,8 +505,11 @@ export class ClaudeProvider implements AgentProvider {
   private model?: string;
   private effort?: string;
   private memory?: ProviderOptions['memory'];
+  private sdkQuery: typeof sdkQuery;
 
-  constructor(options: ProviderOptions = {}) {
+  /** `runQuery` is a test seam (like CodexRuntimeDeps); production uses the SDK. */
+  constructor(options: ProviderOptions = {}, runQuery: typeof sdkQuery = sdkQuery) {
+    this.sdkQuery = runQuery;
     this.assistantName = options.assistantName;
     this.mcpServers = options.mcpServers ?? {};
     this.additionalDirectories = options.additionalDirectories;
@@ -564,15 +569,21 @@ export class ClaudeProvider implements AgentProvider {
 
     const systemAppend = createClaudeSystemAppend(input.systemContext?.instructions, input.continuation, this.memory);
 
-    const sdkResult = sdkQuery({
+    const sdkResult = this.sdkQuery({
       prompt: stream,
       options: {
         cwd: input.cwd,
         additionalDirectories: this.additionalDirectories,
         resume: input.continuation,
         pathToClaudeCodeExecutable: '/pnpm/claude',
+        // The append (instructions, plus memory on a fresh session) is rebuilt at
+        // every container start. Since Claude Code 2.1.267 the default records
+        // the prompt on a session's first request and resends that record on
+        // every resume, so a resumed agent would keep stale instructions and
+        // destinations until compaction. snapshot: false keeps the pre-2.1.267
+        // behaviour: render fresh each time (ported from upstream ee0f0adf).
         systemPrompt: systemAppend
-          ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemAppend }
+          ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemAppend, snapshot: false }
           : undefined,
         allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
         disallowedTools: CLAUDE_SDK_DISALLOWED_TOOLS,
@@ -583,6 +594,11 @@ export class ClaudeProvider implements AgentProvider {
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project', 'user', 'local'],
+        // Flag-level settings outrank the group's own settings files. Since
+        // 2.1.275 Claude Code syncs the skills and plugins enabled on the
+        // signed-in claude.ai account into every session; opt out so an agent
+        // gets only the skills NanoClaw mounts, not the operator's own.
+        settings: CLAUDE_FLAG_SETTINGS,
         mcpServers: this.mcpServers,
         hooks: {
           PreToolUse: [{ hooks: [preToolUseHook] }],

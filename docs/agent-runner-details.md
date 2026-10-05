@@ -145,8 +145,10 @@ class ClaudeProvider implements AgentProvider {
         cwd: input.cwd,
         resume: input.continuation,
         systemPrompt: input.systemContext?.instructions
-          ? { type: 'preset', preset: 'claude_code', append: input.systemContext.instructions }
+          ? { type: 'preset', preset: 'claude_code', append: input.systemContext.instructions, snapshot: false }
           : undefined,
+        // Opt out of claude.ai account skill/plugin sync (Claude Code 2.1.275+).
+        settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
         mcpServers: this.mcpServers,
         additionalDirectories: this.additionalDirectories,
         env: this.env,
@@ -169,6 +171,18 @@ class ClaudeProvider implements AgentProvider {
   }
 }
 ```
+
+`snapshot: false` matters since Claude Code 2.1.267: by default the CLI records
+the system prompt on a session's first request and resends that record on every
+resume. The append is rebuilt per container start (with memory only on fresh
+sessions), so recording it would leave a resumed agent with stale instructions
+and destinations until compaction.
+
+The CLI itself is pinned in `container/cli-tools.json` and should move in
+lockstep with `@anthropic-ai/claude-agent-sdk` in
+`container/agent-runner/package.json` (both currently 2.1.285 / 0.3.285). A CLI
+bump can change the default model, so Claude groups pin theirs with
+`ncl groups config update --id <group> --model <model>`.
 
 `translateClaudeEvents` is an async generator that maps SDK messages to `ProviderEvent`:
 
@@ -580,7 +594,8 @@ Implementation:
 
 #### send_card
 
-Send a structured card (interactive or display-only).
+Send a display-only card. It returns immediately and never renders callback
+buttons; use `ask_user_question` for a choice the user answers.
 
 ```typescript
 {
@@ -592,7 +607,11 @@ Send a structured card (interactive or display-only).
 }
 ```
 
-Implementation: write a `messages_out` row with `kind: 'chat-sdk'` and the card structure in content.
+Implementation: drop every action that is not `{ label, url }` with a non-empty
+label and an http(s) web-link url, write a `messages_out` row with
+`kind: 'chat-sdk'` and the filtered card in content, and tell the agent how many
+actions were dropped. The Chat SDK bridge separately drops any action without a
+non-empty `label` and `url`, because any producer can write this payload.
 
 #### ask_user_question
 

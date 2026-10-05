@@ -104,6 +104,8 @@ The main log shows "Message delivered" entries with `platformMsgId=undefined` â€
 
 **Root cause: two NanoClaw service instances running simultaneously.**
 
+A second host started from the **same checkout** now exits at startup with `another host instance is already serving ncl` (it probes `data/ncl.sock` before doing anything). This symptom therefore points at a second instance running from a **different** checkout or install directory.
+
 When a second service instance is active with a stale binary, it has no channel adapters registered. Its delivery poll races the working instance and wins â€” marking outbound messages delivered without ever sending them.
 
 **Diagnosis:**
@@ -235,6 +237,8 @@ query({
     disallowedTools: SDK_DISALLOWED_TOOLS,
     permissionMode: 'bypassPermissions',
     settingSources: ['project', 'user', 'local'],
+    settings: { syncClaudeAiSkills: false, syncClaudeAiPlugins: false },
+    systemPrompt: { type: 'preset', preset: 'claude_code', append, snapshot: false },
     mcpServers: { ... },
   },
 })
