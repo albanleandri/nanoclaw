@@ -88,14 +88,14 @@ Provider resolution order is:
 
 NanoClaw still emits provider-native instruction files because providers load context differently.
 
-| File                             | Purpose                                                                                                                                          |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `groups/<folder>/container.json` | Group-level operator snapshot generated from central configuration.                                                                              |
-| `container.runtime.json`         | Effective session runtime config, including provider/profile selection, compiled capabilities, compatibility fields, and neutral `agentProfile`. |
-| `CLAUDE.md`                      | Session-private Claude project doc. Imports the neutral runtime core, Claude appendix, and enabled fragments.                                    |
-| `CLAUDE.local.md`                | Per-group standing Claude instructions. For enabled neutral memory, durable facts and preferences belong under `memory/`, not here.              |
-| `AGENTS.md`                      | Session-private Codex project doc. Renders the neutral runtime core and compatible sections within Codex's project-doc cap.                      |
-| `.claude-fragments/`             | Generated Claude import fragments for skills, modules, and MCP instructions.                                                                     |
+| File                             | Purpose                                                                                                                                               |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `groups/<folder>/container.json` | Group-level operator snapshot generated from central configuration.                                                                                   |
+| `container.runtime.json`         | Effective session runtime config, including provider/profile selection, compiled capabilities, compatibility fields, and neutral `agentProfile`.      |
+| `CLAUDE.md`                      | Session-private Claude project doc. Imports the neutral runtime core, Claude appendix, and enabled fragments.                                         |
+| `CLAUDE.local.md`                | Per-group standing Claude instructions. For enabled neutral memory, durable facts and preferences belong under `memory/`, not here.                   |
+| `AGENTS.md`                      | Session-private Codex project doc. Renders the neutral runtime core and compatible sections within Codex's project-doc cap.                           |
+| `.claude-fragments/`             | Generated Claude import fragments for skills, modules, and MCP instructions, copied in as regular files (Claude Code ignores out-of-project imports). |
 
 `CLAUDE.md` and `AGENTS.md` are generated compatibility artifacts. Do not edit
 them directly. Enabled neutral-memory sessions select an authority-safe

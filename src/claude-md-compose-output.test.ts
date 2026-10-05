@@ -102,12 +102,15 @@ describe('composeGroupClaudeMd', () => {
 
     composeGroupClaudeMd(group);
 
-    expect(fs.readlinkSync(path.join(groupDir, '.claude-fragments', 'skill-calendar.md'))).toBe(
-      '/app/skills/calendar/instructions.md',
-    );
-    expect(fs.readlinkSync(path.join(groupDir, '.claude-fragments', 'module-scheduling.md'))).toBe(
-      '/app/src/mcp-tools/scheduling.instructions.md',
-    );
+    // Fragments are copied in as regular files, not symlinked to /app/...:
+    // Claude Code 2.1.285 silently dropped the symlinked (out-of-project)
+    // imports, so module manuals and skill prose never reached the model.
+    const skillFrag = path.join(groupDir, '.claude-fragments', 'skill-calendar.md');
+    const moduleFrag = path.join(groupDir, '.claude-fragments', 'module-scheduling.md');
+    expect(fs.lstatSync(skillFrag).isFile()).toBe(true);
+    expect(fs.readFileSync(skillFrag, 'utf8')).toBe('calendar\n');
+    expect(fs.lstatSync(moduleFrag).isFile()).toBe(true);
+    expect(fs.readFileSync(moduleFrag, 'utf8')).toBe('schedule tools');
     expect(fs.readFileSync(path.join(groupDir, '.claude-fragments', 'mcp-search.md'), 'utf-8')).toBe('search tools');
     expect(fs.existsSync(path.join(groupDir, '.claude-fragments', 'stale.md'))).toBe(false);
     expect(fs.existsSync(path.join(groupDir, 'CLAUDE.local.md'))).toBe(true);
@@ -128,6 +131,43 @@ describe('composeGroupClaudeMd', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  it('replaces a legacy /app symlink fragment with a regular file', () => {
+    writeFile('container/runtime/core.md', 'runtime core');
+    writeFile('container/agent-runner/src/mcp-tools/core.instructions.md', 'core tools');
+    const out = path.join(projectRoot, 'sessions', 'legacy', 'provider-docs');
+    fs.mkdirSync(path.join(out, '.claude-fragments'), { recursive: true });
+    fs.symlinkSync('/app/src/mcp-tools/core.instructions.md', path.join(out, '.claude-fragments', 'module-core.md'));
+    const group: AgentGroup = {
+      id: 'ag-legacy',
+      name: 'Legacy',
+      folder: 'legacy',
+      agent_provider: null,
+      created_at: now(),
+    };
+
+    composeGroupClaudeMd(group, {
+      outputDir: out,
+      containerConfig: {
+        mcpServers: {},
+        packages: { apt: [], npm: [] },
+        additionalMounts: [],
+        skills: [],
+        cliScope: 'group',
+        sessionRuntimePlan: {
+          runtime: { runtimeId: 'claude', runtimeStateKey: 'claude' },
+          capabilities: [{ id: 'nanoclaw.send-message', adapter: 'mcp' as const, entrypoint: 'tool:send' }],
+          rejectedCapabilities: [],
+          policy: { cliScope: 'disabled', approvalMode: 'default', writableWorkspace: true },
+          instructionSections: [],
+        },
+      },
+    });
+
+    const frag = path.join(out, '.claude-fragments', 'module-core.md');
+    expect(fs.lstatSync(frag).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(frag, 'utf8')).toBe('core tools');
   });
 
   it('keeps capability-filtered provider docs isolated between sessions', () => {
@@ -172,10 +212,12 @@ describe('composeGroupClaudeMd', () => {
       containerConfig: { ...base, sessionRuntimePlan: plan(['nanoclaw.schedule-task']) },
     });
 
-    expect(fs.lstatSync(path.join(first, '.claude-fragments', 'module-core.md')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(first, '.claude-fragments', 'module-core.md'), 'utf8')).toBe('core tools');
     expect(fs.existsSync(path.join(first, '.claude-fragments', 'module-scheduling.md'))).toBe(false);
     expect(fs.existsSync(path.join(second, '.claude-fragments', 'module-core.md'))).toBe(false);
-    expect(fs.lstatSync(path.join(second, '.claude-fragments', 'module-scheduling.md')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(second, '.claude-fragments', 'module-scheduling.md'), 'utf8')).toBe(
+      'schedule tools',
+    );
     expect(fs.existsSync(path.join(projectRoot, 'groups', group.folder, 'CLAUDE.md'))).toBe(false);
   });
 
@@ -248,10 +290,6 @@ describe('composeGroupClaudeMd', () => {
 
     composeGroupClaudeMd(group);
 
-    // The fragments are symlinks to container paths (e.g. /app/src/mcp-tools/...)
-    // that don't exist on the host, so fs.existsSync on the symlink path itself
-    // would follow the link and report false regardless of whether the fragment
-    // was written. List the fragments dir instead.
     const groupDir = path.join(previousCwd, 'groups', group.folder);
     const fragments = fs.readdirSync(path.join(groupDir, '.claude-fragments'));
     expect(fragments).not.toContain('module-cli.md');

@@ -12,7 +12,8 @@
  * Runs on every spawn from `container-runner.buildMounts()`. Deterministic —
  * same inputs produce the same CLAUDE.md, and stale fragments are pruned.
  *
- * See `docs/claude-md-composition.md` for the full design.
+ * Fragments are copied in as regular files (never symlinks to /app/...): Claude
+ * Code drops @-imports that resolve outside the project.
  */
 import fs from 'fs';
 import path from 'path';
@@ -53,7 +54,7 @@ export function composeGroupClaudeMd(
   const containerConfig =
     options.containerConfig ?? (configRow ? configFromDb(configRow, group) : defaultContainerConfig(group));
   const profile = containerConfig.agentProfile ?? buildAgentProfile(group, containerConfig);
-  const desired = new Map<string, { type: 'symlink' | 'inline'; content: string }>();
+  const desired = new Map<string, string>();
   const sectionBytes: Array<{ section: string; bytes: number }> = [];
 
   for (const section of collectInstructionSections({
@@ -63,16 +64,26 @@ export function composeGroupClaudeMd(
     capabilityIds: containerConfig.sessionRuntimePlan?.capabilities.map((item) => item.id),
   })) {
     if (section.containerPath) {
-      desired.set(section.id + '.md', { type: 'symlink', content: section.containerPath });
+      // Copy the fragment in rather than symlinking to /app/...: Claude Code
+      // 2.1.2xx silently drops @-imports that resolve outside the project, so
+      // a symlinked module manual or skill fragment never reached the model
+      // (upstream 32689e7b fixes the same thing by inlining). Read from the
+      // host source, which is what the container mounts at /app.
       const hostPath = section.containerPath
         .replace('/app/skills/', path.join(process.cwd(), 'container', 'skills') + path.sep)
         .replace(
           '/app/src/mcp-tools/',
           path.join(process.cwd(), 'container', 'agent-runner', 'src', 'mcp-tools') + path.sep,
         );
-      sectionBytes.push({ section: section.id, bytes: fs.existsSync(hostPath) ? fs.statSync(hostPath).size : 0 });
+      if (!fs.existsSync(hostPath)) {
+        log.warn('Instruction fragment source missing; skipping', { section: section.id, hostPath });
+        continue;
+      }
+      const content = fs.readFileSync(hostPath, 'utf8');
+      desired.set(section.id + '.md', content);
+      sectionBytes.push({ section: section.id, bytes: Buffer.byteLength(content, 'utf8') });
     } else if (section.content) {
-      desired.set(section.id + '.md', { type: 'inline', content: section.content });
+      desired.set(section.id + '.md', section.content);
       sectionBytes.push({ section: section.id, bytes: Buffer.byteLength(section.content, 'utf8') });
     }
   }
@@ -83,13 +94,9 @@ export function composeGroupClaudeMd(
       fs.unlinkSync(path.join(fragmentsDir, existing));
     }
   }
-  for (const [name, frag] of desired) {
-    const fragPath = path.join(fragmentsDir, name);
-    if (frag.type === 'symlink') {
-      syncSymlink(fragPath, frag.content);
-    } else {
-      writeAtomic(fragPath, frag.content);
-    }
+  for (const [name, content] of desired) {
+    // writeAtomic renames over the path, so a legacy symlink is replaced by a file.
+    writeAtomic(path.join(fragmentsDir, name), content);
   }
 
   // Composed entry — imports only.
@@ -164,22 +171,6 @@ export function migrateGroupsToClaudeLocal(): void {
   if (actions.length > 0) {
     log.info('Migrated groups to CLAUDE.local.md model', { actions });
   }
-}
-
-function syncSymlink(linkPath: string, target: string): void {
-  let currentTarget: string | null = null;
-  try {
-    currentTarget = fs.readlinkSync(linkPath);
-  } catch {
-    /* missing */
-  }
-  if (currentTarget === target) return;
-  try {
-    fs.unlinkSync(linkPath);
-  } catch {
-    /* missing */
-  }
-  fs.symlinkSync(target, linkPath);
 }
 
 function writeAtomic(filePath: string, content: string): void {
