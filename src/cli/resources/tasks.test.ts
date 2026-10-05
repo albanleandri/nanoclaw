@@ -288,6 +288,40 @@ describe('tasks CLI resource', () => {
     });
   });
 
+  // Ported from upstream afafd318: an agent ran `update --prompt "$(cat /tmp/x)"`
+  // after a restart wiped /tmp and blanked a live task, which then fired with no
+  // instructions.
+  it('update rejects an empty --prompt instead of blanking the task', async () => {
+    const created = await dispatch(
+      { id: 'c', command: 'tasks-create', args: { prompt: 'keep me', name: 'blank-guard', recurrence: '0 9 * * *' } },
+      agentCtx(),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const seriesId = (created.data as { series_id: string }).series_id;
+
+    for (const prompt of ['', '   \n']) {
+      const upd = await dispatch({ id: 'u', command: 'tasks-update', args: { id: seriesId, prompt } }, agentCtx());
+      expect(upd.ok).toBe(false);
+      if (!upd.ok) expect(upd.error.message).toContain('--prompt must not be empty');
+    }
+
+    const listed = await dispatch({ id: 'l', command: 'tasks-list', args: {} }, agentCtx());
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    const row = (listed.data as Array<{ series_id: string; prompt: string }>).find((t) => t.series_id === seriesId);
+    expect(row?.prompt).toContain('keep me');
+  });
+
+  it('create rejects a whitespace-only --prompt', async () => {
+    const resp = await dispatch(
+      { id: 'c', command: 'tasks-create', args: { prompt: '  \n ', name: 'blank', recurrence: '0 9 * * *' } },
+      agentCtx(),
+    );
+    expect(resp.ok).toBe(false);
+    if (!resp.ok) expect(resp.error.message).toContain('--prompt is required');
+  });
+
   it('tasks create --help carries the script contract and the frequency-limit caveat', async () => {
     // --help and `tasks help create` render the same deep verb help.
     const resp = await dispatch({ id: 'h', command: 'tasks-create', args: { help: true } }, agentCtx());

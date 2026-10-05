@@ -4,6 +4,15 @@ NanoClaw talks to the OneCLI gateway (credential vault + egress proxy) through `
 
 There is deliberately **no runtime version check, and setup does not migrate the gateway for you**: the gateway is a separate out-of-band component, and the migrator is your coding agent running `/update-nanoclaw` — it diffs `versions.json` across the update and routes you here when the `onecli-gateway` pin moved. Setup fails closed when a gateway predates `/v1`, so an incompatible vault cannot appear healthy and leave every message retrying forever. Run the steps below verbatim.
 
+**Supported version: exactly the pin (currently 1.42.0).** 1.42.0 carries the
+fix for a credential-injection host-enforcement bypass (onecli#438), so do not
+stay below it. Do not go above it either: OneCLI 1.43 and later remove the agent
+secret-assignment API (`onecli agents set-secrets`) that `/init-onecli` and the
+tool skills (`/add-gmail-tool`, `/add-vercel`, `/add-opencode`) use. Gateway
+1.42 also rejects writes to legacy policy rules (`410`); NanoClaw itself creates
+no rules. Never rerun the upstream OneCLI installer without `ONECLI_VERSION` set
+to the pin, because it otherwise installs the newest release.
+
 ## 1. Detect
 
 Find out what is running and what is required:
@@ -26,6 +35,11 @@ The gateway runs as a Docker service in `~/.onecli`. Upgrade just that container
 
 ```bash
 cd ~/.onecli
+# Back up the vault first: gateway migrations are forward-only, so this dump
+# is the only way back to the previous version.
+B=~/backups/onecli-pre-<pin>-$(date +%Y%m%d-%H%M%S); mkdir -p -m 700 "$B"
+docker compose exec -T postgres sh -c 'pg_dump -U "${POSTGRES_USER:-onecli}" -Fc "${POSTGRES_DB:-onecli}"' > "$B/onecli.pgdump"
+cp docker-compose.yml "$B/" && chmod 600 "$B"/*
 # The upstream compose file may hard-code `latest`; replace only its OneCLI
 # image reference, leaving Postgres and all persistent volumes untouched.
 sed -i.bak -E 's#(image:[[:space:]]*ghcr.io/onecli/onecli:).*#\1<onecli-gateway pin from versions.json>#' docker-compose.yml
@@ -68,13 +82,18 @@ source setup/lib/install-slug.sh && systemctl --user restart $(systemd_unit)
 
 ## 4. Rollback
 
+Because gateway migrations are forward-only, swapping the image tag back is
+only safe if the newer gateway never started against the vault. Otherwise,
+restore the dump taken in step 2 into an empty vault before starting the old
+image (`pg_restore --clean -U onecli -d onecli` inside the `postgres` service).
+
 ```bash
 cd ~/.onecli
 sed -i.bak -E 's#(image:[[:space:]]*ghcr.io/onecli/onecli:).*#\1<old-version>#' docker-compose.yml
 docker compose up -d onecli
 ```
 
-If the NanoClaw update itself is being rolled back, also pin `@onecli-sh/sdk` back to its previous version in `package.json` and run `pnpm install`. Vault data is unaffected in both directions.
+If the NanoClaw update itself is being rolled back, also pin `@onecli-sh/sdk` back to its previous version in `package.json` and run `pnpm install`.
 
 ## The CLI binary (`onecli-cli` pin)
 

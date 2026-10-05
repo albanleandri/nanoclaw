@@ -291,7 +291,7 @@ function createTask(args: Record<string, unknown>, ctx: CallerContext) {
   const group = groupArg(args, ctx);
   if (!group) throw new Error('--group is required');
   const prompt = str(args.prompt);
-  if (!prompt) throw new Error('--prompt is required');
+  if (!prompt?.trim()) throw new Error('--prompt is required');
   const recurrence = normalizeNullableString(args.recurrence) ?? null;
   validateRecurrence(recurrence);
   const script = normalizeNullableString(args.script) ?? null;
@@ -450,7 +450,13 @@ function mutateTask(
 function updateTaskCommand(args: Record<string, unknown>, ctx: CallerContext) {
   const id = taskId(args);
   const update: TaskUpdate = {};
-  if (typeof args.prompt === 'string') update.prompt = args.prompt;
+  if (typeof args.prompt === 'string') {
+    // `create` refuses an empty prompt; `update` must too, or a shell
+    // substitution over a missing file (`--prompt "$(cat gone.txt)"`) silently
+    // blanks a live task and the next run wakes the agent with no instruction.
+    if (!args.prompt.trim()) throw new Error('--prompt must not be empty; omit it to keep the current prompt');
+    update.prompt = args.prompt;
+  }
   if (args.process_after !== undefined) update.processAfter = parseProcessAfter(args.process_after);
   const recurrence = normalizeNullableString(args.recurrence);
   const script = normalizeNullableString(args.script);

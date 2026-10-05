@@ -4,5 +4,9 @@ onlyBuiltDependencies:
   - protobufjs
   - sharp
 
-pnpm:
-  minimumReleaseAge: 4320
+# Top-level, NOT nested under a `pnpm:` key: pnpm reads a `pnpm:` config block
+# only from package.json. Nested here the setting is silently ignored
+# (`pnpm config get minimumReleaseAge` returns undefined), so the supply-chain
+# release-age gate was a no-op. New package versions must exist on the
+# registry this many minutes (4320 = 3 days) before pnpm will resolve them.
+minimumReleaseAge: 4320

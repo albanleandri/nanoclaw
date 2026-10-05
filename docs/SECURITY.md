@@ -252,6 +252,9 @@ Provider API-key credentials normally use OneCLI and are not stored in
 4. supplies placeholder SDK auth values where the native SDK requires them.
 
 The gateway injects the real credential on an authorized outbound request.
+The supported gateway version is pinned exactly in `versions.json`; see
+[onecli-upgrades.md](onecli-upgrades.md) for why the pin is neither lower nor
+higher.
 Provider profiles store only a secret reference.
 
 `CONTAINER_SECRET_*` variables are an explicit exception: values are forwarded
@@ -303,6 +306,12 @@ explicitly reviewed gateway route is added.
 Docker `--add-host=host.docker.internal:host-gateway` is added on Linux in
 normal mode for cross-platform host addressing.
 
+Polling channel adapters (Telegram) open no inbound listener. The Chat SDK
+bridge registers a route on the shared webhook server only for adapters that
+receive webhooks; registering one for a polling adapter would bind
+`0.0.0.0:3000` and accept unsigned updates under any sender ID when no adapter
+webhook secret is configured.
+
 Trusted-host integration traffic originates in the host process, not an agent
 container, so container egress lockdown does not govern it. Its network
 boundary is the reviewed plugin's exact HTTPS origin/path/query/method policy
@@ -314,7 +323,8 @@ cancellation handling.
 The host uses pnpm with:
 
 - committed `pnpm-lock.yaml`;
-- a three-day `minimumReleaseAge`;
+- a three-day `minimumReleaseAge`, set at the top level of
+  `pnpm-workspace.yaml` (pnpm ignores it under a nested `pnpm:` key);
 - an `onlyBuiltDependencies` allowlist for install scripts.
 
 The runner has a separate committed Bun lockfile. Bun has no equivalent

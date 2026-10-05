@@ -479,6 +479,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         };
         startGateway();
         log.info('Gateway listener started', { adapter: adapter.name });
+      } else if ('runtimeMode' in adapter && adapter.runtimeMode === 'polling') {
+        // Polling adapters (Telegram) pull updates themselves. A route here
+        // would bind the shared webhook port on 0.0.0.0 and accept unsigned
+        // forged updates when no adapter webhook secret is configured. Read
+        // after initialize(): the adapter resolves mode 'auto' there.
+        log.info('Polling adapter: no webhook route registered', { adapter: adapter.name });
       } else {
         // Non-gateway adapters (Slack, Teams, GitHub, etc.) — register on the shared webhook server
         registerWebhookAdapter(chat, adapter.name);
