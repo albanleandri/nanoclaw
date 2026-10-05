@@ -20,6 +20,9 @@ pnpm run build
 ./container/build.sh
 ```
 
+`./container/build.sh` also rebuilds every per-group image (groups with their
+own packages) on the new base; it does not restart running containers.
+
 ## Setup
 
 ```bash

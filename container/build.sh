@@ -43,3 +43,13 @@ echo "Image: ${IMAGE_NAME}:${TAG}"
 echo ""
 echo "Test with:"
 echo "  echo '{\"prompt\":\"What is 2+2?\",\"groupFolder\":\"test\",\"chatJid\":\"test@g.us\",\"isMain\":false}' | ${CONTAINER_RUNTIME} run -i ${IMAGE_NAME}:${TAG}"
+
+# Per-group images (groups with their own apt/npm packages) are built FROM this
+# base, so a base-only rebuild would leave those groups on the previous runtime.
+# Rebuild them after a default `latest` build. SKIP_GROUP_IMAGES=1 opts out;
+# skipped when the host dependencies are not installed yet (early setup).
+if [ "$TAG" = "latest" ] && [ "${SKIP_GROUP_IMAGES:-}" != "1" ] && [ -x "$PROJECT_ROOT/node_modules/.bin/tsx" ]; then
+    echo ""
+    echo "Rebuilding per-group images on the new base..."
+    (cd "$PROJECT_ROOT" && "$PROJECT_ROOT/node_modules/.bin/tsx" scripts/rebuild-group-images.ts)
+fi

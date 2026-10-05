@@ -46,6 +46,12 @@ Both are committed. CI and the Dockerfile run `--frozen-lockfile` variants — a
 - **Pinned runtime/tool versions** — `BUN_VERSION`, `PNPM_VERSION`, and
   `RTK_VERSION` are Dockerfile arguments; global Node CLIs are pinned in
   `container/cli-tools.json`. Bump them deliberately in reviewed changes.
+- **Per-group images** — a group with its own apt/npm packages runs
+  `<base>:<group-id>`, built FROM the base image. After a default `latest`
+  build, `container/build.sh` runs `scripts/rebuild-group-images.ts` so those
+  groups pick up the new base too (otherwise they silently keep the previous
+  runtime, e.g. an older Claude Code). Running containers keep their image
+  until they next start. `SKIP_GROUP_IMAGES=1` opts out.
 - **CJK fonts** — `ARG INSTALL_CJK_FONTS=false`. `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through. Default build saves ~200MB; opt in when the user works with Chinese/Japanese/Korean content.
 - **BuildKit cache mounts** — `/var/cache/apt`, `/var/lib/apt`, `/root/.bun/install/cache`, `/root/.cache/pnpm`. Rebuilds where `package.json`/`bun.lock` haven't changed are fast. Requires BuildKit (default on Docker 23+, Apple Container-compat).
 - **`tini` as init** — reaps Chromium zombies, forwards signals so in-flight `outbound.db` writes finalize on SIGTERM.
