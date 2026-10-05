@@ -157,6 +157,10 @@ describe('unknown-channel registration flow', () => {
     const connectOption = payload.options.find((o: { value: string }) => o.value.startsWith('connect:'));
     expect(connectOption).toBeDefined();
     expect(connectOption.label).toContain('Andy');
+    // Ported from upstream a670f659: the approver must see what approval
+    // grants, not just that the agent will respond.
+    const { AGENT_ACCESS_SCOPE_WARNING } = await import('./channel-approval.js');
+    expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
 
     const { getDb } = await import('../../db/connection.js');
     const rows = getDb().prepare('SELECT * FROM pending_channel_approvals').all() as Array<{

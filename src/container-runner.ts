@@ -42,6 +42,7 @@ import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, stopContainer } from './contain
 import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
+import { getSession } from './db/sessions.js';
 import { isAgentGroupMemoryMaintenanceHeld } from './db/agent-group-memory-control.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
@@ -63,6 +64,7 @@ import {
   type ProviderContainerContribution,
   type VolumeMount,
 } from './providers/provider-container-registry.js';
+import { claudeCompactWindowEnv } from './providers/claude-compact-window.js';
 import { resolveEffectiveProviderConfig, type EffectiveProviderConfig } from './providers/effective-provider.js';
 import { assertRuntimeSelectionParity, resolveEffectiveRuntimeSelection } from './providers/effective-runtime.js';
 import type { EffectiveRuntimeSelection } from './providers/runtime-descriptor.js';
@@ -413,6 +415,30 @@ export function killContainer(sessionId: string, reason: string, onExit?: () => 
 }
 
 /**
+ * Session ids among `sessionIds` whose session row or agent group no longer
+ * exists. The per-session sweep only visits live rows, so a container whose
+ * rows were deleted (`ncl groups delete`) kept running, and writing outbound,
+ * until the next host restart (ported from upstream 94d82996). A spawn reads
+ * its session row before it creates a container, so a legitimate container
+ * always has one.
+ */
+export function findContainersOfDeletedSessions(sessionIds: Iterable<string>): string[] {
+  const orphans: string[] = [];
+  for (const sessionId of sessionIds) {
+    const session = getSession(sessionId);
+    if (!session || !getAgentGroup(session.agent_group_id)) orphans.push(sessionId);
+  }
+  return orphans;
+}
+
+/** Stop every running container whose session or agent group was deleted. */
+export function stopContainersOfDeletedSessions(): number {
+  const orphans = findContainersOfDeletedSessions([...activeContainers.keys()]);
+  for (const sessionId of orphans) killContainer(sessionId, 'session-or-group-deleted');
+  return orphans.length;
+}
+
+/**
  * Resolve the provider name for a session:
  *
  *   sessions.agent_provider
@@ -436,7 +462,7 @@ function resolveProviderContribution(
 ): { provider: string; contribution: ProviderContainerContribution } {
   const provider = effectiveProvider.provider;
   const fn = getProviderContainerConfig(provider);
-  const contribution = fn
+  const contribution: ProviderContainerContribution = fn
     ? fn({
         sessionDir: sessionDir(agentGroup.id, session.id),
         agentGroupId: agentGroup.id,
@@ -447,6 +473,12 @@ function resolveProviderContribution(
         effectiveProvider,
       })
     : {};
+  if (provider === 'claude') {
+    const compactEnv = claudeCompactWindowEnv(process.env);
+    if (Object.keys(compactEnv).length > 0) {
+      contribution.env = { ...compactEnv, ...contribution.env };
+    }
+  }
   return { provider, contribution };
 }
 

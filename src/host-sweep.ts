@@ -48,7 +48,13 @@ import { log } from './log.js';
 import { recoverFallbackDispatches } from './orchestration/fallback-dispatcher.js';
 import { recoverOrchestrationRuns } from './orchestration/run-store.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
-import { getContainerStartedAtMs, isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import {
+  getContainerStartedAtMs,
+  isContainerRunning,
+  killContainer,
+  stopContainersOfDeletedSessions,
+  wakeContainer,
+} from './container-runner.js';
 import type { Session } from './types.js';
 
 /**
@@ -187,6 +193,15 @@ async function sweep(): Promise<void> {
   } catch (err) {
     log.error('Host sweep error', { err });
   }
+
+  /* eslint-disable no-catch-all/no-catch-all -- the sweep loop must survive any error and re-arm */
+  try {
+    const stopped = stopContainersOfDeletedSessions();
+    if (stopped > 0) log.warn('Stopped containers whose session or agent group was deleted', { count: stopped });
+  } catch (err) {
+    log.error('Deleted-session container sweep error', { err });
+  }
+  /* eslint-enable no-catch-all/no-catch-all */
 
   setTimeout(sweep, SWEEP_INTERVAL_MS);
 }

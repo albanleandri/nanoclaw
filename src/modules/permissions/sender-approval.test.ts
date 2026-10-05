@@ -169,6 +169,8 @@ describe('unknown-sender request_approval flow', () => {
     const payload = JSON.parse(content as string);
     expect(payload.type).toBe('ask_question');
     expect(payload.questionId).toMatch(/^nsa-/);
+    const { AGENT_ACCESS_SCOPE_WARNING } = await import('./channel-approval.js');
+    expect(payload.question).toContain(AGENT_ACCESS_SCOPE_WARNING);
 
     const { getDb } = await import('../../db/connection.js');
     const rows = getDb().prepare('SELECT * FROM pending_sender_approvals').all();

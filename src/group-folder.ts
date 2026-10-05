@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, GROUPS_DIR } from './config.js';
@@ -41,4 +42,26 @@ export function resolveGroupIpcPath(folder: string): string {
   const ipcPath = path.resolve(ipcBaseDir, folder);
   ensureWithinBase(ipcBaseDir, ipcPath);
   return ipcPath;
+}
+
+/**
+ * True when `groups/<folder>` is present on disk in any form — directory,
+ * file, or symlink, empty or not. `ncl groups delete` never removes the
+ * folder, so presence with no claiming DB row is deleted-group residue (or an
+ * operator-placed dir), and creating a group over it would silently adopt the
+ * old group's memory and data under a new identity (ported from upstream
+ * 92a3518b). lstat, not existsSync: existsSync follows symlinks, so a dangling
+ * symlink would read as absent while still occupying the name.
+ */
+export function groupFolderExistsOnDisk(folder: string): boolean {
+  const groupPath = path.resolve(GROUPS_DIR, folder);
+  ensureWithinBase(GROUPS_DIR, groupPath);
+  try {
+    fs.lstatSync(groupPath);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw err; // e.g. EACCES: cannot tell, so refuse rather than adopt
+  }
 }

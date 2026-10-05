@@ -90,6 +90,8 @@ export interface ResourceDef {
   };
   /** Non-standard verbs (grant, revoke, add, remove, restart, etc.). */
   customOperations?: Record<string, CustomOperation>;
+  /** Validate the resolved row before the generic create inserts it; throw to refuse. */
+  beforeCreate?: (values: Record<string, unknown>) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +180,8 @@ function genericCreate(def: ResourceDef) {
         values[col.name] = values[col.defaultFrom];
       }
     }
+
+    def.beforeCreate?.(values);
 
     const colNames = Object.keys(values);
     const placeholders = colNames.map((c) => `@${c}`);

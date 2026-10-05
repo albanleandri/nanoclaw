@@ -15,7 +15,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { log } from '../src/log.js';
-import { writePrivateFileSync } from '../src/private-files.js';
+import { writePrivateFileAtomicSync } from '../src/private-files.js';
 import { emitStatus } from './status.js';
 
 export async function run(args: string[]): Promise<void> {
@@ -36,6 +36,10 @@ export async function run(args: string[]): Promise<void> {
   if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
     throw new Error(`Invalid env key: ${key} (must be UPPER_SNAKE_CASE)`);
   }
+  // A newline would end the line early and let the value inject further keys.
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error(`Invalid value for ${key}: must be a single line`);
+  }
 
   const projectRoot = process.cwd();
   const envFile = path.join(projectRoot, '.env');
@@ -50,13 +54,15 @@ export async function run(args: string[]): Promise<void> {
   const existed = lineRegex.test(content);
 
   if (existed) {
-    content = content.replace(lineRegex, newLine);
+    // Function replacer: a string replacement would expand `$&`, `$'` and
+    // friends inside the value (tokens can contain `$`).
+    content = content.replace(lineRegex, () => newLine);
   } else {
     const sep = content && !content.endsWith('\n') ? '\n' : '';
     content = content + sep + newLine + '\n';
   }
 
-  writePrivateFileSync(envFile, content);
+  writePrivateFileAtomicSync(envFile, content);
   log.info('Updated .env', { key, existed });
   if (syncRequested) {
     log.info('Skipped obsolete container environment mirror', { key });

@@ -49,6 +49,7 @@ import { createAgentGroup, getAgentGroup, getAgentGroupByFolder, getAllAgentGrou
 import { getChannelAdapter } from '../../channels/channel-registry.js';
 import { getMessagingGroup, updateMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
+import { groupFolderExistsOnDisk } from '../../group-folder.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
@@ -114,6 +115,13 @@ function buildApprovalOptions(agentGroups: AgentGroup[], approverUserId?: string
   return options;
 }
 
+// Copy-only disclosure (ported from upstream a670f659): approving here grants
+// shared runtime authority over the agent group, but the card used to say only
+// that the agent would respond. Deliberately not "the same authority as you":
+// approved members still cannot run admin commands (command-gate.ts).
+export const AGENT_ACCESS_SCOPE_WARNING =
+  "Anyone approved here can direct the agent and reach anything it can reach — including other conversations' context, its workspace files and memory, and any connected tools.";
+
 function buildQuestionText(
   isGroup: boolean,
   senderName: string | undefined,
@@ -123,9 +131,9 @@ function buildQuestionText(
   const who = senderName ?? 'Someone';
   if (isGroup) {
     const where = channelName ? `${channelName} on ${channelType}` : `a ${channelType} channel`;
-    return `${who} mentioned your bot in ${where}. How would you like to handle this channel?`;
+    return `${who} mentioned your bot in ${where}. ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle this channel?`;
   }
-  return `${who} sent your bot a DM on ${channelType}. How would you like to handle it?`;
+  return `${who} sent your bot a DM on ${channelType}. ${AGENT_ACCESS_SCOPE_WARNING} How would you like to handle it?`;
 }
 
 // ── Main flow ──
@@ -277,7 +285,9 @@ export function createNewAgentGroup(name: string): AgentGroup {
   let folder = toFolder(name);
   const baseFolder = folder;
   let suffix = 2;
-  while (getAgentGroupByFolder(folder)) {
+  // Also skip folders left on disk by a deleted group: adopting one would
+  // re-scope the old group's data under the new agent's identity.
+  while (getAgentGroupByFolder(folder) || groupFolderExistsOnDisk(folder)) {
     folder = `${baseFolder}-${suffix}`;
     suffix++;
   }

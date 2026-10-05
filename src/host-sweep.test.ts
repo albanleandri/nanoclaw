@@ -24,6 +24,7 @@ vi.mock('./container-runner.js', () => ({
   wakeContainer: (...args: unknown[]) => mockWakeContainer(...args),
   isContainerRunning: (...args: unknown[]) => mockIsContainerRunning(...args),
   killContainer: vi.fn(),
+  stopContainersOfDeletedSessions: vi.fn().mockReturnValue(0),
   getContainerStartedAtMs: vi.fn().mockReturnValue(undefined),
 }));
 

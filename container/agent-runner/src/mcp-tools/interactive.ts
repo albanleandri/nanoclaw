@@ -35,6 +35,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// http(s) only: the one scheme every adapter renders as a link button. Requires
+// a host character and no whitespace, so placeholders like "#" or "/docs" (an
+// agent faking a callback button) and markdown-breaking urls are dropped.
+const WEB_LINK = /^https?:\/\/[^\s/?#]+[^\s]*$/i;
+
+/**
+ * send_card is fire-and-forget, so the bridge drops every action without a url
+ * (no callback buttons). Filter invalid actions here and report the count, so
+ * the agent learns why a button did not appear instead of blaming the
+ * platform (ported from upstream b76fcb3d, without its AJV schema).
+ */
+export function keepLinkActions(card: Record<string, unknown>): { card: Record<string, unknown>; dropped: number } {
+  if (!Array.isArray(card.actions)) return { card, dropped: 0 };
+  const kept = card.actions.filter((a): boolean => {
+    if (!a || typeof a !== 'object') return false;
+    const { label, url } = a as Record<string, unknown>;
+    return typeof label === 'string' && label.trim() !== '' && typeof url === 'string' && WEB_LINK.test(url);
+  });
+  return { card: { ...card, actions: kept }, dropped: card.actions.length - kept.length };
+}
+
 export const askUserQuestion: McpToolDefinition = {
   tool: {
     name: 'ask_user_question',
@@ -143,15 +164,19 @@ export const askUserQuestion: McpToolDefinition = {
 export const sendCard: McpToolDefinition = {
   tool: {
     name: 'send_card',
-    description: 'Send a structured card (interactive or display-only) to the current conversation.',
+    description:
+      'Send a display-only card (title, description, children, optional web-link buttons) to the current conversation. ' +
+      'Returns immediately. Never renders callback buttons: to let the user choose something, use ask_user_question.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         card: {
           type: 'object',
-          description: 'Card structure with title, description, and optional children/actions',
+          description:
+            'Card with title, description, children (strings or { text }), and optional top-level actions. ' +
+            'Each action is { label, url, style? } where url is an http(s) web link; other actions are dropped.',
         },
-        fallbackText: { type: 'string', description: 'Text fallback for platforms without card support' },
+        fallbackText: { type: 'string', description: 'Plain-text version for channels that render cards as text' },
       },
       required: ['card'],
     },
@@ -160,6 +185,7 @@ export const sendCard: McpToolDefinition = {
     const card = args.card as Record<string, unknown>;
     if (!card) return err('card is required');
 
+    const { card: sentCard, dropped } = keepLinkActions(card);
     const id = generateId();
     const r = routing();
 
@@ -170,11 +196,15 @@ export const sendCard: McpToolDefinition = {
       platform_id: r.platform_id,
       channel_type: r.channel_type,
       thread_id: r.thread_id,
-      content: JSON.stringify({ type: 'card', card, fallbackText: (args.fallbackText as string) || '' }),
+      content: JSON.stringify({ type: 'card', card: sentCard, fallbackText: (args.fallbackText as string) || '' }),
     });
 
-    log(`send_card: ${id}`);
-    return ok(`Card sent (id: ${id})`);
+    log(`send_card: ${id}${dropped ? ` (${dropped} action(s) dropped)` : ''}`);
+    if (dropped === 0) return ok(`Card sent (id: ${id})`);
+    return ok(
+      `Card sent (id: ${id}). ${dropped} action(s) were dropped: send_card only renders link buttons with an ` +
+        `http(s) url. For a button the user can click to answer, use ask_user_question.`,
+    );
   },
 };
 

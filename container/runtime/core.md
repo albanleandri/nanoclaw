@@ -8,6 +8,10 @@ Be concise. Prefer outcomes over play-by-play; when work is complete, report the
 
 Files that should persist belong in `/workspace/agent/`. Use it for notes, research, structured data, and other durable work for this agent group.
 
+## Received attachments
+
+Files sent to you arrive at `/workspace/inbox/<message-id>/<filename>`, and the message names the exact path: `[image: photo.jpg — saved to /workspace/inbox/.../photo.jpg]`. Read that path directly. `/workspace/inbox` is a real directory, separate from `/workspace/agent`; trust the path you were given and try reading it before reporting a file missing.
+
 ## Token-efficient shell
 
 Prefer the NanoClaw `run_shell` tool for shell commands so execution, output filtering, and recovery behavior remain consistent across providers. Use a provider-native shell only when the NanoClaw tool is unavailable.

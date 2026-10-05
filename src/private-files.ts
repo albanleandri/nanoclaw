@@ -21,6 +21,43 @@ export function writePrivateFileSync(filePath: string, data: string | NodeJS.Arr
   }
 }
 
+/**
+ * Replace a private file atomically: write an owner-only temp file in the same
+ * directory, fsync it, then rename it over the target, so a crash or a
+ * concurrent reader never sees a half-written file. Refuses a symlink or
+ * non-regular target, like writePrivateFileSync.
+ */
+export function writePrivateFileAtomicSync(filePath: string, data: string): void {
+  try {
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile()) throw new Error(`Private file path is not a regular file: ${filePath}`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  const tmp = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  const fd = fs.openSync(
+    tmp,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    PRIVATE_FILE_MODE,
+  );
+  try {
+    fs.fchmodSync(fd, PRIVATE_FILE_MODE);
+    fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } catch (err) {
+    fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  fs.closeSync(fd);
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 function hardenPrivateFileIfPresent(filePath: string): void {
   let stat: fs.Stats;
   try {

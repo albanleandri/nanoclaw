@@ -30,6 +30,8 @@ import type { ContainerConfigRow } from '../../types.js';
 import { getProviderProfile } from '../../db/provider-profiles.js';
 import '../../providers/descriptors/index.js';
 import { requireProviderDescriptor } from '../../providers/provider-descriptor-registry.js';
+import { getAgentGroupByFolder } from '../../db/agent-groups.js';
+import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../../group-folder.js';
 import { registerResource } from '../crud.js';
 
 /** Deserialize JSON columns for display. */
@@ -84,6 +86,19 @@ registerResource({
   // DELETE violates FK constraints (see #2525). The cascading handler is
   // provided as `customOperations.delete` below.
   operations: { list: 'open', get: 'open', create: 'approval', update: 'approval' },
+  beforeCreate: (values) => {
+    const folder = String(values.folder);
+    assertValidGroupFolder(folder);
+    if (getAgentGroupByFolder(folder))
+      throw new Error(`group folder '${folder}' is already used by another agent group`);
+    if (groupFolderExistsOnDisk(folder)) {
+      throw new Error(
+        `group folder 'groups/${folder}' already exists on disk but no agent group claims it — ` +
+          `deleting a group never removes its folder, and creating a new group over it would silently ` +
+          `adopt the old group's data under a new identity. Move or remove the folder, or pick a different --folder.`,
+      );
+    }
+  },
   customOperations: {
     'memory status': {
       access: 'open',
@@ -192,7 +207,9 @@ registerResource({
       description:
         'Delete an agent group and its dependent rows (sessions, destinations, approvals, role grants, ' +
         'memberships, channel wirings). FK-ordered cascade in a single transaction. ' +
-        'Use --id <group-id>. Out of scope: killing running containers, on-disk cleanup of groups/<folder>/ and data/v2-sessions/<group-id>/.',
+        'Use --id <group-id>. Running containers of the group are stopped by the next host sweep (within about a minute). ' +
+        'Out of scope: on-disk cleanup of groups/<folder>/ and data/v2-sessions/<group-id>/; the leftover groups/<folder>/ ' +
+        'blocks re-creating a group under the same folder name until it is moved or removed.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
