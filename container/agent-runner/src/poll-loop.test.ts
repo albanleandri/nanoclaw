@@ -445,6 +445,56 @@ describe('processQuery heartbeat', () => {
     }
   });
 
+  // Ported from upstream bac2e3f0: the follow-up path pushed every non-system
+  // row, so accumulated trigger=0 context alone could re-engage a warm query
+  // and the agent answered ambient chatter that was not addressed to it.
+  it('never pushes context-only follow-up rows into a live turn', async () => {
+    let release: (() => void) | null = null;
+    const pushed: string[] = [];
+    const claimed: string[] = [];
+    let polls = 0;
+    const query: AgentQuery = {
+      push(message: string) {
+        pushed.push(message);
+      },
+      end() {
+        release?.();
+      },
+      abort() {
+        release?.();
+      },
+      events: {
+        async *[Symbol.asyncIterator](): AsyncIterator<ProviderEvent> {
+          yield { type: 'init', continuation: 'session-1' };
+          yield { type: 'result', text: '<internal>initial done</internal>' };
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    };
+
+    const running = processQuery(query, extractRouting([]), ['m-initial'], 'mock', {
+      postResultHeartbeatMs: 5,
+      activePollIntervalMs: 5,
+      getPendingMessages: () => {
+        polls++;
+        return [{ ...followUpRow('m-ambient'), trigger: 0 }];
+      },
+      markProcessing: (ids) => claimed.push(...ids),
+      markCompleted: () => {},
+    });
+
+    try {
+      await waitFor(() => polls >= 5);
+      expect(pushed).toEqual([]);
+      expect(claimed).not.toContain('m-ambient');
+    } finally {
+      query.end();
+      await running;
+    }
+  });
+
   it('completes a pushed follow-up when the provider acknowledges its result', async () => {
     let release: (() => void) | null = null;
     let pushedAck: (() => void) | null = null;
@@ -841,9 +891,9 @@ describe('auth error notification', () => {
 
     expect(result.outcome).toBe('terminal-error');
     expect(result.error?.classification).toBe('auth');
-    expect(
-      getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get(),
-    ).toEqual({ status: 'provider-error' });
+    expect(getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get()).toEqual({
+      status: 'provider-error',
+    });
   });
 
   // Same defect as the auth case: a bare 429 arrives as result TEXT, so

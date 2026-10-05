@@ -540,7 +540,13 @@ export async function processQuery(
         // everything. Filtering on thread_id here caused deadlocks when the
         // initial batch and follow-ups had mismatched thread_ids (e.g. a
         // host-generated welcome trigger with null thread vs a Discord DM reply).
-        const newMessages = pending.filter((m) => m.kind !== 'system');
+        // Accumulated trigger=0 context rows must never be pushed into a live
+        // turn on their own — the agent would answer ambient context that was
+        // not addressed to it. They ride along only with a real trigger=1
+        // follow-up; otherwise they stay pending for a future batch (mirrors
+        // the initial-batch gate below and db/messages-in.ts selection).
+        const hasFollowUpTrigger = pending.some((m) => m.kind !== 'system' && m.trigger === 1);
+        const newMessages = pending.filter((m) => m.kind !== 'system' && (m.trigger === 1 || hasFollowUpTrigger));
         if (newMessages.length === 0) {
           if (
             initialTurnCompleted &&
@@ -968,7 +974,9 @@ export function dispatchResultText(
     // path — never deliver it, keep it visible in the scratchpad/run log.
     if (routing.taskFire) {
       log(`Task fire: <message to="${toName}"> block not delivered — task sessions send only via send_message`);
-      scratchpadParts.push(`[not delivered — task sessions send only via the send_message tool; to="${toName}"] ${body}`);
+      scratchpadParts.push(
+        `[not delivered — task sessions send only via the send_message tool; to="${toName}"] ${body}`,
+      );
       taskBlocks++;
       continue;
     }
