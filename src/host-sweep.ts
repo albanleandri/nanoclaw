@@ -19,6 +19,8 @@
  *        → kill. Covers the "alive but silent for 30 min" case. Extended
  *        only while Bash is declared as running longer, honouring the
  *        user's own timeout directive. Kill then resets processing rows.
+ *        With no heartbeat file yet, container uptime stands in, so a
+ *        container that never reaches a provider event still ages out.
  *
  *     2. Message-scoped stuck: for each 'processing' row, tolerance =
  *        max(60s, current_bash_timeout_ms_if_Bash_running). If
@@ -108,16 +110,24 @@ export function decideStuckAction(args: {
   const { now, heartbeatMtimeMs, containerState, claims, oldestDuePendingAgeMs = 0, containerUptimeMs } = args;
   const declaredBashMs = bashTimeoutMs(containerState);
 
-  // Ceiling check only applies when we have an actual heartbeat timestamp.
-  // A freshly-spawned container hasn't had any SDK activity yet so no
-  // heartbeat file exists — if we treated that as infinitely stale we'd
-  // kill every container within seconds of spawn. Genuinely-dead containers
-  // that never wrote a heartbeat are caught by the separate "container
-  // process not running" cleanup path, not here. If a fresh container is
-  // hanging at the gate (claimed a message but never did anything) the
-  // claim-stuck check below handles it.
-  if (heartbeatMtimeMs !== 0) {
-    const heartbeatAge = now - heartbeatMtimeMs;
+  // Ceiling check prefers the heartbeat file's mtime. A freshly-spawned
+  // container hasn't had any SDK activity yet so no heartbeat file exists —
+  // treating that as infinitely stale would kill every container within
+  // seconds of spawn. But "no heartbeat file" is not only a spawn grace
+  // period: a container can finish (or find nothing to do) without its poll
+  // loop ever reaching a provider event, and then it never writes a
+  // heartbeat and sits alive-but-idle forever, immune to this check. Falling
+  // back to the container's uptime gives fresh spawns the same grace (age
+  // starts at ~0) while still aging out one that never ticks. Legacy callers
+  // that omit the uptime keep the old skip. A fresh container hanging at the
+  // gate (claimed a message, did nothing) is caught by claim-stuck below.
+  const heartbeatAge =
+    heartbeatMtimeMs !== 0
+      ? now - heartbeatMtimeMs
+      : containerUptimeMs !== undefined
+        ? Math.max(0, containerUptimeMs)
+        : undefined;
+  if (heartbeatAge !== undefined) {
     const ceiling = Math.max(ABSOLUTE_CEILING_MS, declaredBashMs ?? 0);
     if (heartbeatAge > ceiling) {
       return { action: 'kill-ceiling', heartbeatAgeMs: heartbeatAge, ceilingMs: ceiling };

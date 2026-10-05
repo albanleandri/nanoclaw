@@ -153,10 +153,7 @@ async function pollActive(): Promise<void> {
   if (!activePolling) return;
 
   try {
-    const sessions = getRunningSessions();
-    for (const session of sessions) {
-      await deliverSessionMessages(session);
-    }
+    await deliverToSessions(getRunningSessions());
   } catch (err) {
     log.error('Active delivery poll error', { err });
   }
@@ -168,15 +165,31 @@ async function pollSweep(): Promise<void> {
   if (!sweepPolling) return;
 
   try {
-    const sessions = getActiveSessions();
-    for (const session of sessions) {
-      await deliverSessionMessages(session);
-    }
+    await deliverToSessions(getActiveSessions());
   } catch (err) {
     log.error('Sweep delivery poll error', { err });
   }
 
   setTimeout(pollSweep, SWEEP_POLL_MS);
+}
+
+/**
+ * Drain each session in turn. A session whose drain throws (e.g. a corrupt
+ * or locked session DB) is logged and skipped, so it cannot starve every
+ * session after it in the same tick (upstream f4598c01, isolation only —
+ * delivery stays serial here because session DBs are local SQLite).
+ */
+export async function deliverToSessions(sessions: readonly Session[]): Promise<void> {
+  for (const session of sessions) {
+    try {
+      await deliverSessionMessages(session);
+      // Isolation boundary: any failure is scoped to this session's tick and
+      // retried on the next one; rethrowing would starve the sessions after it.
+      // eslint-disable-next-line no-catch-all/no-catch-all
+    } catch (err) {
+      log.error('Session delivery failed; continuing with remaining sessions', { sessionId: session.id, err });
+    }
+  }
 }
 
 export async function deliverSessionMessages(session: Session): Promise<void> {

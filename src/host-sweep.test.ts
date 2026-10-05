@@ -96,6 +96,46 @@ describe('decideStuckAction', () => {
     expect(res.action).toBe('ok');
   });
 
+  // Port of upstream d33d327f/a75d5c9d: a container that never reaches a
+  // provider event never writes a heartbeat, and without this fallback it
+  // stayed alive-but-idle forever.
+  it('does not kill a spawn within the ceiling when heartbeat is absent', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: 0,
+      containerUptimeMs: ABSOLUTE_CEILING_MS - 1,
+      containerState: null,
+      claims: [],
+    });
+    expect(res.action).toBe('ok');
+  });
+
+  it('kills on the ceiling by container uptime when heartbeat never appeared', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: 0,
+      containerUptimeMs: ABSOLUTE_CEILING_MS + 1,
+      containerState: null,
+      claims: [],
+    });
+    expect(res).toEqual({
+      action: 'kill-ceiling',
+      heartbeatAgeMs: ABSOLUTE_CEILING_MS + 1,
+      ceilingMs: ABSOLUTE_CEILING_MS,
+    });
+  });
+
+  it('prefers a fresh heartbeat over a long container uptime', () => {
+    const res = decideStuckAction({
+      now: BASE,
+      heartbeatMtimeMs: BASE - 5_000,
+      containerUptimeMs: ABSOLUTE_CEILING_MS + 60_000,
+      containerState: null,
+      claims: [],
+    });
+    expect(res.action).toBe('ok');
+  });
+
   it('kills on claim-stuck when heartbeat is absent AND a claim has aged past tolerance', () => {
     // Hanging fresh container: spawned, picked up a message (claim recorded
     // in processing_ack), but never wrote a heartbeat. Falls through the

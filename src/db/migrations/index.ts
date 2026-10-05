@@ -102,16 +102,24 @@ export function runMigrations(db: Database.Database, plan: readonly Migration[] 
   log.info('Running migrations', { count: pending.length });
 
   for (const m of pending) {
-    db.transaction(() => {
-      m.up(db);
-      const next = (db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number })
-        .v;
-      db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
-        next,
-        m.name,
-        new Date().toISOString(),
-      );
-    })();
-    log.info('Migration applied', { name: m.name });
+    // Another process may have migrated since the pending list was chosen.
+    // `.immediate()` takes SQLite's write lock at BEGIN, so this recheck and
+    // up() cannot interleave with a concurrent migrator (upstream 1d5179b2).
+    const applied = db
+      .transaction(() => {
+        if (db.prepare('SELECT 1 FROM schema_version WHERE name = ?').get(m.name)) return false;
+        m.up(db);
+        const next = (
+          db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM schema_version').get() as { v: number }
+        ).v;
+        db.prepare('INSERT INTO schema_version (version, name, applied) VALUES (?, ?, ?)').run(
+          next,
+          m.name,
+          new Date().toISOString(),
+        );
+        return true;
+      })
+      .immediate();
+    if (applied) log.info('Migration applied', { name: m.name });
   }
 }

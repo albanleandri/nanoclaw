@@ -83,6 +83,7 @@ import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
 import {
   deliverSessionMessages,
+  deliverToSessions,
   deliverMessage,
   setDeliveryAdapter,
   clearDeliveryAdapterForTesting,
@@ -249,6 +250,41 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     await deliverSessionMessages(session);
 
     expect(callCount).toBe(1);
+  });
+});
+
+// Port of upstream f4598c01 (isolation half): before this, one session whose
+// drain threw aborted the whole poll tick, so every later session's replies
+// waited until that session stopped throwing.
+describe('deliverToSessions — per-session isolation', () => {
+  it('keeps delivering to later sessions when one session throws', async () => {
+    seedAgentAndChannel();
+    const broken = chatSession('ag-1', 'mg-1', 'thread-broken');
+    const healthy = chatSession('ag-1', 'mg-1', 'thread-healthy');
+    insertOutboundKind('ag-1', broken.id, 'out-broken', {
+      kind: 'chat',
+      content: { text: 'broken' },
+      inReplyTo: 'in-broken',
+      channelType: 'telegram',
+      platformId: 'telegram:123',
+    });
+    insertOutbound('ag-1', healthy.id, 'out-healthy');
+    directDeliveryDecisionSpy.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+
+    const calls: string[] = [];
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, content) {
+        calls.push(content);
+        return 'plat-msg';
+      },
+    });
+
+    await expect(deliverToSessions([broken, healthy])).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(getDeliveredIds(openInboundDb('ag-1', healthy.id)).has('out-healthy')).toBe(true);
   });
 });
 

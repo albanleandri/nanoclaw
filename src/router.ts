@@ -482,6 +482,13 @@ function evaluateEngage(
       return existing !== undefined;
     }
     default:
+      // Unrecognized engage_mode (stale data from an older CLI, or a direct
+      // DB write — the column has no CHECK constraint). Fail closed but leave
+      // a trail so this is not a mystery drop (upstream 59bf7a34).
+      log.warn('Unknown engage_mode — treating as no-engage. Check wiring configuration.', {
+        engage_mode: agent.engage_mode,
+        wiring_id: agent.id,
+      });
       return false;
   }
 }
