@@ -59,6 +59,7 @@ export async function compileContainerLaunchPlan(input: ContainerLaunchPlanInput
   if (!(await input.applyGateway(args, input.agentIdentifier))) {
     throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
   }
+  mirrorCaBundleEnv(args);
 
   if (input.oauthCredentialsAvailable) {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
@@ -68,6 +69,28 @@ export async function compileContainerLaunchPlan(input: ContainerLaunchPlanInput
 
   args.push('--entrypoint', 'bash', input.imageTag, '-c', 'exec bun run /app/src/index.ts');
   return { executable: 'docker', args, containerName: input.containerName };
+}
+
+/**
+ * The OneCLI SDK points `SSL_CERT_FILE` (and Node/Deno equivalents) at its
+ * combined CA bundle, but Python `requests` ignores that and uses certifi, so
+ * HTTPS through the gateway failed with CERTIFICATE_VERIFY_FAILED. Point the
+ * env vars `requests`, pip and curl read at the same bundle, unless the caller
+ * already set them.
+ */
+export function mirrorCaBundleEnv(args: string[]): void {
+  const envValue = (key: string): string | undefined => {
+    let value: string | undefined;
+    for (let i = 0; i < args.length - 1; i++) {
+      if (args[i] === '-e' && args[i + 1].startsWith(`${key}=`)) value = args[i + 1].slice(key.length + 1);
+    }
+    return value;
+  };
+  const bundle = envValue('SSL_CERT_FILE');
+  if (!bundle) return;
+  for (const key of ['REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE']) {
+    if (envValue(key) === undefined) args.push('-e', `${key}=${bundle}`);
+  }
 }
 
 export function assertUniqueMountDestinations(mounts: VolumeMount[]): void {

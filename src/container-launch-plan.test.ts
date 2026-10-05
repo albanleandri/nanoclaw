@@ -97,4 +97,41 @@ describe('compileContainerLaunchPlan', () => {
     const apiKey = await compileContainerLaunchPlan(input({ oauthCredentialsAvailable: false }));
     expect(apiKey.args).not.toContain('CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   });
+
+  // Regression for handoff item #15: Python `requests` uses certifi, not
+  // SSL_CERT_FILE, so HTTPS through the gateway failed CERTIFICATE_VERIFY_FAILED.
+  it('points requests and curl at the gateway CA bundle the SDK sets', async () => {
+    const plan = await compileContainerLaunchPlan(
+      input({
+        applyGateway: async (args) => {
+          args.push('-e', 'SSL_CERT_FILE=/tmp/onecli-combined-ca.pem');
+          return true;
+        },
+      }),
+    );
+    expect(plan.args).toEqual(
+      expect.arrayContaining([
+        'REQUESTS_CA_BUNDLE=/tmp/onecli-combined-ca.pem',
+        'CURL_CA_BUNDLE=/tmp/onecli-combined-ca.pem',
+      ]),
+    );
+  });
+
+  it('leaves an explicit REQUESTS_CA_BUNDLE alone and adds nothing without a gateway bundle', async () => {
+    const explicit = await compileContainerLaunchPlan(
+      input({
+        environment: { REQUESTS_CA_BUNDLE: '/custom.pem' },
+        applyGateway: async (args) => {
+          args.push('-e', 'SSL_CERT_FILE=/tmp/onecli-combined-ca.pem');
+          return true;
+        },
+      }),
+    );
+    expect(explicit.args.filter((a) => a.startsWith('REQUESTS_CA_BUNDLE='))).toEqual([
+      'REQUESTS_CA_BUNDLE=/custom.pem',
+    ]);
+
+    const none = await compileContainerLaunchPlan(input());
+    expect(none.args.some((a) => a.startsWith('REQUESTS_CA_BUNDLE=') || a.startsWith('CURL_CA_BUNDLE='))).toBe(false);
+  });
 });

@@ -41,12 +41,30 @@ function extractCommand(text: string): string {
  * contains a `:` we assume it's pre-namespaced (non-chat-sdk adapters
  * that populate `senderId` directly) and leave it alone.
  */
+/**
+ * Content flag the runner sets on its own failure notices. The host passes
+ * a2a content through unchanged, so the flag reaches the receiving agent and
+ * a failure there sends no notice back (never answer an error with an error;
+ * upstream 48f5e067).
+ */
+export const FAILURE_NOTICE_FIELD = 'failureNotice';
+
+export function isFailureNotice(msg: MessageInRow): boolean {
+  try {
+    return JSON.parse(msg.content)?.[FAILURE_NOTICE_FIELD] === true;
+  } catch {
+    return false;
+  }
+}
+
 export function categorizeMessage(msg: MessageInRow): CommandInfo {
   const content = parseContent(msg.content);
   const text = (content.text || '').trim();
   const senderId = extractSenderId(msg, content);
 
-  if (!text.startsWith('/')) {
+  // A failure notice whose error text happens to start with a slash is never
+  // a command.
+  if (isFailureNotice(msg) || !text.startsWith('/')) {
     return { category: 'none', command: '', text, senderId };
   }
 
@@ -118,6 +136,8 @@ export interface RoutingContext {
    * row that arrives outside a task session.
    */
   taskFire: boolean;
+  /** Every row that woke this turn (trigger != 0) is a runner failure notice. */
+  failureNoticeWake?: boolean;
 }
 
 /**
@@ -125,13 +145,19 @@ export interface RoutingContext {
  * Uses the first message's routing fields.
  */
 export function extractRouting(messages: MessageInRow[]): RoutingContext {
-  const first = messages[0];
+  const waking = messages.filter((m) => m.trigger !== 0);
+  // A batch that opens with a failure notice routes by its first real waking
+  // message, so a failure answers the requester, not the agent that failed.
+  const preferred = messages[0] && isFailureNotice(messages[0]) ? waking.find((m) => !isFailureNotice(m)) : undefined;
+  const first = preferred ?? messages[0];
   return {
     platformId: first?.platform_id ?? null,
     channelType: first?.channel_type ?? null,
     threadId: first?.thread_id ?? null,
     inReplyTo: first?.id ?? null,
     taskFire: getSessionRouting().is_task === 1 && messages.length > 0 && messages.every((m) => m.kind === 'task'),
+    // Accumulated trigger=0 context rides along but did not wake the turn.
+    failureNoticeWake: waking.length > 0 && waking.every(isFailureNotice),
   };
 }
 

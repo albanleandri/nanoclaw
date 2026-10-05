@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { closeSessionDb, initTestSessionDb } from './db/connection.js';
+import { closeSessionDb, getOutboundDb, initTestSessionDb } from './db/connection.js';
 import { writeMessageOut } from './db/messages-out.js';
 import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import { orchestrationMessageIds, runPollLoop, writeOrchestrationResult } from './poll-loop.js';
@@ -228,11 +228,114 @@ describe('orchestration result metadata', () => {
         inputMessageIds: ['throw-message'],
         outcome: 'exception',
       });
-      expect(JSON.parse(rows[1].content)).toEqual({ text: 'Error: provider stream failed' });
+      expect(JSON.parse(rows[1].content)).toEqual({ text: 'Error: provider stream failed', failureNotice: true });
     } finally {
       controller.abort();
       await running;
       closeSessionDb();
     }
+  });
+  // Regression for the fork's thrown-error path (handoff item #14): it wrote
+  // "Error: ..." to the batch's route with no task-fire or agent-route check.
+  // A task fire's notice was undeliverable (task rows carry no route), and an
+  // a2a failure answered with a failure notice could bounce between agents.
+  describe('thrown-error failure notices', () => {
+    function throwingProvider(): AgentProvider {
+      return {
+        supportsNativeSlashCommands: false,
+        isSessionInvalid: () => false,
+        query: () => ({
+          push() {},
+          end() {},
+          abort() {},
+          events: {
+            async *[Symbol.asyncIterator]() {
+              throw new Error('provider stream failed');
+            },
+          },
+        }),
+      };
+    }
+
+    async function runUntilAcked(
+      id: string,
+    ): Promise<Array<{ kind: string; in_reply_to: string | null; content: string }>> {
+      const controller = new AbortController();
+      const running = runPollLoop({
+        provider: throwingProvider(),
+        providerName: 'throwing',
+        cwd: '/tmp',
+        stopSignal: controller.signal,
+      });
+      try {
+        const outbound = getOutboundDb();
+        await waitFor(
+          () =>
+            !!outbound.prepare("SELECT 1 FROM processing_ack WHERE message_id = ? AND status != 'processing'").get(id),
+        );
+        return outbound
+          .prepare("SELECT kind, in_reply_to, content FROM messages_out WHERE kind != 'system' ORDER BY seq")
+          .all() as Array<{ kind: string; in_reply_to: string | null; content: string }>;
+      } finally {
+        controller.abort();
+        await running;
+      }
+    }
+
+    it('logs a task fire failure to the run log instead of a chat notice', async () => {
+      const { inbound } = initTestSessionDb();
+      try {
+        inbound.prepare('INSERT INTO session_routing (id, is_task) VALUES (1, 1)').run();
+        inbound
+          .prepare(
+            `INSERT INTO messages_in (id, kind, timestamp, status, trigger, content)
+             VALUES ('task-1', 'task', datetime('now'), 'pending', 1, ?)`,
+          )
+          .run(JSON.stringify({ prompt: 'daily work' }));
+
+        const rows = await runUntilAcked('task-1');
+
+        expect(rows.map((row) => row.kind)).toEqual(['task_log']);
+        expect(JSON.parse(rows[0].content)).toEqual({ text: 'Error: provider stream failed' });
+      } finally {
+        closeSessionDb();
+      }
+    });
+
+    it('answers an agent route once, flagged and correlated by in_reply_to', async () => {
+      const { inbound } = initTestSessionDb();
+      try {
+        inbound
+          .prepare(
+            `INSERT INTO messages_in (id, kind, timestamp, status, trigger, platform_id, channel_type, content)
+             VALUES ('a2a-1', 'chat', datetime('now'), 'pending', 1, 'ag-requester', 'agent', ?)`,
+          )
+          .run(JSON.stringify({ text: 'please do the thing' }));
+
+        const rows = await runUntilAcked('a2a-1');
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0].in_reply_to).toBe('a2a-1');
+        expect(JSON.parse(rows[0].content)).toEqual({ text: 'Error: provider stream failed', failureNotice: true });
+      } finally {
+        closeSessionDb();
+      }
+    });
+
+    it('sends nothing back when the failed turn was woken only by a failure notice', async () => {
+      const { inbound } = initTestSessionDb();
+      try {
+        inbound
+          .prepare(
+            `INSERT INTO messages_in (id, kind, timestamp, status, trigger, platform_id, channel_type, content)
+             VALUES ('notice-1', 'chat', datetime('now'), 'pending', 1, 'ag-peer', 'agent', ?)`,
+          )
+          .run(JSON.stringify({ text: 'Error: peer failed', failureNotice: true }));
+
+        expect(await runUntilAcked('notice-1')).toEqual([]);
+      } finally {
+        closeSessionDb();
+      }
+    });
   });
 });

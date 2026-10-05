@@ -345,3 +345,43 @@ describe('taskFire gating (D3)', () => {
     expect(extractRouting([]).taskFire).toBe(false);
   });
 });
+
+// Runner failure notices (upstream 48f5e067): a turn woken only by notices
+// must send none back, or two failing agents ping-pong errors forever.
+describe('failure notice routing', () => {
+  function row(id: string, content: object, opts: { platformId?: string; trigger?: 0 | 1 } = {}): MessageInRow {
+    return {
+      id,
+      kind: 'chat',
+      content: JSON.stringify(content),
+      platform_id: opts.platformId ?? null,
+      channel_type: 'agent',
+      thread_id: null,
+      trigger: opts.trigger ?? 1,
+    } as MessageInRow;
+  }
+
+  it('marks a batch woken only by failure notices, ignoring trigger=0 context', () => {
+    const routing = extractRouting([
+      row('n1', { text: 'Error: x', failureNotice: true }),
+      row('ctx', { text: 'ambient' }, { trigger: 0 }),
+    ]);
+    expect(routing.failureNoticeWake).toBe(true);
+  });
+
+  it('routes a batch that opens with a notice by its first real waking message', () => {
+    const routing = extractRouting([
+      row('n1', { text: 'Error: x', failureNotice: true }, { platformId: 'ag-failed' }),
+      row('m2', { text: 'real request' }, { platformId: 'ag-requester' }),
+    ]);
+    expect(routing.failureNoticeWake).toBe(false);
+    expect(routing.platformId).toBe('ag-requester');
+    expect(routing.inReplyTo).toBe('m2');
+  });
+
+  it('never treats a failure notice as a command', () => {
+    const notice = row('n1', { text: '/clear went wrong', failureNotice: true });
+    expect(isClearCommand(notice)).toBe(false);
+    expect(categorizeMessage(notice).category).toBe('none');
+  });
+});

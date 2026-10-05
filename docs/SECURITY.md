@@ -249,7 +249,10 @@ Provider API-key credentials normally use OneCLI and are not stored in
 1. ensures the stable OneCLI agent identity using the agent-group ID;
 2. asks OneCLI to apply gateway policy and credential mounts/environment;
 3. refuses to spawn if the gateway contribution fails;
-4. supplies placeholder SDK auth values where the native SDK requires them.
+4. points `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` at the gateway CA bundle
+   OneCLI sets as `SSL_CERT_FILE` (Python `requests` and pip ignore
+   `SSL_CERT_FILE`), unless they are already set;
+5. supplies placeholder SDK auth values where the native SDK requires them.
 
 The gateway injects the real credential on an authorized outbound request.
 The supported gateway version is pinned exactly in `versions.json`; see

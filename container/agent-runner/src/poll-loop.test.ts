@@ -914,8 +914,10 @@ describe('auth error notification', () => {
     expect(getOutboundDb().prepare("SELECT status FROM processing_ack WHERE message_id = 'task-1'").get()).toEqual({
       status: 'provider-error',
     });
-    const out = getUndeliveredMessages();
-    expect(JSON.parse(out[0].content).text).toContain('Usage limit reached');
+    // Task rows carry no channel route (insertTaskRow writes NULLs), so a
+    // chat notice here was undeliverable; the host's re-arm note in the run
+    // log is the operator-visible record instead.
+    expect(getUndeliveredMessages().filter((m) => m.kind === 'chat')).toEqual([]);
   });
 
   // Only auth/quota re-arm. Other non-retryable errors can surface mid-turn

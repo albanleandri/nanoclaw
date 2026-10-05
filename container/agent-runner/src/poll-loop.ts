@@ -21,6 +21,7 @@ import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import {
   formatMessages,
   extractRouting,
+  FAILURE_NOTICE_FIELD,
   categorizeMessage,
   isClearCommand,
   isRunnerCommand,
@@ -262,6 +263,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
+    const batchStartSeq = maxSeq();
     let orchestrationResult: QueryResult | undefined;
     let orchestrationException = false;
     let orchestrationResultWritten = false;
@@ -307,15 +309,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         clearContinuation(providerStateKey);
       }
 
-      // Write error response so the user knows something went wrong
-      writeMessageOut({
-        id: generateId(),
-        kind: 'chat',
-        platform_id: routing.platformId,
-        channel_type: routing.channelType,
-        thread_id: routing.threadId,
-        content: JSON.stringify({ text: `Error: ${errMsg}` }),
-      });
+      // Tell the requester something went wrong. A task fire has no chat:
+      // its failure belongs in the series run log instead.
+      if (routing.taskFire) autoAppendTaskLog(`Error: ${errMsg}`, batchStartSeq);
+      writeFailureNotice(routing, `Error: ${errMsg}`);
       log(`Errored batch will be acked completed — ${processingIds.length} message(s), no redelivery`);
     } finally {
       clearCurrentInReplyTo();
@@ -700,16 +697,10 @@ export async function processQuery(
           sideEffectBoundaryCrossed: event.sideEffectBoundaryCrossed ?? null,
         };
         resolveInitialBatch('terminal-error', undefined, error);
-        writeMessageOut({
-          id: generateId(),
-          kind: 'chat',
-          platform_id: routing.platformId,
-          channel_type: routing.channelType,
-          thread_id: routing.threadId,
-          content: JSON.stringify({
-            text: `⚠️ Provider error${event.classification ? ` (${event.classification})` : ''}: ${event.message}`,
-          }),
-        });
+        writeFailureNotice(
+          routing,
+          `⚠️ Provider error${event.classification ? ` (${event.classification})` : ''}: ${event.message}`,
+        );
         break;
       } else if (event.type === 'result') {
         // A bare provider failure arrives as result TEXT, not as a classified
@@ -799,16 +790,7 @@ export async function processQuery(
     // the message is neither lost silently nor stuck processing in a live
     // container.
     resolveInitialBatch('silent-close');
-    writeMessageOut({
-      id: generateId(),
-      kind: 'chat',
-      platform_id: routing.platformId,
-      channel_type: routing.channelType,
-      thread_id: routing.threadId,
-      content: JSON.stringify({
-        text: '⚠️ The model provider ended the turn without producing a response. Please try again.',
-      }),
-    });
+    writeFailureNotice(routing, '⚠️ The model provider ended the turn without producing a response. Please try again.');
   }
 
   return {
@@ -841,28 +823,44 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
 
 function deliverErrorResult(text: string, routing: RoutingContext): void {
   log('Error result with no <message> envelope — delivering to channel');
+  writeFailureNotice(routing, text, { inReplyTo: true });
+}
+
+/**
+ * Does a failure on this route get a notice? Task fires report through their
+ * run log (and the host's re-arm note), not a chat. A route without a channel
+ * has nowhere to send it. A turn woken only by failure notices sends none, so
+ * an a2a or self-addressed failure chain stops after one notice instead of
+ * looping (upstream 48f5e067).
+ */
+export function sendsFailureNotice(routing: RoutingContext): boolean {
+  return !routing.taskFire && !!routing.platformId && !!routing.channelType && !routing.failureNoticeWake;
+}
+
+/**
+ * Write a runner failure notice to the batch's route, flagged so a receiving
+ * agent's own failure never answers it. Agent routes always carry
+ * in_reply_to: the host picks the a2a reply session by it.
+ */
+function writeFailureNotice(routing: RoutingContext, text: string, opts: { inReplyTo?: boolean } = {}): void {
+  if (!sendsFailureNotice(routing)) {
+    // The skipped notice may be the only record of the failure's reason.
+    log(`Failure notice not sent on this route: ${text}`);
+    return;
+  }
   writeMessageOut({
     id: generateId(),
-    in_reply_to: routing.inReplyTo,
+    ...(opts.inReplyTo || routing.channelType === 'agent' ? { in_reply_to: routing.inReplyTo } : {}),
     kind: 'chat',
     platform_id: routing.platformId,
     channel_type: routing.channelType,
     thread_id: routing.threadId,
-    content: JSON.stringify({ text }),
+    content: JSON.stringify({ text, [FAILURE_NOTICE_FIELD]: true }),
   });
 }
 
 function writeUsageLimitNotification(routing: RoutingContext): void {
-  writeMessageOut({
-    id: generateId(),
-    kind: 'chat',
-    platform_id: routing.platformId,
-    channel_type: routing.channelType,
-    thread_id: routing.threadId,
-    content: JSON.stringify({
-      text: "Usage limit reached. I can't process requests right now. Try again later.",
-    }),
-  });
+  writeFailureNotice(routing, "Usage limit reached. I can't process requests right now. Try again later.");
 }
 
 /**
@@ -903,22 +901,21 @@ function isBareProviderUsageLimitError(text: string): boolean {
 }
 
 function writeAuthErrorNotification(routing: RoutingContext): void {
+  // Check the route first: a suppressed notice must not start the cooldown
+  // that would then silence the next real chat's notice.
+  if (!sendsFailureNotice(routing)) {
+    log('Authentication failure notice not sent on this route');
+    return;
+  }
   if (!shouldNotifyAuthFailure()) {
     log('Authentication failure notification suppressed by session cooldown');
     return;
   }
-  writeMessageOut({
-    id: generateId(),
-    kind: 'chat',
-    platform_id: routing.platformId,
-    channel_type: routing.channelType,
-    thread_id: routing.threadId,
-    content: JSON.stringify({
-      text:
-        "⚠️ I couldn't reach Claude — authentication failed (my login may have expired). " +
-        'Your message was not processed. Please re-login on the host (run `claude` / `/login`) and try again.',
-    }),
-  });
+  writeFailureNotice(
+    routing,
+    "⚠️ I couldn't reach Claude — authentication failed (my login may have expired). " +
+      'Your message was not processed. Please re-login on the host (run `claude` / `/login`) and try again.',
+  );
 }
 
 // A bare authentication error surfaced as provider result text (mirrors
