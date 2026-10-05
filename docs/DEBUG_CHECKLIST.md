@@ -28,6 +28,12 @@ tail -n 200 logs/nanoclaw.error.log
 
 macOS launchd and the fallback launcher use those log files directly.
 
+Only one host may run per checkout. A host that finds a live `data/ncl.sock`
+exits with `another host instance is already serving ncl` before it runs
+migrations, reaps containers, or starts delivery. Stop the service before
+`pnpm run dev`. If no host is running and the error persists, something else
+is answering on that socket; remove the file only once you are sure.
+
 ## Agent did not reply
 
 Follow the durable path in order instead of guessing at provider failure.

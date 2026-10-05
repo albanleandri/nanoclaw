@@ -18,9 +18,47 @@ import { DEFAULT_SOCKET_PATH } from './socket-client.js';
 
 let server: net.Server | null = null;
 
+const PROBE_TIMEOUT_MS = 1000;
+
+/**
+ * Is a live server accepting on this socket path? No verdict within the
+ * timeout counts as live — when unsure, never steal.
+ */
+function probeLiveServer(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createConnection(socketPath);
+    const done = (live: boolean): void => {
+      probe.destroy();
+      resolve(live);
+    };
+    probe.once('connect', () => done(true));
+    probe.once('error', () => done(false));
+    probe.setTimeout(PROBE_TIMEOUT_MS, () => done(true));
+  });
+}
+
+/**
+ * Refuse to start while another host instance serves `ncl` from this checkout
+ * (e.g. `pnpm run dev` while the systemd service runs). Called first thing in
+ * main(): by the time startCliServer() runs, startup has already reaped
+ * "orphan" containers and started delivery and sweep, so a duplicate host
+ * would kill the live host's containers and deliver twice before noticing.
+ */
+export async function assertNoLiveCliServer(socketPath: string = DEFAULT_SOCKET_PATH): Promise<void> {
+  if (fs.existsSync(socketPath) && (await probeLiveServer(socketPath))) {
+    throw new Error(
+      `another host instance is already serving ncl at ${socketPath} — ` +
+        `refusing to start alongside it. Stop the other instance ` +
+        `(or remove the file if you are certain none is running) and restart.`,
+    );
+  }
+}
+
 export async function startCliServer(socketPath: string = DEFAULT_SOCKET_PATH): Promise<void> {
   // Stale-socket cleanup — a previous run that crashed may have left the
   // file behind, and net.createServer refuses to bind to an existing path.
+  // Only a socket nobody answers is stale (ported from upstream 31f7fda2).
+  await assertNoLiveCliServer(socketPath);
   try {
     fs.unlinkSync(socketPath);
   } catch (err) {

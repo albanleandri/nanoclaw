@@ -577,7 +577,9 @@ _before_ the agent wakes (`container/agent-runner/src/scheduling/
 task-script.ts`): 30s timeout, 1MB output cap, and its last stdout line must be
 JSON `{"wakeAgent": boolean, "data"?: unknown}`. `wakeAgent: false` (or a
 missing/malformed line, or a nonzero exit) acks the occurrence without waking
-the agent — a gated fire costs no tokens. `wakeAgent: true` folds `data` into
+the agent — a gated fire costs no tokens. The script runs in its own process
+group; on timeout or output overflow the whole group gets SIGTERM, then SIGKILL
+after 2s, so background children cannot outlive the budget and still act. `wakeAgent: true` folds `data` into
 the task prompt as `scriptOutput` before the agent sees it. A gate script also
 exempts the series from the recurrence-frequency limit (more than 4 fires/day
 is otherwise refused) — the whole point of a gate is that most fires find

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MAX_CLI_FRAME_BYTES } from './limits.js';
 import { register } from './registry.js';
 import { SocketTransport } from './socket-client.js';
-import { startCliServer, stopCliServer } from './socket-server.js';
+import { assertNoLiveCliServer, startCliServer, stopCliServer } from './socket-server.js';
 
 register({
   name: 'phase3-socket-ping',
@@ -72,6 +72,40 @@ describe('startCliServer socket permissions', () => {
     expect(response).toContain('safe size limit');
     expect(response).not.toContain(sentinel);
     expect(Buffer.byteLength(response)).toBeLessThan(MAX_CLI_FRAME_BYTES);
+  });
+});
+
+// Ported from upstream 31f7fda2. Before this, a second host started in the same
+// checkout unlinked the live socket and took over every `ncl` call; it had also
+// already reaped the first host's containers by the time it got here.
+describe('startCliServer single-bind', () => {
+  it('refuses to take over a socket a live server is answering on', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-sock-'));
+    socketPath = path.join(dir, 'ncl.sock');
+    const other = net.createServer();
+    await new Promise<void>((resolve) => other.listen(socketPath!, resolve));
+    try {
+      await expect(assertNoLiveCliServer(socketPath)).rejects.toThrow(/another host instance/);
+      await expect(startCliServer(socketPath)).rejects.toThrow(/another host instance/);
+      expect(fs.existsSync(socketPath)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => other.close(() => resolve()));
+    }
+  });
+
+  it('reclaims a stale socket path nobody answers on', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-sock-'));
+    socketPath = path.join(dir, 'ncl.sock');
+    fs.writeFileSync(socketPath, '');
+
+    await expect(assertNoLiveCliServer(socketPath)).resolves.toBeUndefined();
+    await startCliServer(socketPath);
+    const response = await new SocketTransport(socketPath).sendFrame({
+      id: 'after-stale',
+      command: 'phase3-socket-ping',
+      args: {},
+    });
+    expect(response).toEqual({ id: 'after-stale', ok: true, data: { pong: true } });
   });
 });
 

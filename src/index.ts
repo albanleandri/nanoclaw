@@ -74,7 +74,7 @@ import './jobs/agent-task-actions.js';
 import './session-search/action.js';
 import './audit/host-bridge.js';
 import './orchestration/host-bridge.js';
-import { startCliServer, stopCliServer } from './cli/socket-server.js';
+import { assertNoLiveCliServer, startCliServer, stopCliServer } from './cli/socket-server.js';
 
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
 import { initChannelAdapters, teardownChannelAdapters } from './channels/channel-registry.js';
@@ -82,6 +82,11 @@ import { initChannelAdapters, teardownChannelAdapters } from './channels/channel
 async function main(): Promise<void> {
   hardenProjectSecretFiles(process.cwd());
   log.info('NanoClaw starting');
+
+  // Before any side effect: a second host in this checkout must not run
+  // migrations, reap the live host's containers, or start a second delivery
+  // loop. The ncl socket is the liveness signal.
+  await assertNoLiveCliServer();
 
   // 0. Circuit breaker — backoff on rapid restarts
   await enforceStartupBackoff();
