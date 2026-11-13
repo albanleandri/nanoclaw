@@ -26,5 +26,8 @@ describe('container/Dockerfile runtime baseline', () => {
     expect(dockerfile).toContain('test "$(bun --version)" = "${BUN_VERSION}"');
     expect(dockerfile).toContain('ARG PNPM_VERSION=10.34.9');
     expect(dockerfile).toContain('ARG NPM_VERSION=11.21.2');
+    expect(dockerfile).toContain('npm install -g pnpm@${PNPM_VERSION}');
+    expect(dockerfile).toContain('test "$(pnpm --version)" = "${PNPM_VERSION}"');
+    expect(dockerfile).toContain('test "$(npm --version)" = "${NPM_VERSION}"');
   });
 });

@@ -119,13 +119,19 @@ ENV PATH="$PNPM_HOME:$PATH"
 # bin chmod — the agent then crashes at runtime with "native binary not
 # installed". Keep this in lockstep with package.json's `packageManager`.
 ARG PNPM_VERSION=10.34.9
-RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
 # The npm in node:22-slim (10.x) bundles libraries that lag their security
 # releases; npm 11.21.2 bundles the patched ones. Drop this pin once the
 # base image's npm has caught up.
 ARG NPM_VERSION=11.21.2
-RUN npm install -g npm@${NPM_VERSION}
+# Install pnpm as a real global binary rather than a Corepack shim: Corepack's
+# prepared cache belongs to root during the build, so the runtime `node` user
+# would otherwise fetch an unpinned pnpm on first use.
+RUN npm install -g npm@${NPM_VERSION} && \
+    corepack disable && \
+    npm install -g pnpm@${PNPM_VERSION} && \
+    test "$(pnpm --version)" = "${PNPM_VERSION}" && \
+    test "$(npm --version)" = "${NPM_VERSION}"
 
 # Global Node CLIs the agent invokes at runtime live in cli-tools.json so a
 # skill can add one with a json-merge instead of editing this Dockerfile.
