@@ -12,7 +12,12 @@ import {
   CardText,
   Actions,
   Button,
+  Chart,
+  Divider,
+  Field,
+  Fields,
   LinkButton,
+  Table,
   type CardChild,
   type CardElement,
   type Adapter,
@@ -24,6 +29,7 @@ import { SqliteStateAdapter } from '../state-sqlite.js';
 import { registerWebhookAdapter } from '../webhook-server.js';
 import { getAskQuestionRender } from '../db/sessions.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
+import { cardPartProblems, isCardPart, isRecord, type CardPart } from './card-parts.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage } from './adapter.js';
 
 const multiSelectQuestionState = new Map<string, Set<string>>();
@@ -193,6 +199,56 @@ export function splitForLimit(text: string, limit: number): string[] {
   }
   if (remaining.length > 0) chunks.push(remaining);
   return chunks;
+}
+
+/** Rebuild a validated part from its allowed fields only. */
+function buildCardPart(part: CardPart): CardChild {
+  // Chat SDK builders have precise variant types; props are validated before
+  // this function and narrowed by the part discriminator below.
+  const props = (isRecord(part.props) ? part.props : {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  switch (part.type) {
+    case 'Text':
+      return props.style ? CardText(props.content, { style: props.style }) : CardText(props.content);
+    case 'Fields':
+      return Fields(
+        (part.children as Array<{ props: { label: string; value: string | number } }>).map((field) =>
+          Field({ label: field.props.label, value: String(field.props.value) }),
+        ),
+      );
+    case 'Table':
+      return Table({
+        headers: props.headers,
+        rows: (props.rows as Array<Array<string | number>>).map((row) => row.map(String)),
+        ...(props.align ? { align: props.align } : {}),
+        ...(props.caption ? { caption: props.caption } : {}),
+      });
+    case 'Chart': {
+      const chart = props.chart;
+      if (chart.type === 'pie') {
+        const segments = (chart.segments as Array<{ label: string; value: number }>).map(({ label, value }) => ({
+          label,
+          value,
+        }));
+        return Chart({ title: props.title, chart: { type: 'pie', segments } });
+      }
+      const categories = chart.categories as string[];
+      return Chart({
+        title: props.title,
+        chart: {
+          type: chart.type,
+          categories,
+          ...(chart.xLabel ? { xLabel: chart.xLabel } : {}),
+          ...(chart.yLabel ? { yLabel: chart.yLabel } : {}),
+          series: (chart.series as Array<{ name: string; values: number[] }>).map((series) => ({
+            name: series.name,
+            data: series.values.map((value, i) => ({ label: categories[i], value })),
+          })),
+        },
+      });
+    }
+    default:
+      return Divider();
+  }
 }
 
 export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter {
@@ -555,8 +611,14 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           cardChildren.push(CardText(cardSpec.description));
         }
         if (Array.isArray(cardSpec.children)) {
+          // Anything in the container can write an outbound row, so repeat
+          // the runner's allowlist and size validation at the trust boundary.
+          const problems = cardPartProblems(cardSpec.children);
+          if (problems.length > 0) throw new Error(`send_card card refused: ${problems.join('; ')}`);
           for (const child of cardSpec.children) {
-            if (typeof child === 'string' && child) {
+            if (isCardPart(child)) {
+              cardChildren.push(buildCardPart(child));
+            } else if (typeof child === 'string' && child) {
               cardChildren.push(CardText(child));
             } else if (
               child &&

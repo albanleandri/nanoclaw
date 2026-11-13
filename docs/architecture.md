@@ -116,6 +116,13 @@ outbound row in place. The container reports inbound processing state through
 `outbound.db.processing_ack`; host sweep reconciles those acknowledgements
 back into `messages_in.status`.
 
+Display-only `send_card` rows may carry bounded Text, Fields, Table, Chart and
+Divider parts. The runner validates the allowlist and per-card limits before
+enqueueing, and the host validates again before rebuilding the Chat SDK card
+from known fields. Callback-capable or unknown parts never cross the channel
+boundary; platforms without native table/chart rendering use the SDK's text
+fallback.
+
 Message sequence numbers use disjoint lanes across the session:
 
 - host-created rows use even `seq` values;

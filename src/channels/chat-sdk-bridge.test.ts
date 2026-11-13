@@ -199,6 +199,49 @@ describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
     expect(msg.card).toBeDefined();
   });
 
+  it('renders validated fields, tables, charts and dividers with Chat SDK builders', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: {
+        type: 'card',
+        card: {
+          title: 'Market screen',
+          children: [
+            { type: 'Fields', children: [{ type: 'Field', props: { label: 'Market', value: 'CH' } }] },
+            { type: 'Table', props: { headers: ['Ticker', 'Score'], rows: [['NESN', 8.4]] } },
+            {
+              type: 'Chart',
+              props: {
+                title: 'Scores',
+                chart: { type: 'bar', categories: ['NESN'], series: [{ name: 'Score', values: [8.4] }] },
+              },
+            },
+            { type: 'Divider' },
+          ],
+        },
+      },
+    });
+
+    const msg = calls[0].message as { card?: { children?: Array<{ type?: string }> } };
+    expect(msg.card?.children?.map((child) => child.type)).toEqual(['fields', 'table', 'chart', 'divider']);
+  });
+
+  it('refuses malformed structured parts at the host boundary', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({ adapter: stubAdapter({ postMessage }), supportsThreads: false });
+
+    await expect(
+      bridge.deliver('telegram:42', null, {
+        kind: 'chat-sdk',
+        content: { type: 'card', card: { children: [{ type: 'Button', props: { label: 'Approve' } }] } },
+      }),
+    ).rejects.toThrow('unknown part "Button"');
+    expect(calls).toHaveLength(0);
+  });
+
   it('drops actions without url (send_card is fire-and-forget; non-URL buttons would have nowhere to land)', async () => {
     const { calls, postMessage } = makePostCapture();
     const bridge = createChatSdkBridge({

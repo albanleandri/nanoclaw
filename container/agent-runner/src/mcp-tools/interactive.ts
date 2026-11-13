@@ -8,6 +8,7 @@ import { findQuestionResponse, markCompleted } from '../db/messages-in.js';
 import { getCurrentInReplyTo } from '../current-batch.js';
 import { writeMessageOut } from '../db/messages-out.js';
 import { getSessionRouting } from '../db/session-routing.js';
+import { cardPartProblems } from './card-parts.js';
 import { registerTools } from './server.js';
 import type { McpToolDefinition } from './types.js';
 
@@ -55,6 +56,22 @@ export function keepLinkActions(card: Record<string, unknown>): { card: Record<s
   });
   return { card: { ...card, actions: kept }, dropped: card.actions.length - kept.length };
 }
+
+/**
+ * Compact schema advertised on every request. Detailed part fields live in
+ * the tool instructions and validation errors name the child to repair.
+ */
+const CARD_PART_SCHEMA = Object.freeze({
+  type: 'object' as const,
+  description:
+    'A card part: { type, props } (Fields: { type, children: Field parts }). Fields per part are in the send_card instructions.',
+  properties: {
+    type: { type: 'string' as const, enum: ['Text', 'Fields', 'Table', 'Chart', 'Divider'] },
+    props: { type: 'object' as const },
+    children: { type: 'array' as const, items: { type: 'object' as const } },
+  },
+  required: ['type'],
+});
 
 export const askUserQuestion: McpToolDefinition = {
   tool: {
@@ -165,7 +182,7 @@ export const sendCard: McpToolDefinition = {
   tool: {
     name: 'send_card',
     description:
-      'Send a display-only card (title, description, children, optional web-link buttons) to the current conversation. ' +
+      'Send a display-only card (title, description, text/structured children, optional web-link buttons) to the current conversation. ' +
       'Returns immediately. Never renders callback buttons: to let the user choose something, use ask_user_question.',
     inputSchema: {
       type: 'object' as const,
@@ -173,8 +190,24 @@ export const sendCard: McpToolDefinition = {
         card: {
           type: 'object',
           description:
-            'Card with title, description, children (strings or { text }), and optional top-level actions. ' +
+            'Card with title, description, children (text or Text/Fields/Table/Chart/Divider parts), and optional top-level actions. ' +
             'Each action is { label, url, style? } where url is an http(s) web link; other actions are dropped.',
+          properties: {
+            title: { type: 'string' },
+            description: { type: 'string' },
+            children: {
+              type: 'array',
+              description:
+                'Text plus up to 10 structured parts: at most 10 fields, 1 table (30 rows, 6 columns), and 2 charts. Invalid parts refuse the whole card.',
+              items: {
+                anyOf: [
+                  { type: 'string' },
+                  { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+                  CARD_PART_SCHEMA,
+                ],
+              },
+            },
+          },
         },
         fallbackText: { type: 'string', description: 'Plain-text version for channels that render cards as text' },
       },
@@ -186,6 +219,8 @@ export const sendCard: McpToolDefinition = {
     if (!card) return err('card is required');
 
     const { card: sentCard, dropped } = keepLinkActions(card);
+    const problems = cardPartProblems(Array.isArray(sentCard.children) ? sentCard.children : []);
+    if (problems.length > 0) return err(`Card not sent. Fix these and send it again: ${problems.join('; ')}`);
     const id = generateId();
     const r = routing();
 
