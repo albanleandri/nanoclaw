@@ -14,7 +14,7 @@ Host and container each have their own package tree:
   pnpm-lock.yaml              host deps (channels, Chat SDK, Baileys, better-sqlite3, etc.)
   pnpm-workspace.yaml         minimumReleaseAge + onlyBuiltDependencies policy
 
-/container/agent-runner/      Bun 1.3+
+/container/agent-runner/      Bun 1.4+
   bun.lock                    agent-runner runtime deps (Claude Agent SDK, MCP SDK, zod, etc.)
   package.json                @types/bun, typescript devDeps for type-checking
 ```
@@ -26,7 +26,7 @@ The container image also has pnpm + Node inside for global CLIs (`@anthropic-ai/
 | Tree         | Lockfile                          | Manager  | Regenerate after dep change                |
 | ------------ | --------------------------------- | -------- | ------------------------------------------ |
 | Host         | `pnpm-lock.yaml`                  | pnpm 10  | `pnpm install`                             |
-| Agent-runner | `container/agent-runner/bun.lock` | Bun 1.3+ | `cd container/agent-runner && bun install` |
+| Agent-runner | `container/agent-runner/bun.lock` | Bun 1.4+ | `cd container/agent-runner && bun install` |
 
 Both are committed. CI and the Dockerfile run `--frozen-lockfile` variants — any drift between `package.json` and lockfile fails the build.
 
@@ -41,11 +41,15 @@ Both are committed. CI and the Dockerfile run `--frozen-lockfile` variants — a
 
 ## Image build surface
 
-`container/Dockerfile` is a single-stage build on `node:22-slim`:
+`container/Dockerfile` uses an exact `node:22.23.4-slim` runtime base:
 
-- **Pinned runtime/tool versions** — `BUN_VERSION`, `PNPM_VERSION`, and
-  `RTK_VERSION` are Dockerfile arguments; global Node CLIs are pinned in
+- **Pinned base** — tag and multi-arch digest are bumped together, at or above
+  the minimum in `setup/lib/node-version.sh`.
+- **Pinned runtime/tool versions** — `BUN_VERSION`, `PNPM_VERSION`,
+  `NPM_VERSION`, and `RTK_VERSION` are Dockerfile arguments; global Node CLIs are pinned in
   `container/cli-tools.json`. Bump them deliberately in reviewed changes.
+- **PDF extraction** — `poppler-utils` supplies `pdftotext`/`pdftoppm` for
+  agent tools that inspect PDFs.
 - **Per-group images** — a group with its own apt/npm packages runs
   `<base>:<group-id>`, built FROM the base image. After a default `latest`
   build, `container/build.sh` runs `scripts/rebuild-group-images.ts` so those

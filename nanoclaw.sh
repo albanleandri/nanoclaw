@@ -355,6 +355,17 @@ fi
 # wipe it.
 export NANOCLAW_BOOTSTRAPPED=1
 
+# setup:auto registers the service with this shell's node. Ensure it is the
+# patched Node setup.sh accepted (which can be a keg-only node@22 on macOS).
+# shellcheck source=setup/lib/node-version.sh
+source "$PROJECT_ROOT/setup/lib/node-version.sh"
+if ! node_use_patched; then
+  printf '\n  %s %s\n\n' "$(red '✗')" \
+    "No Node on PATH meets the minimum (${NODE_MINIMUMS// / / }). Switch to one of these, then re-run."
+  write_abort_entry bootstrap node-below-minimum
+  exit 1
+fi
+
 # setup.sh may have just installed pnpm via npm into a prefix that's not on
 # our PATH (custom `npm config set prefix`, or the default prefix missing
 # from the shell's login PATH). Its PATH mutation doesn't propagate back

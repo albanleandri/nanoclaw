@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
 COPY native-memory-fs/memory-fs.c /tmp/memory-fs.c
 RUN gcc -std=c11 -O2 -Wall -Wextra -Werror /tmp/memory-fs.c -o /tmp/nanoclaw-memory-fs
 
-FROM node:22-slim
+# Pinned by digest so a rebuild cannot reuse a cached older base; bump tag and digest together.
+FROM node:22.23.4-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 
 COPY --from=memory-fs-builder /tmp/nanoclaw-memory-fs /usr/local/bin/nanoclaw-memory-fs
 
@@ -30,11 +31,12 @@ ARG INSTALL_CJK_FONTS=false
 # all users. The global Node CLIs (claude-code, agent-browser, vercel, codex) are
 # pinned in cli-tools.json so a skill can add one with a json-merge; Bun (the
 # runtime) is pinned here because it installs from a different source.
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.4
 
 # ---- System dependencies -----------------------------------------------------
 # tini: correct PID 1 / signal forwarding so outbound.db writes finalize on
 # SIGTERM instead of being orphaned by the shell entrypoint.
+# poppler-utils: pdftotext/pdftoppm let agent tools inspect PDF documents.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -61,6 +63,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         unzip \
         python3 \
         python3-pip \
+        poppler-utils \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
@@ -83,9 +86,11 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # ---- Bun runtime -------------------------------------------------------------
 # Install via the official script (handles multi-arch detection), then move
 # the binary to /usr/local/bin so the non-root `node` user can execute it.
+# The version check fails the build if the installer did not honor the pin.
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
-    rm -rf /root/.bun
+    rm -rf /root/.bun && \
+    test "$(bun --version)" = "${BUN_VERSION}"
 
 # ---- agent-runner deps -------------------------------------------------------
 # Deps are cached independently of CLI versions. Source is NOT baked in —
@@ -113,8 +118,14 @@ ENV PATH="$PNPM_HOME:$PATH"
 # silently skips claude-code's native-binary postinstall and agent-browser's
 # bin chmod — the agent then crashes at runtime with "native binary not
 # installed". Keep this in lockstep with package.json's `packageManager`.
-ARG PNPM_VERSION=10.34.5
+ARG PNPM_VERSION=10.34.9
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# The npm in node:22-slim (10.x) bundles libraries that lag their security
+# releases; npm 11.21.2 bundles the patched ones. Drop this pin once the
+# base image's npm has caught up.
+ARG NPM_VERSION=11.21.2
+RUN npm install -g npm@${NPM_VERSION}
 
 # Global Node CLIs the agent invokes at runtime live in cli-tools.json so a
 # skill can add one with a json-merge instead of editing this Dockerfile.
