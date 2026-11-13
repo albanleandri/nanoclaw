@@ -4,7 +4,7 @@
  *
  * Fixes: Root→system systemd, WSL nohup fallback, no `|| true` swallowing errors.
  */
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -220,15 +220,24 @@ function setupLinux(projectRoot: string, nodePath: string, homeDir: string): voi
  * Kill any orphaned nanoclaw node processes left from previous runs or debugging.
  * Prevents connection conflicts when two instances connect to the same channel simultaneously.
  */
-function killOrphanedProcesses(projectRoot: string): void {
+export function killOrphanedProcesses(projectRoot: string): void {
   try {
-    execSync(`pkill -f '${projectRoot}/dist/index\\.js' || true`, {
-      stdio: 'ignore',
-    });
-    log.info('Stopped any orphaned nanoclaw processes');
+    // No shell, and the folder is escaped before becoming a regular
+    // expression: install paths may contain spaces, quotes or metacharacters.
+    execFileSync('pkill', ['-f', hostProcessPattern(projectRoot)], { stdio: 'ignore' });
   } catch {
-    // pkill not available or no orphans
+    // Exit 1 means no matching process. A missing pkill stays best effort.
   }
+  log.info('Stopped any orphaned nanoclaw processes');
+}
+
+/** Match only this install's `<node> <root>/dist/index.js` host process. */
+export function hostProcessPattern(projectRoot: string): string {
+  return `(^|[[:space:]])${escapeRegex(projectRoot)}/dist/index\\.js([[:space:]]|$)`;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

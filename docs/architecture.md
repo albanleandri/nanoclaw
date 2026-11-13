@@ -103,6 +103,9 @@ Each SQLite file has one normal writer side: the host owns `inbound.db`, while
 runner processes own `outbound.db`. A narrow exception lets the host write an
 immediate control acknowledgement to `outbound.db` only while the container is
 confirmed stopped. Writers serialize allocation with `BEGIN IMMEDIATE`.
+Within the container, the runner, MCP subprocess, and each `ncl` invocation
+share the outbound writer side; every opener sets `busy_timeout` before its
+first schema-touching pragma so a short-lived peer write lock is waited out.
 Session DBs use `journal_mode=DELETE`, not WAL, because WAL shared-memory
 visibility is not reliable across container bind mounts. Host inbound writes
 use open-write-close semantics for the same reason.
@@ -119,7 +122,9 @@ Message sequence numbers use disjoint lanes across the session:
 - runner-created rows use odd `seq` values.
 
 That parity allows tools such as edit/reaction to reference either direction
-without ambiguous IDs. It does not establish global chronology across the two
+without ambiguous IDs. Inbound row IDs are namespaced with the agent-group ID;
+delivery removes that internal suffix from edit/reaction targets before calling
+the channel adapter. It does not establish global chronology across the two
 SQLite files: inbound allocation reads `messages_in`, while runner outbound
 allocation observes both tables. Use each row's timestamp and direction when
 reconstructing a cross-direction timeline.
@@ -240,7 +245,9 @@ The host materializes effective provider-native project documents (`CLAUDE.md`
 and `AGENTS.md`) below each private session directory and mounts them read-only
 over the durable group workspace. This prevents concurrent sessions with
 different compiled capability plans from overwriting each other's instructions.
-Legacy group-level documents remain compatibility artifacts. Provider-specific state and auth
+The shared runtime core tells every provider to answer in the current
+message's language unless the requester or a standing instruction names a
+different one. Legacy group-level documents remain compatibility artifacts. Provider-specific state and auth
 mounts are contributed by provider adapters. API-key profiles normally remain
 behind OneCLI and are not stored in runtime JSON; explicitly enabled host-file
 or direct-secret modes are mounted into the container.

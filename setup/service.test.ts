@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'path';
 
 import { getLaunchdLabel } from '../src/install-slug.js';
+import { hostProcessPattern } from './service.js';
 
 /**
  * Tests for service configuration generation.
@@ -11,11 +12,7 @@ import { getLaunchdLabel } from '../src/install-slug.js';
  */
 
 // Helper: generate a plist string the same way service.ts does
-function generatePlist(
-  nodePath: string,
-  projectRoot: string,
-  homeDir: string,
-): string {
+function generatePlist(nodePath: string, projectRoot: string, homeDir: string): string {
   const label = getLaunchdLabel(projectRoot);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -49,12 +46,7 @@ function generatePlist(
 </plist>`;
 }
 
-function generateSystemdUnit(
-  nodePath: string,
-  projectRoot: string,
-  homeDir: string,
-  isSystem: boolean,
-): string {
+function generateSystemdUnit(nodePath: string, projectRoot: string, homeDir: string, isSystem: boolean): string {
   return `[Unit]
 Description=NanoClaw Personal Assistant
 After=network.target
@@ -84,29 +76,17 @@ describe('plist generation', () => {
   });
 
   it('uses the correct node path', () => {
-    const plist = generatePlist(
-      '/opt/node/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-    );
+    const plist = generatePlist('/opt/node/bin/node', '/home/user/nanoclaw', '/home/user');
     expect(plist).toContain('<string>/opt/node/bin/node</string>');
   });
 
   it('points to dist/index.js', () => {
-    const plist = generatePlist(
-      '/usr/local/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-    );
+    const plist = generatePlist('/usr/local/bin/node', '/home/user/nanoclaw', '/home/user');
     expect(plist).toContain('/home/user/nanoclaw/dist/index.js');
   });
 
   it('sets log paths', () => {
-    const plist = generatePlist(
-      '/usr/local/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-    );
+    const plist = generatePlist('/usr/local/bin/node', '/home/user/nanoclaw', '/home/user');
     expect(plist).toContain('nanoclaw.log');
     expect(plist).toContain('nanoclaw.error.log');
   });
@@ -114,56 +94,29 @@ describe('plist generation', () => {
 
 describe('systemd unit generation', () => {
   it('user unit uses default.target', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-      false,
-    );
+    const unit = generateSystemdUnit('/usr/bin/node', '/home/user/nanoclaw', '/home/user', false);
     expect(unit).toContain('WantedBy=default.target');
   });
 
   it('system unit uses multi-user.target', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-      true,
-    );
+    const unit = generateSystemdUnit('/usr/bin/node', '/home/user/nanoclaw', '/home/user', true);
     expect(unit).toContain('WantedBy=multi-user.target');
   });
 
   it('contains restart policy', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-      false,
-    );
+    const unit = generateSystemdUnit('/usr/bin/node', '/home/user/nanoclaw', '/home/user', false);
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('RestartSec=5');
   });
 
   it('uses KillMode=process to preserve detached children', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
-      '/home/user/nanoclaw',
-      '/home/user',
-      false,
-    );
+    const unit = generateSystemdUnit('/usr/bin/node', '/home/user/nanoclaw', '/home/user', false);
     expect(unit).toContain('KillMode=process');
   });
 
   it('sets correct ExecStart', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
-      '/srv/nanoclaw',
-      '/home/user',
-      false,
-    );
-    expect(unit).toContain(
-      'ExecStart=/usr/bin/node /srv/nanoclaw/dist/index.js',
-    );
+    const unit = generateSystemdUnit('/usr/bin/node', '/srv/nanoclaw', '/home/user', false);
+    expect(unit).toContain('ExecStart=/usr/bin/node /srv/nanoclaw/dist/index.js');
   });
 });
 
@@ -184,5 +137,13 @@ echo $! > ${JSON.stringify(pidFile)}`;
     expect(wrapper).toContain('nohup');
     expect(wrapper).toContain(nodePath);
     expect(wrapper).toContain('nanoclaw.pid');
+  });
+});
+
+describe('orphan host process pattern', () => {
+  it('escapes regex characters and requires process-argument boundaries', () => {
+    expect(hostProcessPattern('/srv/Nano Claw.v2+[test]')).toBe(
+      '(^|[[:space:]])/srv/Nano Claw\\.v2\\+\\[test\\]/dist/index\\.js([[:space:]]|$)',
+    );
   });
 });

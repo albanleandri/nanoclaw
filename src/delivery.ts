@@ -453,7 +453,7 @@ export async function deliverMessage(
     msg.platform_id,
     msg.thread_id,
     msg.kind,
-    msg.content,
+    withPlatformMessageId(content, msg.content, session.agent_group_id),
     files,
   );
   log.info('Message delivered', {
@@ -467,6 +467,20 @@ export async function deliverMessage(
   clearOutbox(session.agent_group_id, session.id, msg.id);
 
   return platformMsgId;
+}
+
+/**
+ * The router stores inbound rows as `<platform message id>:<agent group id>`.
+ * edit_message and add_reaction resolve that row id, but the platform only
+ * knows the unsuffixed id. Strip exactly this session's suffix before the
+ * operation reaches Telegram or another channel adapter.
+ */
+export function withPlatformMessageId(content: unknown, raw: string, agentGroupId: string): string {
+  if (!content || typeof content !== 'object') return raw;
+  const { operation, messageId } = content as { operation?: unknown; messageId?: unknown };
+  const suffix = `:${agentGroupId}`;
+  if (!operation || typeof messageId !== 'string' || !messageId.endsWith(suffix)) return raw;
+  return JSON.stringify({ ...content, messageId: messageId.slice(0, -suffix.length) });
 }
 
 /**

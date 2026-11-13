@@ -77,12 +77,18 @@ export function getInboundDb(): Database {
   return _inbound;
 }
 
-/** Outbound DB — container owns this file (sole writer). */
-export function getOutboundDb(): Database {
+/**
+ * Outbound DB, written by several container processes: the runner, the MCP
+ * server and each `ncl` call. `dbPath` (tests only) applies to the first open.
+ */
+export function getOutboundDb(dbPath = DEFAULT_OUTBOUND_PATH): Database {
   if (!_outbound) {
-    _outbound = new Database(DEFAULT_OUTBOUND_PATH);
-    _outbound.exec('PRAGMA journal_mode = DELETE');
+    _outbound = new Database(dbPath);
+    // bun:sqlite defaults busy_timeout to 0. Set it before the first schema
+    // read, otherwise journal_mode fails immediately while another writer
+    // (the MCP server or ncl) is holding the outbound lock.
     _outbound.exec('PRAGMA busy_timeout = 5000');
+    _outbound.exec('PRAGMA journal_mode = DELETE');
     _outbound.exec('PRAGMA foreign_keys = ON');
     // Lightweight forward-compat: session_state was added after the initial
     // v2 schema, so older session DBs don't have it. Create it on demand
