@@ -72,4 +72,16 @@ describe('persistent OneCLI files', () => {
     expect(() => stageOneCliFile(dir, 'stub', 'sensitive')).toThrow('full');
     expect(fs.readdirSync(path.join(dir, 'onecli'))).toEqual(['.pending-unrelated']);
   });
+
+  it('preserves the primary publish error when temporary cleanup also fails', () => {
+    fs.mkdirSync(path.join(dir, 'onecli'), { mode: 0o700 });
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('primary write failure'), { code: 'ENOSPC' });
+    });
+    vi.spyOn(fs, 'rmSync').mockImplementation(() => {
+      throw Object.assign(new Error('cleanup failure'), { code: 'EIO' });
+    });
+
+    expect(() => stageOneCliFile(dir, 'stub', 'sensitive')).toThrow('primary write failure');
+  });
 });

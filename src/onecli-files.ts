@@ -57,37 +57,45 @@ export function stageOneCliFile(dataDir: string, kind: 'ca' | 'combined' | 'stub
   const temporary = path.join(directory, `.pending-${randomUUID()}`);
   const fd = fs.openSync(temporary, 'wx', mode);
   try {
-    try {
-      fs.writeFileSync(fd, content);
-      fs.fchmodSync(fd, mode);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const published = (() => {
       try {
-        fs.renameSync(temporary, destination);
-        break;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(code ?? '')) throw error;
-        try {
-          if (validate()) return destination;
-          fs.unlinkSync(destination);
-        } catch (validationError) {
-          if ((validationError as NodeJS.ErrnoException).code !== 'ENOENT') throw validationError;
-        }
-        if (attempt === 2) throw new Error(`Could not publish OneCLI staged file: ${destination}`, { cause: error });
+        fs.writeFileSync(fd, content);
+        fs.fchmodSync(fd, mode);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
       }
-    }
-    if (!validate()) throw new Error(`OneCLI staged file validation failed after publish: ${destination}`);
-    return destination;
-  } finally {
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          fs.renameSync(temporary, destination);
+          break;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(code ?? '')) throw error;
+          try {
+            if (validate()) return destination;
+            fs.unlinkSync(destination);
+          } catch (validationError) {
+            if ((validationError as NodeJS.ErrnoException).code !== 'ENOENT') throw validationError;
+          }
+          if (attempt === 2) throw new Error(`Could not publish OneCLI staged file: ${destination}`, { cause: error });
+        }
+      }
+      if (!validate()) throw new Error(`OneCLI staged file validation failed after publish: ${destination}`);
+      return destination;
+    })();
+    fs.rmSync(temporary, { force: true });
+    return published;
+  } catch (error) {
+    // Preserve the publish/write error if cleanup also fails. A cleanup error
+    // after an otherwise successful publish is still surfaced by the first
+    // rmSync above.
     try {
-      fs.unlinkSync(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Best effort only while another error is already in flight.
     }
+    throw error;
   }
 }
