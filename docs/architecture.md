@@ -116,6 +116,11 @@ outbound row in place. The container reports inbound processing state through
 `outbound.db.processing_ack`; host sweep reconciles those acknowledgements
 back into `messages_in.status`.
 
+OneCLI-provided CA bundles and credential stubs are content-addressed below
+`data/onecli/` before they are mounted read-only. They therefore survive host
+restarts and temporary-directory cleanup; changed content receives a new path
+without invalidating an existing container's bind mount.
+
 Display-only `send_card` rows may carry bounded Text, Fields, Table, Chart and
 Divider parts. The runner validates the allowlist and per-card limits before
 enqueueing, and the host validates again before rebuilding the Chat SDK card

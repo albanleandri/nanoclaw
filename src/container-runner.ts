@@ -77,6 +77,7 @@ import {
   writeSessionRouting,
 } from './session-manager.js';
 import type { AgentGroup, Session } from './types.js';
+import { applyOneCliContainerConfig } from './onecli.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
@@ -921,7 +922,8 @@ async function buildContainerLaunchPlan(
     agentName: agentGroup.name,
     oauthCredentialsAvailable,
     ensureAgent: (input) => onecli.ensureAgent(input),
-    applyGateway: (args, agent) => onecli.applyContainerConfig(args, { addHostMapping: false, agent }),
+    applyGateway: (args, agent) =>
+      applyOneCliContainerConfig(args, agent ?? '', { addHostMapping: false, client: onecli, dataDir: DATA_DIR }),
   });
   log.info('OneCLI gateway applied', { containerName });
   return { ...plan, executable: CONTAINER_RUNTIME_BIN };
