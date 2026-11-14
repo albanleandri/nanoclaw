@@ -7,7 +7,7 @@
  *      sight. Returns null when the payload doesn't carry enough to identify
  *      a sender.
  *   2. setAccessGate — runs after agent resolution. Enforces the
- *      unknown_sender_policy (strict/request_approval/public) and the
+ *      unknown_sender_policy (strict/request_approval/decline_notify/public) and the
  *      owner/global-admin/scoped-admin/member access hierarchy. Records its
  *      own `dropped_messages` row on refusal (structural drops are recorded
  *      by core).
@@ -52,7 +52,7 @@ import {
 import { deletePendingSenderApproval, getPendingSenderApproval } from './db/pending-sender-approvals.js';
 import { hasAdminPrivilege } from './db/user-roles.js';
 import { getUser, upsertUser } from './db/users.js';
-import { requestSenderApproval } from './sender-approval.js';
+import { declineAndNotify, requestSenderApproval } from './sender-approval.js';
 import { ensureUserDm } from './user-dm.js';
 import { namespacedUserId } from '../../platform-id.js';
 
@@ -164,6 +164,28 @@ function handleUnknownSender(
         event,
       }).catch((err) => log.error('Sender-approval flow threw', { err }));
     }
+    return;
+  }
+
+  if (mg.unknown_sender_policy === 'decline_notify') {
+    log.info('MESSAGE DROPPED — unknown sender (decline-and-notify policy)', {
+      messagingGroupId: mg.id,
+      agentGroupId,
+      userId,
+      accessReason,
+    });
+    recordDroppedMessage(dropRecord);
+    if (mg.is_group === 1) {
+      log.warn('decline_notify on a group messaging group — treated as strict', { messagingGroupId: mg.id });
+      return;
+    }
+    declineAndNotify({
+      messagingGroupId: mg.id,
+      agentGroupId,
+      senderIdentity: userId,
+      senderName,
+      event,
+    }).catch((err) => log.error('decline_notify flow threw', { err }));
     return;
   }
 

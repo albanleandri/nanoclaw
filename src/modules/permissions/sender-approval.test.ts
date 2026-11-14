@@ -16,7 +16,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
-import { createMessagingGroup, createMessagingGroupAgent } from '../../db/messaging-groups.js';
+import { createMessagingGroup, createMessagingGroupAgent, updateMessagingGroup } from '../../db/messaging-groups.js';
 import { upsertUser } from './db/users.js';
 import { grantRole } from './db/user-roles.js';
 
@@ -126,7 +126,7 @@ beforeEach(async () => {
     )
     .run('telegram:owner', 'telegram', 'mg-dm-owner', now());
 
-  deliverMock.mockClear();
+  deliverMock.mockReset().mockResolvedValue('plat-msg-id');
 });
 
 afterEach(() => {
@@ -341,5 +341,136 @@ describe('unknown-sender request_approval flow', () => {
       .prepare('SELECT 1 AS x FROM agent_group_members WHERE user_id = ? AND agent_group_id = ?')
       .get('tg:stranger', 'ag-1');
     expect(member).toBeDefined();
+  });
+});
+
+describe('unknown-sender decline_notify flow', () => {
+  beforeEach(() => {
+    updateMessagingGroup('mg-chat', { is_group: 0, unknown_sender_policy: 'decline_notify' });
+  });
+
+  it('declines the sender, sends an owner FYI, records the drop, and grants no access', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('hello'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).toHaveBeenCalledTimes(2);
+    expect(deliverMock.mock.calls[0].slice(0, 4)).toEqual(['telegram', 'chat-123', null, 'chat-sdk']);
+    expect(JSON.parse(deliverMock.mock.calls[0][4] as string).text).toContain("Owner's personal agent");
+    expect(deliverMock.mock.calls[1].slice(0, 4)).toEqual(['telegram', 'dm-owner', null, 'chat-sdk']);
+    expect(JSON.parse(deliverMock.mock.calls[1][4] as string).text).toContain('I sent a polite decline');
+
+    const { getDb } = await import('../../db/connection.js');
+    expect(getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string }).toMatchObject({
+      id: expect.stringMatching(/^decline:/),
+    });
+    expect(
+      getDb().prepare('SELECT COUNT(*) AS c FROM agent_group_members WHERE user_id = ?').get('tg:stranger') as {
+        c: number;
+      },
+    ).toEqual({ c: 0 });
+  });
+
+  it('deduplicates repeat declines and FYIs for 24 hours', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('first'));
+    await new Promise((r) => setTimeout(r, 10));
+    await routeInbound(stranger('second'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('degrades to strict on group surfaces instead of posting a public decline', async () => {
+    updateMessagingGroup('mg-chat', { is_group: 1 });
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('group message'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).not.toHaveBeenCalled();
+    const { getDb } = await import('../../db/connection.js');
+    expect(getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number }).toEqual({
+      c: 0,
+    });
+  });
+
+  it('clears a decline stamp when policy flips back to request_approval', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('decline this'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    updateMessagingGroup('mg-chat', { unknown_sender_policy: 'request_approval' });
+    deliverMock.mockClear();
+    await routeInbound(stranger('please ask now'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(deliverMock.mock.calls[0][4] as string).type).toBe('ask_question');
+    const { getDb } = await import('../../db/connection.js');
+    const row = getDb().prepare('SELECT id FROM pending_sender_approvals').get() as { id: string };
+    expect(row.id).toMatch(/^nsa-/);
+  });
+
+  it('converts an obsolete approval row when policy flips to decline_notify', async () => {
+    updateMessagingGroup('mg-chat', { unknown_sender_policy: 'request_approval' });
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('ask first'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    updateMessagingGroup('mg-chat', { unknown_sender_policy: 'decline_notify' });
+    deliverMock.mockClear();
+    await routeInbound(stranger('decline now'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).toHaveBeenCalledTimes(2);
+    const { getDb } = await import('../../db/connection.js');
+    const rows = getDb().prepare('SELECT id FROM pending_sender_approvals').all() as Array<{ id: string }>;
+    expect(rows).toEqual([{ id: expect.stringMatching(/^decline:/) }]);
+  });
+
+  it('allows a new decline after the persisted 24-hour window expires', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('first'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const { getDb } = await import('../../db/connection.js');
+    getDb()
+      .prepare('UPDATE pending_sender_approvals SET created_at = ?')
+      .run(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString());
+    deliverMock.mockClear();
+    await routeInbound(stranger('next day'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(deliverMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists the stamp before delivery so a failure cannot create a retry storm', async () => {
+    deliverMock.mockRejectedValueOnce(new Error('network down')).mockResolvedValue('owner-fyi');
+    const { routeInbound } = await import('../../router.js');
+    await routeInbound(stranger('first'));
+    await new Promise((r) => setTimeout(r, 10));
+    await routeInbound(stranger('retry'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    // First attempt: failed sender decline + successful owner FYI. Second is deduped.
+    expect(deliverMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors conversation-specific dedupe and copy overrides', async () => {
+    const { declineAndNotify } = await import('./sender-approval.js');
+    const event = stranger('custom');
+    await declineAndNotify({
+      messagingGroupId: 'mg-chat',
+      agentGroupId: 'ag-1',
+      senderIdentity: 'tg:stranger',
+      senderName: 'Stranger',
+      event,
+      dedupeKey: 'conversation-1',
+      declineText: 'Custom decline',
+      fyiText: 'Custom FYI',
+    });
+
+    expect(JSON.parse(deliverMock.mock.calls[0][4] as string)).toEqual({ text: 'Custom decline' });
+    expect(JSON.parse(deliverMock.mock.calls[1][4] as string)).toEqual({ text: 'Custom FYI' });
   });
 });

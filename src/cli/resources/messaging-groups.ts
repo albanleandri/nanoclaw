@@ -40,8 +40,8 @@ registerResource({
       name: 'unknown_sender_policy',
       type: 'string',
       description:
-        'What happens when an unrecognized sender posts. "strict" drops silently. "request_approval" sends an approval card to an admin. "public" allows anyone.',
-      enum: ['strict', 'request_approval', 'public'],
+        'What happens when an unrecognized sender posts. "strict" drops silently. "request_approval" sends an approval card to an admin. "decline_notify" politely declines a DM and sends the owner an FYI. "public" allows anyone.',
+      enum: ['strict', 'request_approval', 'decline_notify', 'public'],
       default: 'strict',
       updatable: true,
     },

@@ -57,3 +57,58 @@ export function hasInFlightSenderApproval(messagingGroupId: string, senderIdenti
 export function deletePendingSenderApproval(id: string): void {
   getDb().prepare('DELETE FROM pending_sender_approvals WHERE id = ?').run(id);
 }
+
+const DECLINE_STAMP_ID_PREFIX = 'decline:';
+
+export function getDeclineStampAt(messagingGroupId: string, senderIdentity: string): string | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT created_at FROM pending_sender_approvals
+        WHERE messaging_group_id = ? AND sender_identity = ? AND id LIKE '${DECLINE_STAMP_ID_PREFIX}%'`,
+    )
+    .get(messagingGroupId, senderIdentity) as { created_at: string } | undefined;
+  return row?.created_at;
+}
+
+export function upsertDeclineStamp(stamp: {
+  messaging_group_id: string;
+  agent_group_id: string;
+  sender_identity: string;
+  sender_name: string | null;
+  original_message: string;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO pending_sender_approvals (
+         id, messaging_group_id, agent_group_id, sender_identity,
+         sender_name, original_message, approver_user_id, created_at,
+         title, options_json
+       ) VALUES (
+         @id, @messaging_group_id, @agent_group_id, @sender_identity,
+         @sender_name, @original_message, '', @created_at, '', '[]'
+       )
+       ON CONFLICT(messaging_group_id, sender_identity) DO UPDATE SET
+         id = excluded.id,
+         agent_group_id = excluded.agent_group_id,
+         created_at = excluded.created_at,
+         sender_name = excluded.sender_name,
+         original_message = excluded.original_message,
+         approver_user_id = '',
+         title = '',
+         options_json = '[]'`,
+    )
+    .run({
+      id: `${DECLINE_STAMP_ID_PREFIX}${stamp.messaging_group_id}:${stamp.sender_identity}`,
+      ...stamp,
+      created_at: new Date().toISOString(),
+    });
+}
+
+export function clearDeclineStamp(messagingGroupId: string, senderIdentity: string): void {
+  getDb()
+    .prepare(
+      `DELETE FROM pending_sender_approvals
+        WHERE messaging_group_id = ? AND sender_identity = ? AND id LIKE '${DECLINE_STAMP_ID_PREFIX}%'`,
+    )
+    .run(messagingGroupId, senderIdentity);
+}

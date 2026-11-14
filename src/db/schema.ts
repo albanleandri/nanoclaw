@@ -288,7 +288,8 @@ CREATE TABLE pending_host_questions (
 CREATE INDEX idx_pending_host_questions_owner
   ON pending_host_questions(owner_type, owner_id);
 
--- Pending approvals for unknown senders (unknown_sender_policy='request_approval').
+-- Pending approvals for unknown senders and 24h decline stamps
+-- (unknown_sender_policy='request_approval' or 'decline_notify').
 -- In-flight dedup via UNIQUE(messaging_group_id, sender_identity): a second
 -- message from the same unknown sender while a card is pending is silently
 -- dropped instead of spamming the admin.

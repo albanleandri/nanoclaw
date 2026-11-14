@@ -42,7 +42,7 @@ export interface SharedResourceControlRow {
   updated_at: string;
 }
 
-export type UnknownSenderPolicy = 'strict' | 'request_approval' | 'public';
+export type UnknownSenderPolicy = 'strict' | 'request_approval' | 'decline_notify' | 'public';
 
 export interface MessagingGroup {
   id: string;

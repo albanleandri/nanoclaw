@@ -27,12 +27,21 @@
  * sender is silently dropped (no duplicate card sent).
  */
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
+import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import { createPendingSenderApproval, hasInFlightSenderApproval } from './db/pending-sender-approvals.js';
+import {
+  clearDeclineStamp,
+  createPendingSenderApproval,
+  getDeclineStampAt,
+  hasInFlightSenderApproval,
+  upsertDeclineStamp,
+} from './db/pending-sender-approvals.js';
+import { getOwners } from './db/user-roles.js';
+import { getUser } from './db/users.js';
 import { AGENT_ACCESS_SCOPE_WARNING } from './channel-approval.js';
 
 const APPROVAL_OPTIONS: RawOption[] = [
@@ -54,6 +63,9 @@ export interface RequestSenderApprovalInput {
 
 export async function requestSenderApproval(input: RequestSenderApprovalInput): Promise<void> {
   const { messagingGroupId, agentGroupId, senderIdentity, senderName, event } = input;
+
+  // A policy flip from decline_notify leaves a stamp on the same UNIQUE key.
+  clearDeclineStamp(messagingGroupId, senderIdentity);
 
   // In-flight dedup: don't spam the admin if the same unknown sender
   // retries while a card is already pending.
@@ -154,3 +166,92 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
  */
 export const APPROVE_VALUE = 'approve';
 export const REJECT_VALUE = 'reject';
+
+export const DECLINE_NOTIFY_DEDUPE_MS = 24 * 60 * 60 * 1000;
+const UNKNOWN_SENDER_KEY = 'unknown';
+
+function ownerDisplayName(): string | null {
+  for (const owner of getOwners()) {
+    const name = getUser(owner.user_id)?.display_name;
+    if (name) return name;
+  }
+  return null;
+}
+
+export interface DeclineAndNotifyInput {
+  messagingGroupId: string;
+  agentGroupId: string | null;
+  senderIdentity: string | null;
+  senderName: string | null;
+  event: InboundEvent;
+  dedupeKey?: string;
+  declineText?: string;
+  fyiText?: string;
+}
+
+/** Politely decline an unknown DM and send a plain-text owner FYI, without granting access. */
+export async function declineAndNotify(input: DeclineAndNotifyInput): Promise<void> {
+  const { messagingGroupId, agentGroupId, senderIdentity, senderName, event } = input;
+  const senderKey = input.dedupeKey ?? senderIdentity ?? UNKNOWN_SENDER_KEY;
+  const stampedAt = getDeclineStampAt(messagingGroupId, senderKey);
+  if (stampedAt && Date.now() - new Date(stampedAt).getTime() < DECLINE_NOTIFY_DEDUPE_MS) {
+    log.debug('decline_notify deduped — declined within the last 24h', { messagingGroupId, senderIdentity });
+    return;
+  }
+
+  const adapter = getDeliveryAdapter();
+  if (!adapter) {
+    log.error('decline_notify skipped — no delivery adapter is wired', { messagingGroupId });
+    return;
+  }
+
+  const stampAgentGroupId = agentGroupId ?? getAllAgentGroups()[0]?.id;
+  if (stampAgentGroupId) {
+    upsertDeclineStamp({
+      messaging_group_id: messagingGroupId,
+      agent_group_id: stampAgentGroupId,
+      sender_identity: senderKey,
+      sender_name: senderName,
+      original_message: JSON.stringify(event),
+    });
+  }
+
+  const originMg = getMessagingGroup(messagingGroupId);
+  const declineText =
+    input.declineText ?? `I'm ${ownerDisplayName() ?? 'my owner'}'s personal agent — I can't help you directly.`;
+  try {
+    await adapter.deliver(event.channelType, event.platformId, null, 'chat-sdk', JSON.stringify({ text: declineText }));
+  } catch (err) {
+    log.warn('decline_notify: decline delivery failed', { messagingGroupId, err });
+  }
+
+  const approvers = pickApprover(agentGroupId);
+  const target = await pickApprovalDelivery(approvers, originMg?.channel_type ?? event.channelType);
+  if (!target) {
+    log.warn('decline_notify FYI skipped — no reachable owner or admin', { messagingGroupId, senderIdentity });
+    return;
+  }
+
+  const senderDisplay = senderName || senderIdentity || 'An unknown sender';
+  const who =
+    senderIdentity && senderDisplay !== senderIdentity ? `${senderDisplay} (${senderIdentity})` : senderDisplay;
+  const fyiText =
+    input.fyiText ??
+    `FYI: ${who} DMed your agent on ${event.channelType} — I sent a polite decline. Allow them with \`ncl members add\`.`;
+  try {
+    await adapter.deliver(
+      target.messagingGroup.channel_type,
+      target.messagingGroup.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({ text: fyiText }),
+    );
+    log.info('decline_notify handled — decline sent, owner notified', {
+      messagingGroupId,
+      senderIdentity,
+      notified: target.userId,
+    });
+  } catch (err) {
+    log.error('decline_notify: owner FYI delivery failed', { messagingGroupId, err });
+  }
+}

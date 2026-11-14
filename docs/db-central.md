@@ -46,7 +46,9 @@ CREATE TABLE messaging_groups (
 );
 ```
 
-- `unknown_sender_policy`: `strict` (drop), `request_approval` (ask admin), `public` (allow).
+- `unknown_sender_policy`: `strict` (drop), `request_approval` (ask admin),
+  `decline_notify` (politely decline an unknown DM and notify the owner), or
+  `public` (allow). On group surfaces `decline_notify` degrades to `strict`.
 - **Readers:** `src/router.ts`, `src/delivery.ts`, `src/session-manager.ts`
 - **Writers:** `src/db/messaging-groups.ts`, channel setup flows
 
