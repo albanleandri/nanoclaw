@@ -4,6 +4,7 @@
  *
  * Used by Discord, Slack, and other Chat SDK-supported platforms.
  */
+import { createHash, timingSafeEqual } from 'crypto';
 import http from 'http';
 
 import {
@@ -258,6 +259,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
   let state: SqliteStateAdapter;
   let setupConfig: ChannelSetup;
   let gatewayAbort: AbortController | null = null;
+  let gatewayWebhookServer: http.Server | null = null;
 
   async function messageToInbound(
     message: ChatMessage,
@@ -483,7 +485,9 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         gatewayAbort = new AbortController();
 
         // Start local HTTP server to receive forwarded Gateway events (including interactions)
-        const webhookUrl = await startLocalWebhookServer(gatewayAdapter, setupConfig, config.botToken);
+        const gatewayWebhook = await startLocalWebhookServer(gatewayAdapter, setupConfig, config.botToken);
+        gatewayWebhookServer = gatewayWebhook.server;
+        const webhookUrl = gatewayWebhook.url;
 
         // Exponential backoff capped at 1h. Without this, an unrecoverable
         // failure (e.g., TokenInvalid) restarts ~10×/sec and Discord's
@@ -711,6 +715,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
 
     async teardown() {
       gatewayAbort?.abort();
+      if (gatewayWebhookServer) {
+        await new Promise<void>((resolve, reject) => {
+          gatewayWebhookServer!.close((error) => (error ? reject(error) : resolve()));
+        });
+        gatewayWebhookServer = null;
+      }
       await chat.shutdown();
       log.info('Chat SDK bridge shut down', { adapter: adapter.name });
     },
@@ -759,9 +769,14 @@ function startLocalWebhookServer(
   adapter: GatewayAdapter,
   setupConfig: ChannelSetup,
   botToken?: string,
-): Promise<string> {
+): Promise<{ url: string; server: http.Server }> {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
+      if (!gatewayTokenMatches(req.headers['x-discord-gateway-token'], botToken)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end('{"error":"unauthorized"}');
+        return;
+      }
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', () => {
@@ -783,9 +798,16 @@ function startLocalWebhookServer(
       const addr = server.address() as { port: number };
       const url = `http://127.0.0.1:${addr.port}/webhook`;
       log.info('Local webhook server started', { port: addr.port });
-      resolve(url);
+      resolve({ url, server });
     });
   });
+}
+
+/** Hash first so comparisons are fixed-length; an absent configured token never matches. */
+export function gatewayTokenMatches(header: string | string[] | undefined, botToken: string | undefined): boolean {
+  if (!botToken || typeof header !== 'string') return false;
+  const digest = (value: string): Buffer => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(header), digest(botToken));
 }
 
 async function handleForwardedEvent(

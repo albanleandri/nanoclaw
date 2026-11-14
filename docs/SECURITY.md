@@ -315,6 +315,11 @@ receive webhooks; registering one for a polling adapter would bind
 `0.0.0.0:3000` and accept unsigned updates under any sender ID when no adapter
 webhook secret is configured.
 
+Gateway-backed adapters use a separate ephemeral loopback receiver for raw
+forwarded events. It requires the configured bot token in the gateway header
+before reading the request body or dispatching an event, and closes on adapter
+teardown; loopback reachability alone grants no trust.
+
 Trusted-host integration traffic originates in the host process, not an agent
 container, so container egress lockdown does not govern it. Its network
 boundary is the reviewed plugin's exact HTTPS origin/path/query/method policy

@@ -72,6 +72,11 @@ seam, which reuses the boot setup callback and transient-network retries.
 Because this fork has one active adapter per channel type, hot-start refuses to
 replace an already-live type.
 
+Gateway-backed Chat SDK adapters forward raw events to an ephemeral loopback
+receiver. Loopback is not treated as an authentication boundary: every request
+must present the adapter's configured bot token in the gateway header, compared
+in constant time, and the receiver is closed with the bridge.
+
 ## Identity, routing, and isolation
 
 An `agent_group` is a durable agent identity and workspace. A
