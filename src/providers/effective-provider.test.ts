@@ -28,6 +28,15 @@ describe('effective provider resolution', () => {
     );
   });
 
+  it('uses the install default only when no group model is selected', () => {
+    const withoutGroupModel = { ...config, model: undefined };
+    expect(resolveEffectiveProviderConfig(session, withoutGroupModel, undefined, 'install-model').model).toBe(
+      'install-model',
+    );
+    expect(resolveEffectiveProviderConfig(session, config, undefined, 'install-model').model).toBe('group-model');
+    expect(resolveEffectiveProviderConfig(session, withoutGroupModel, undefined, '').model).toBeUndefined();
+  });
+
   it('uses a profile ahead of legacy fields and fingerprints conversation settings', () => {
     const profile: ProviderProfileRow = {
       id: 'profile-1',
@@ -63,6 +72,14 @@ describe('effective provider resolution', () => {
       lookup,
     );
     expect(otherModel.runtimeStateKey).not.toBe(result.runtimeStateKey);
+
+    const profileDefault = resolveEffectiveProviderConfig(
+      { agent_provider: null, provider_profile_id: profile.id },
+      { ...config, model: undefined },
+      lookup,
+      'install-model',
+    );
+    expect(profileDefault.model).toBe('profile-model');
   });
 
   it('fails closed for missing and disabled profiles', () => {

@@ -240,6 +240,11 @@ Installed provider descriptors describe code and capabilities. DB-backed
 provider profiles add endpoint, API family, model, effort, auth reference, and
 tool-verification state. Runtime descriptors identify the execution harness:
 
+Model selection prefers an explicit group model, then a selected provider
+profile's default, then the provider descriptor's default, and finally the
+optional `NANOCLAW_DEFAULT_MODEL` install fallback. With all four absent, the
+provider runtime keeps its native default.
+
 - Claude → `claude-sdk`;
 - Codex → `codex-app-server`;
 - OpenAI-compatible profile → `openai-protocol-loop`.

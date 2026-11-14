@@ -18,6 +18,7 @@ const envConfig = readEnvFile([
   'NANOCLAW_EGRESS_LOCKDOWN',
   'NANOCLAW_EGRESS_NETWORK',
   'ONECLI_GATEWAY_CONTAINER',
+  'NANOCLAW_DEFAULT_MODEL',
   'TZ',
   'TELEGRAM_BOT_POOL',
   'SCREEN_MARKET_GUIDED_HOST',
@@ -65,6 +66,12 @@ export const NANOCLAW_EGRESS_NETWORK =
   process.env.NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || 'nanoclaw-egress';
 export const ONECLI_GATEWAY_CONTAINER =
   process.env.ONECLI_GATEWAY_CONTAINER || envConfig.ONECLI_GATEWAY_CONTAINER || 'onecli';
+
+/** Install-wide fallback used only when neither a group nor provider profile selects a model. */
+export function resolveDefaultModel(processValue?: string, fileValue?: string): string {
+  return processValue || fileValue || '';
+}
+export const DEFAULT_MODEL = resolveDefaultModel(process.env.NANOCLAW_DEFAULT_MODEL, envConfig.NANOCLAW_DEFAULT_MODEL);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

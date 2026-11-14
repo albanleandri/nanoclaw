@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 
 import type { ContainerConfig } from '../container-config.js';
+import { DEFAULT_MODEL } from '../config.js';
 import { getProviderProfile } from '../db/provider-profiles.js';
 import { providerToolFingerprint } from '../db/provider-profiles.js';
 import type { ProviderProfileRow, Session } from '../types.js';
@@ -58,13 +59,14 @@ export function resolveEffectiveProviderConfig(
   session: Pick<Session, 'agent_provider' | 'provider_profile_id'>,
   containerConfig: ContainerConfig,
   lookupProfile: (id: string) => ProviderProfileRow | undefined = getProviderProfile,
+  defaultModel: string = DEFAULT_MODEL,
 ): EffectiveProviderConfig {
   const profileId = session.provider_profile_id || containerConfig.providerProfileId;
   if (!profileId) {
     const provider = (session.agent_provider || containerConfig.provider || 'claude').toLowerCase();
     return {
       provider,
-      model: containerConfig.model,
+      model: containerConfig.model || defaultModel || undefined,
       effort: containerConfig.effort,
       runtimeStateKey: provider,
     };
@@ -78,7 +80,7 @@ export function resolveEffectiveProviderConfig(
     throw new Error(`Provider profile protocol mismatch: ${profile.name}`);
   }
   const provider = descriptor.runtime.containerProviderName.toLowerCase();
-  const model = containerConfig.model || profile.default_model || descriptor.models.defaultModel;
+  const model = containerConfig.model || profile.default_model || descriptor.models.defaultModel || defaultModel;
   const toolsVerified =
     profile.tool_strategy === 'native' &&
     Boolean(profile.tool_verified_at) &&

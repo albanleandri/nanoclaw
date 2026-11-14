@@ -183,6 +183,9 @@ lockstep with `@anthropic-ai/claude-agent-sdk` in
 `container/agent-runner/package.json` (both currently 2.1.285 / 0.3.285). A CLI
 bump can change the default model, so Claude groups pin theirs with
 `ncl groups config update --id <group> --model <model>`.
+As a lower-precedence install-wide fallback, operators may set
+`NANOCLAW_DEFAULT_MODEL`; an explicit group model or provider-profile default
+still wins, and an unset fallback leaves the provider SDK's default unchanged.
 
 `translateClaudeEvents` is an async generator that maps SDK messages to `ProviderEvent`:
 
