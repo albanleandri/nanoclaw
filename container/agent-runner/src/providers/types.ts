@@ -1,5 +1,10 @@
 export interface AgentProvider {
   /**
+   * Delivery door used for assistant text. Claude streams complete assistant
+   * messages; other providers keep final-result delivery unless declared.
+   */
+  readonly textDelivery?: 'result' | 'mid-turn-complete';
+  /**
    * Provider-owned boundary where rendered neutral memory is delivered.
    * Missing/unsupported declarations fail provider creation when memory is
    * enabled.
@@ -159,6 +164,8 @@ export type ProviderEvent =
    * diagnostics. A failed result without `error` receives a generic notice.
    */
   | { type: 'result'; text: string | null; isError?: boolean; error?: string; usage?: ProviderUsage }
+  /** Complete assistant-message text emitted before the turn result. */
+  | { type: 'text'; text: string }
   | {
       type: 'error';
       message: string;

@@ -142,7 +142,7 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
-  constructor(private readonly onDequeuedFollowUp?: (onTurnResult: () => void) => void) {}
+  constructor(private readonly onDequeuedInput?: (onTurnResult: (() => void) | undefined) => void) {}
 
   push(text: string, onTurnResult?: () => void): void {
     this.queue.push({
@@ -166,7 +166,9 @@ class MessageStream {
     while (true) {
       while (this.queue.length > 0) {
         const item = this.queue.shift()!;
-        if (item.onTurnResult) this.onDequeuedFollowUp?.(item.onTurnResult);
+        // Preserve one acknowledgement slot per input, including internal
+        // retry prompts that intentionally have no completion callback.
+        this.onDequeuedInput?.(item.onTurnResult);
         yield item.message;
       }
       if (this.done) return;
@@ -470,6 +472,18 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
   const events: ProviderEvent[] = [{ type: 'activity' }];
   if (message.type === 'system' && message.subtype === 'init') {
     events.push({ type: 'init', continuation: String(message.session_id ?? '') });
+  } else if (message.type === 'assistant') {
+    // The final SDK result contains only the last assistant message. Join all
+    // text blocks from this assistant message so wrapped replies composed
+    // before a later tool call are visible to the mid-turn delivery door.
+    const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
+    if (Array.isArray(content)) {
+      const text = content
+        .filter((block) => block.type === 'text' && block.text)
+        .map((block) => block.text)
+        .join('');
+      if (text) events.push({ type: 'text', text });
+    }
   } else if (message.type === 'result') {
     const result = message as { result?: string; is_error?: boolean; errors?: string[]; usage?: unknown };
     const isError = result.is_error === true;
@@ -517,6 +531,7 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
 
 export class ClaudeProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
+  readonly textDelivery = 'mid-turn-complete' as const;
   readonly memoryDeliveryMode = 'claude-session-start' as const;
 
   private assistantName?: string;
@@ -584,7 +599,7 @@ export class ClaudeProvider implements AgentProvider {
   }
 
   query(input: QueryInput): AgentQuery {
-    const followUpAcks: Array<() => void> = [];
+    const followUpAcks: Array<(() => void) | undefined> = [];
     const stream = new MessageStream((ack) => followUpAcks.push(ack));
     stream.push(input.prompt);
 

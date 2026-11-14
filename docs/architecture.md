@@ -459,6 +459,15 @@ optional chat-safe notice. Claude exposes only exact fixed CLI notices through
 that channel-facing field; unknown upstream response text stays in runner
 logs, and the user receives a generic failure notice instead.
 
+Claude's provider contract uses streamed assistant messages as a single
+content-delivery door. Complete `<message>` blocks are assembled across stream
+segments and written immediately; the final result verifies exact outbound
+sequence windows but never re-sends content. If streaming missed a block, or a
+tool send was followed by ambiguous unwrapped prose, the runner queues an
+informed retry that quotes a bounded view of what already went out. The retry
+may answer `done` or send only missing content, and exact prior sends are
+suppressed. Task sessions remain tool-delivery-only.
+
 Provider `push()` acceptance is not completion. A follow-up is completed only
 after the provider acknowledges the result for the turn that consumed it.
 

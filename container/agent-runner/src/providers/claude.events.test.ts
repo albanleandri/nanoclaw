@@ -28,6 +28,24 @@ describe('Claude SDK event translation', () => {
     });
   });
 
+  it('joins assistant text blocks in order for mid-turn delivery', () => {
+    expect(
+      translateClaudeSdkMessage({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: '<message to="main">hello ' },
+            { type: 'tool_use', name: 'Bash' },
+            { type: 'text', text: 'world</message>' },
+          ],
+        },
+      }),
+    ).toEqual({
+      events: [{ type: 'activity' }, { type: 'text', text: '<message to="main">hello world</message>' }],
+      acknowledgesTurn: false,
+    });
+  });
+
   const ownerHint =
     "Whoever runs this NanoClaw needs to fix this outside the chat. Please don't send keys or passwords here.";
 

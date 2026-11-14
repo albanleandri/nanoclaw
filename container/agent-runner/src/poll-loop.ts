@@ -7,7 +7,13 @@ import {
   markScriptSkipped,
   type MessageInRow,
 } from './db/messages-in.js';
-import { hasAppendLogRequestSince, maxSeq, writeMessageOut } from './db/messages-out.js';
+import {
+  getUndeliveredMessages,
+  hasAppendLogRequestSince,
+  maxSeq,
+  writeMessageOut,
+  type MessageOutRow,
+} from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearAuthFailureNotice,
@@ -276,6 +282,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       const result = await processQuery(query, routing, processingIds, providerStateKey, {
         stopSignal: config.stopSignal,
         onInitialBatchTerminal: persistInitialBatchResult,
+        midTurnCompleteDelivery: config.provider.textDelivery === 'mid-turn-complete',
       });
       orchestrationResult = result;
       if (result.continuation && result.continuation !== continuation) {
@@ -429,6 +436,8 @@ interface ProcessQueryOptions {
   markProcessing?: typeof markProcessing;
   markCompleted?: typeof markCompleted;
   onInitialBatchTerminal?: (result: QueryResult) => void;
+  /** Use streamed assistant text as the sole content-delivery door. */
+  midTurnCompleteDelivery?: boolean;
 }
 
 export async function processQuery(
@@ -438,6 +447,7 @@ export async function processQuery(
   providerName: string,
   opts: ProcessQueryOptions = {},
 ): Promise<QueryResult> {
+  routing = { ...routing };
   let queryContinuation: string | undefined;
   let initialBatchResolved = false;
   let outcome: InitialBatchOutcome | undefined;
@@ -446,6 +456,36 @@ export async function processQuery(
   // Once-per-turn guard for the task-fire "<message> block was not delivered"
   // nudge — mirrors unwrappedNudged for chat turns.
   let taskBlockNudged = false;
+  let midTurnSent = 0;
+  let midTurnReplied = 0;
+  let midTurnTail = '';
+  let turnStartSeq = maxSeq();
+  let nudgedWindow: SeqWindow | undefined;
+  let answering = true;
+  type QueuedTurn = {
+    routing: RoutingContext;
+    unwrappedNudged: boolean;
+    taskBlockNudged: boolean;
+    nudgedWindow?: SeqWindow;
+  };
+  const queuedTurns: QueuedTurn[] = [];
+  const adoptTurn = (turn: QueuedTurn): void => {
+    Object.assign(routing, turn.routing);
+    unwrappedNudged = turn.unwrappedNudged;
+    taskBlockNudged = turn.taskBlockNudged;
+    nudgedWindow = turn.nudgedWindow;
+    setCurrentInReplyTo(routing.inReplyTo);
+    answering = true;
+  };
+  const pushRetry = (prompt: string, retryOf?: SeqWindow): void => {
+    query.push(prompt);
+    queuedTurns.push({
+      routing: { ...routing },
+      unwrappedNudged,
+      taskBlockNudged,
+      nudgedWindow: retryOf,
+    });
+  };
   let providerFailureNotified = false;
   let initialTurnCompleted = false;
   let usage: ProviderUsage | undefined;
@@ -588,8 +628,6 @@ export async function processQuery(
         const keptOrchestrationIds = orchestrationMessageIds(keep);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
-        unwrappedNudged = false;
-        taskBlockNudged = false;
         followUpsInFlight += 1;
         try {
           query.push(prompt, () => {
@@ -598,6 +636,13 @@ export async function processQuery(
             followUpsInFlight = Math.max(0, followUpsInFlight - 1);
             lastPostResultActivity = Date.now();
           });
+          const nextTurn: QueuedTurn = {
+            routing: extractRouting(keep),
+            unwrappedNudged: false,
+            taskBlockNudged: false,
+          };
+          if (answering) queuedTurns.push(nextTurn);
+          else adoptTurn(nextTurn);
         } catch (err) {
           followUpsInFlight = Math.max(0, followUpsInFlight - 1);
           throw err;
@@ -640,10 +685,6 @@ export async function processQuery(
     })();
   }, activePollIntervalMs);
 
-  // Seq watermark before the agent runs — anything after this is "this fire"
-  // for the append-log exactly-once guard.
-  const turnStartSeq = maxSeq();
-
   try {
     for await (const event of query.events) {
       handleEvent(event, routing);
@@ -658,6 +699,13 @@ export async function processQuery(
         // effectively orphaned and the next message started a blank
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
+      } else if (event.type === 'text') {
+        if (opts.midTurnCompleteDelivery) {
+          const scan = deliverMidTurnBlocks(event.text, routing, turnStartSeq, midTurnTail, nudgedWindow);
+          midTurnSent += scan.delivered;
+          midTurnReplied += scan.replied;
+          midTurnTail = scan.tail;
+        }
       } else if (event.type === 'error' && event.classification === 'quota') {
         const error = {
           classification: event.classification,
@@ -734,9 +782,16 @@ export async function processQuery(
         initialTurnCompleted = true;
         lastPostResultHeartbeat = Date.now();
         lastPostResultActivity = lastPostResultHeartbeat;
-        if (event.text) {
-          clearAuthFailureNotice();
-          const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
+        clearAuthFailureNotice();
+        const resultText = event.text ?? '';
+        if (resultText || event.isError === true) {
+          const { hasUnwrapped, taskBlocks, undelivered } = dispatchResultText(resultText, routing, {
+            midTurnSent,
+            midTurnReplied,
+            turnStartSeq,
+            nudgedWindow,
+            suppressDelivery: opts.midTurnCompleteDelivery === true,
+          });
           const willRetryTaskBlocks =
             event.isError !== true && shouldNudgeTaskBlocks(routing.taskFire === true, taskBlocks, taskBlockNudged);
           // One-door task delivery: the final text becomes the run log entry
@@ -744,16 +799,25 @@ export async function processQuery(
           // a failed fire's text belongs in the run log, not in a chat.
           // When we nudge on inert <message> blocks, DEFER the append to the
           // retry's result so the fire logs exactly once.
-          if (routing.taskFire && !willRetryTaskBlocks) autoAppendTaskLog(event.text, turnStartSeq);
+          if (routing.taskFire && !willRetryTaskBlocks) autoAppendTaskLog(resultText, turnStartSeq);
           if (event.isError !== true && hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
             const destinations = getAllDestinations();
             const names = destinations.map((d) => d.name).join(', ');
-            query.push(
-              `<system>Your response was not delivered — it was not wrapped in <message to="name">...</message> blocks. ` +
-                `All output must be wrapped: use <message to="name"> for content to send, or <internal> for scratchpad. ` +
-                `Your destinations: ${names}. ` +
-                `Please re-send your response with the correct wrapping.</system>`,
+            const sentThisTurn = chatRowsInWindow(turnStartSeq);
+            log(
+              sentThisTurn.length > 0
+                ? `Wrap-nudge pushed: quoting ${sentThisTurn.length} send(s) from this turn`
+                : 'Wrap-nudge pushed: nothing was sent this turn',
+            );
+            pushRetry(
+              sentThisTurn.length > 0
+                ? buildInformedWrapNudge(sentThisTurn, undelivered, destinations)
+                : `<system>Your response was not delivered — it was not wrapped in <message to="name">...</message> blocks. ` +
+                    `All output must be wrapped: use <message to="name"> for content to send, or <internal> for scratchpad. ` +
+                    `Your destinations: ${names}. ` +
+                    `Please re-send your response with the correct wrapping.</system>`,
+              { after: turnStartSeq, upto: maxSeq() },
             );
           }
 
@@ -762,13 +826,11 @@ export async function processQuery(
             const names = getAllDestinations()
               .map((d) => d.name)
               .join(', ');
-            query.push(
+            pushRetry(
               `<system>Your <message> block was NOT delivered — task sessions deliver only via the send_message tool. ` +
                 `Re-send now with send_message({to: "<name>", ...}). Your destinations: ${names}.</system>`,
             );
           }
-        } else {
-          clearAuthFailureNotice();
         }
         if (event.isError === true) {
           // Only the dedicated provider notice is channel-safe. Result text
@@ -777,6 +839,16 @@ export async function processQuery(
           query.end();
           break;
         }
+        // Advance all turn-local delivery state only at the provider result
+        // boundary. Follow-ups pushed while a turn streams wait in FIFO order.
+        midTurnSent = 0;
+        midTurnReplied = 0;
+        midTurnTail = '';
+        turnStartSeq = maxSeq();
+        nudgedWindow = undefined;
+        const nextTurn = queuedTurns.shift();
+        if (nextTurn) adoptTurn(nextTurn);
+        else answering = false;
       }
     }
   } finally {
@@ -934,6 +1006,204 @@ function isBareProviderAuthError(text: string): boolean {
   );
 }
 
+/** Outbound sequence window `(after, upto]`. */
+type SeqWindow = { after: number; upto: number };
+
+interface ResultDispatchOptions {
+  midTurnSent: number;
+  midTurnReplied: number;
+  turnStartSeq: number;
+  nudgedWindow?: SeqWindow;
+  suppressDelivery: boolean;
+}
+
+const INTERNAL_SPAN_RE = /<internal\b[\s\S]*?<\/internal>/gi;
+const OPEN_INTERNAL_RE = /<internal\b/i;
+const OPEN_MESSAGE_RE = /<message\b/;
+const TRAILING_HARNESS_TAGS_RE =
+  /(?:\s*<\/?(?:parameter|invoke|function_calls|function_results|dispatch)(?:\s+[^<>]*?)?\s*>)+\s*$/i;
+
+function stripHarnessTagArtifacts(text: string): string {
+  return text.replace(TRAILING_HARNESS_TAGS_RE, '');
+}
+
+/** Start of the unresolved tail that must be carried into the next text event. */
+export function unresolvedTailStart(input: string): number {
+  const masked = input.replace(INTERNAL_SPAN_RE, (match) => ' '.repeat(match.length));
+  const candidates: number[] = [];
+  const internalOpen = OPEN_INTERNAL_RE.exec(masked);
+  if (internalOpen) candidates.push(internalOpen.index);
+  const lastClose = masked.lastIndexOf('</message>');
+  const searchFrom = lastClose === -1 ? 0 : lastClose + '</message>'.length;
+  const messageOpen = OPEN_MESSAGE_RE.exec(masked.slice(searchFrom));
+  if (messageOpen) candidates.push(searchFrom + messageOpen.index);
+  if (candidates.length > 0) return Math.min(...candidates);
+
+  const maxPrefix = Math.min('<internal'.length - 1, masked.length);
+  for (let length = maxPrefix; length >= 1; length--) {
+    const tail = masked.slice(masked.length - length);
+    if (tail === '<message'.slice(0, length) || tail.toLowerCase() === '<internal'.slice(0, length)) {
+      return masked.length - length;
+    }
+  }
+  return input.length;
+}
+
+export interface MidTurnScanResult {
+  delivered: number;
+  replied: number;
+  tail: string;
+}
+
+/** Deliver complete message blocks from streamed assistant text exactly once. */
+export function deliverMidTurnBlocks(
+  text: string,
+  routing: RoutingContext,
+  turnStartSeq: number,
+  carry = '',
+  nudgedWindow?: SeqWindow,
+): MidTurnScanResult {
+  if (routing.taskFire) return { delivered: 0, replied: 0, tail: '' };
+  const input = carry + text;
+  const tailStart = unresolvedTailStart(input);
+  const settled = input.slice(0, tailStart);
+  const tail = input.slice(tailStart);
+  const segmentStartSeq = maxSeq();
+  const visible = settled.replace(INTERNAL_SPAN_RE, '');
+  const messagePattern = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+  let match: RegExpExecArray | null;
+  let delivered = 0;
+  let replied = 0;
+
+  while ((match = messagePattern.exec(visible)) !== null) {
+    const destinationName = match[1];
+    const body = stripHarnessTagArtifacts(match[2].trim());
+    const destination = resolveMessageDestination(destinationName, routing);
+    if (!destination || !body) continue;
+    if (wasWrittenInSeqWindow(destination, body, turnStartSeq, segmentStartSeq)) {
+      log(`Mid-turn <message to="${destinationName}"> repeats a same-turn send — skipped`);
+      continue;
+    }
+    if (wasWrittenInWindow(destination, body, nudgedWindow)) {
+      log(`Mid-turn <message to="${destinationName}"> repeats the nudged turn — skipped`);
+      continue;
+    }
+    sendToDestination(destination, body, routing);
+    delivered++;
+    if (answersBatch(destination, routing)) replied++;
+  }
+  return { delivered, replied, tail };
+}
+
+function answersBatch(destination: DestinationEntry, routing: RoutingContext): boolean {
+  if (destination.type !== 'agent') return true;
+  return routing.channelType === 'agent' && routing.platformId === destination.agentGroupId;
+}
+
+function chatRowsInWindow(afterSeq: number, uptoSeq = Infinity): MessageOutRow[] {
+  try {
+    return getUndeliveredMessages().filter(
+      (message) => (message.seq ?? 0) > afterSeq && (message.seq ?? 0) <= uptoSeq && message.kind === 'chat',
+    );
+  } catch (err) {
+    log(`Outbound lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+function wasWrittenInSeqWindow(
+  destination: DestinationEntry,
+  body: string,
+  afterSeq: number,
+  uptoSeq: number,
+): boolean {
+  if (uptoSeq <= afterSeq) return false;
+  const platformId = destination.type === 'channel' ? destination.platformId! : destination.agentGroupId!;
+  const channelType = destination.type === 'channel' ? destination.channelType! : 'agent';
+  const content = JSON.stringify({ text: body });
+  return chatRowsInWindow(afterSeq, uptoSeq).some(
+    (message) =>
+      message.platform_id === platformId && message.channel_type === channelType && message.content === content,
+  );
+}
+
+function wasWrittenInWindow(destination: DestinationEntry, body: string, window: SeqWindow | undefined): boolean {
+  if (!window) return false;
+  const platformId = destination.type === 'channel' ? destination.platformId! : destination.agentGroupId!;
+  const channelType = destination.type === 'channel' ? destination.channelType! : 'agent';
+  return chatRowsInWindow(window.after, window.upto).some((message) => {
+    if (message.platform_id !== platformId || message.channel_type !== channelType) return false;
+    try {
+      const content = JSON.parse(message.content) as { text?: unknown; operation?: unknown };
+      return content.operation === undefined && typeof content.text === 'string' && content.text.trim() === body;
+    } catch {
+      return false;
+    }
+  });
+}
+
+const INFORMED_NUDGE_QUOTE_MAX = 200;
+const INFORMED_NUDGE_ROWS_MAX = 3;
+
+/** Build a retry prompt that shows what already went out without duplicating it. */
+export function buildInformedWrapNudge(
+  rows: MessageOutRow[],
+  finalText: string,
+  destinations: DestinationEntry[],
+): string {
+  const destinationOf = (row: MessageOutRow): string =>
+    destinations.find((destination) =>
+      destination.type === 'agent'
+        ? row.channel_type === 'agent' && row.platform_id === destination.agentGroupId
+        : row.channel_type === destination.channelType && row.platform_id === destination.platformId,
+    )?.name ?? 'unknown';
+  const clip = (text: string): string => escapePromptXml(clipCodePoints(text, INFORMED_NUDGE_QUOTE_MAX));
+  const sent = rows.slice(0, INFORMED_NUDGE_ROWS_MAX).map((row) => {
+    let body = '[non-text message]';
+    try {
+      const content = JSON.parse(row.content) as {
+        text?: unknown;
+        files?: unknown;
+        operation?: unknown;
+        emoji?: unknown;
+      };
+      const files = Array.isArray(content.files) ? `[file: ${content.files.join(', ')}]` : '';
+      body =
+        content.operation === 'reaction'
+          ? `[reaction: ${typeof content.emoji === 'string' ? content.emoji : '?'}]`
+          : [typeof content.text === 'string' ? content.text : '', files].filter(Boolean).join(' ') || body;
+    } catch {
+      // Keep the non-text placeholder.
+    }
+    return `<sent_message to="${escapePromptXml(destinationOf(row))}">${clip(body)}</sent_message>`;
+  });
+  if (rows.length > INFORMED_NUDGE_ROWS_MAX) sent.push(`(+${rows.length - INFORMED_NUDGE_ROWS_MAX} more)`);
+  const names = destinations.map((destination) => destination.name).join(', ');
+  return (
+    `<system>Your final text was not delivered — it was not wrapped in <message to="name">...</message> blocks:\n` +
+    `<undelivered_text>${clip(finalText)}</undelivered_text>\n` +
+    `Earlier in that turn you already sent:\n${sent.join('\n')}\n` +
+    `If what was sent is the full reply, to where it was owed, respond with only <internal>done</internal> and nothing more will be sent. ` +
+    `Otherwise send only what is still missing, wrapped in <message to="name">...</message>, without repeating what already went out. ` +
+    `Your destinations: ${escapePromptXml(names)}.</system>`
+  );
+}
+
+function clipCodePoints(text: string, max: number): string {
+  let end = 0;
+  let count = 0;
+  for (const character of text) {
+    if (count === max) return `${text.slice(0, end)}…`;
+    end += character.length;
+    count++;
+  }
+  return text;
+}
+
+function escapePromptXml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /**
  * Parse the agent's final text for <message to="name">...</message> blocks
  * and dispatch each one to its resolved destination. Text outside of blocks
@@ -945,11 +1215,20 @@ function isBareProviderAuthError(text: string): boolean {
 export function dispatchResultText(
   text: string,
   routing: RoutingContext,
-): { sent: number; hasUnwrapped: boolean; taskBlocks: number } {
+  options: ResultDispatchOptions = {
+    midTurnSent: 0,
+    midTurnReplied: 0,
+    turnStartSeq: maxSeq(),
+    suppressDelivery: false,
+  },
+): { sent: number; hasUnwrapped: boolean; taskBlocks: number; undelivered: string } {
+  text = text.replace(INTERNAL_SPAN_RE, '');
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
 
   let match: RegExpExecArray | null;
-  let sent = 0;
+  let sent = options.midTurnSent;
+  let replied = options.midTurnReplied;
+  let missed = 0;
   // <message to> blocks left inert in a task fire — drives the same-turn
   // "use send_message" nudge in processQuery.
   let taskBlocks = 0;
@@ -961,7 +1240,7 @@ export function dispatchResultText(
       scratchpadParts.push(text.slice(lastIndex, match.index));
     }
     const toName = match[1];
-    const body = stripInternalTags(match[2]).trim();
+    const body = stripHarnessTagArtifacts(match[2].trim());
     lastIndex = MESSAGE_RE.lastIndex;
     if (!body) {
       continue;
@@ -984,10 +1263,27 @@ export function dispatchResultText(
     if (!dest) {
       log(`Unknown destination in <message to="${toName}">, dropping block`);
       scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
+      missed++;
+      continue;
+    }
+    if (!body) continue;
+    if (options.suppressDelivery) {
+      const repeat =
+        wasWrittenInWindow(dest, body, options.nudgedWindow) ||
+        wasWrittenInSeqWindow(dest, body, options.turnStartSeq, maxSeq());
+      if (!repeat) {
+        scratchpadParts.push(`[not delivered — the result door does not send; to="${toName}"] ${body}`);
+        missed++;
+      }
+      continue;
+    }
+    if (wasWrittenInWindow(dest, body, options.nudgedWindow)) {
+      log(`<message to="${toName}"> repeats the nudged turn — skipped`);
       continue;
     }
     sendToDestination(dest, body, routing);
     sent++;
+    if (answersBatch(dest, routing)) replied++;
   }
   if (lastIndex < text.length) {
     scratchpadParts.push(text.slice(lastIndex));
@@ -1001,11 +1297,11 @@ export function dispatchResultText(
 
   // In a task fire, plain final text is the NORMAL ending (it becomes the run
   // log) — never treat it as an undelivered reply or nudge the agent to wrap it.
-  const hasUnwrapped = !routing.taskFire && sent === 0 && !!scratchpad;
+  const hasUnwrapped = !routing.taskFire && (missed > 0 || (replied === 0 && !!scratchpad));
   if (hasUnwrapped) {
     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
   }
-  return { sent, hasUnwrapped, taskBlocks };
+  return { sent, hasUnwrapped, taskBlocks, undelivered: scratchpad };
 }
 
 /**

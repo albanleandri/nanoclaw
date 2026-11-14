@@ -6,7 +6,9 @@ import { MockProvider } from './mock.js';
 
 describe('createProvider', () => {
   it('returns ClaudeProvider for claude', () => {
-    expect(createProvider('claude')).toBeInstanceOf(ClaudeProvider);
+    const provider = createProvider('claude');
+    expect(provider).toBeInstanceOf(ClaudeProvider);
+    expect(provider.textDelivery).toBe('mid-turn-complete');
   });
 
   it('returns MockProvider for mock', () => {

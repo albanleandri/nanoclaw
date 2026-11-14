@@ -193,10 +193,21 @@ still wins, and an unset fallback leaves the provider SDK's default unchanged.
 - `message.type === 'result'` → `{ type: 'result', text, error? }`; only exact,
   fixed Claude CLI auth/billing/context notices enter the chat-safe `error`
   field, with guidance appropriate for a channel user
+- `message.type === 'assistant'` → one `{ type: 'text' }` event with that
+  assistant message's text blocks joined in order. Claude declares
+  `mid-turn-complete`, so complete delivery blocks are handled here even when
+  a later tool call means the final SDK result contains different text.
 - `message.type === 'system' && message.subtype === 'api_retry'` → `{ type: 'error', retryable: true }`
 - `message.type === 'system' && message.subtype === 'rate_limit_event'` → `{ type: 'error', retryable: false, classification: 'quota' }`
 - `message.type === 'system' && message.subtype === 'task_notification'` → `{ type: 'progress', message }`
 - Everything else → logged, not emitted
+
+For Claude, streamed assistant text is the sole content-delivery door. The
+result event checks whether every final block was already written and issues a
+bounded recovery nudge for anything missed; it never sends the block again.
+Retries carry a sequence window so a prior `send_message` or streamed block is
+not repeated. Providers without the declaration continue to deliver at the
+result boundary.
 
 **Claude-specific features preserved inside the provider:**
 

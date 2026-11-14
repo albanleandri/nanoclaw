@@ -60,4 +60,30 @@ describe('Claude query options', () => {
     expect(options.allowedTools).not.toContain('TaskOutput');
     expect(options.allowedTools).toContain('TaskStop');
   });
+
+  it('keeps follow-up acknowledgements aligned across an internal retry prompt', async () => {
+    const fakeQuery = ((args: { prompt: AsyncIterable<unknown> }) => {
+      return (async function* () {
+        let turn = 0;
+        for await (const _input of args.prompt) {
+          turn++;
+          yield { type: 'result', subtype: 'success', result: `turn-${turn}` };
+        }
+      })();
+    }) as unknown as typeof sdkQuery;
+    const provider = new ClaudeProvider({}, fakeQuery);
+    const query = provider.query({ prompt: 'initial', cwd: '/tmp' });
+    let resultCount = 0;
+    const acknowledgedAt: number[] = [];
+    query.push('internal retry');
+    query.push('user follow-up', () => acknowledgedAt.push(resultCount));
+    query.end();
+
+    for await (const event of query.events) {
+      if (event.type === 'result') resultCount++;
+    }
+
+    expect(resultCount).toBe(3);
+    expect(acknowledgedAt).toEqual([3]);
+  });
 });
