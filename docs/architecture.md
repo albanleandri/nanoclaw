@@ -454,6 +454,11 @@ The Bun runner:
 8. writes outbound result/tool/system rows;
 9. writes terminal processing acknowledgements.
 
+Provider failures keep model output and raw diagnostics separate from an
+optional chat-safe notice. Claude exposes only exact fixed CLI notices through
+that channel-facing field; unknown upstream response text stays in runner
+logs, and the user receives a generic failure notice instead.
+
 Provider `push()` acceptance is not completion. A follow-up is completed only
 after the provider acknowledges the result for the turn that consumed it.
 

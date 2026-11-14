@@ -737,20 +737,15 @@ export async function processQuery(
         if (event.text) {
           clearAuthFailureNotice();
           const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
-          const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskFire === true, taskBlocks, taskBlockNudged);
+          const willRetryTaskBlocks =
+            event.isError !== true && shouldNudgeTaskBlocks(routing.taskFire === true, taskBlocks, taskBlockNudged);
           // One-door task delivery: the final text becomes the run log entry
           // (guarded — an explicit append-log this fire wins). Errors included:
           // a failed fire's text belongs in the run log, not in a chat.
           // When we nudge on inert <message> blocks, DEFER the append to the
           // retry's result so the fire logs exactly once.
           if (routing.taskFire && !willRetryTaskBlocks) autoAppendTaskLog(event.text, turnStartSeq);
-          if (sent === 0 && event.isError === true && !routing.taskFire) {
-            deliverErrorResult(event.text, routing);
-            query.end();
-            break;
-          }
-
-          if (hasUnwrapped && !unwrappedNudged) {
+          if (event.isError !== true && hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
             const destinations = getAllDestinations();
             const names = destinations.map((d) => d.name).join(', ');
@@ -774,6 +769,13 @@ export async function processQuery(
           }
         } else {
           clearAuthFailureNotice();
+        }
+        if (event.isError === true) {
+          // Only the dedicated provider notice is channel-safe. Result text
+          // may contain model scratchpad or an upstream response body.
+          deliverErrorResult(event.error ?? 'The agent run failed. Check the logs for details.', routing);
+          query.end();
+          break;
         }
       }
     }

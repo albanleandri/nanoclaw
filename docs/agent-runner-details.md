@@ -190,7 +190,9 @@ still wins, and an unset fallback leaves the provider SDK's default unchanged.
 `translateClaudeEvents` is an async generator that maps SDK messages to `ProviderEvent`:
 
 - `message.type === 'system' && message.subtype === 'init'` → `{ type: 'init', continuation: sessionId }`
-- `message.type === 'result'` → `{ type: 'result', text }`
+- `message.type === 'result'` → `{ type: 'result', text, error? }`; only exact,
+  fixed Claude CLI auth/billing/context notices enter the chat-safe `error`
+  field, with guidance appropriate for a channel user
 - `message.type === 'system' && message.subtype === 'api_retry'` → `{ type: 'error', retryable: true }`
 - `message.type === 'system' && message.subtype === 'rate_limit_event'` → `{ type: 'error', retryable: false, classification: 'quota' }`
 - `message.type === 'system' && message.subtype === 'task_notification'` → `{ type: 'progress', message }`

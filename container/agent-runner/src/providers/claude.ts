@@ -442,6 +442,20 @@ function transcriptStartMs(transcriptPath: string): number | null {
  */
 const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '165000';
 
+// These CLI notices address a terminal user. Chat users cannot act on them
+// directly and must never be invited to paste a credential into the channel.
+const OWNER_FIX_HINT =
+  "Whoever runs this NanoClaw needs to fix this outside the chat. Please don't send keys or passwords here.";
+
+/** Exact, fixed Claude CLI failure notices that are safe to show in chat. */
+const CLAUDE_SDK_FAILURE_NOTICES = new Map([
+  ['Not logged in · Please run /login', OWNER_FIX_HINT],
+  ['Invalid API key · Fix external API key', OWNER_FIX_HINT],
+  ['Invalid auth token · Fix external auth token', OWNER_FIX_HINT],
+  ['Credit balance is too low', OWNER_FIX_HINT],
+  ['Prompt is too long', 'This conversation got too long. An admin can send /clear to start a new one.'],
+]);
+
 /**
  * Stale-session detection. Matches Claude Code's error text when a
  * resumed session can't be found — missing transcript .jsonl, unknown
@@ -458,11 +472,18 @@ export function translateClaudeSdkMessage(message: Record<string, unknown>): {
     events.push({ type: 'init', continuation: String(message.session_id ?? '') });
   } else if (message.type === 'result') {
     const result = message as { result?: string; is_error?: boolean; errors?: string[]; usage?: unknown };
-    const text = result.result ?? (result.errors?.length ? result.errors.join('\n') : null);
+    const isError = result.is_error === true;
+    // An invalid key and similar failures can leave errors[] empty and put a
+    // fixed CLI notice in result. Arbitrary result text can contain upstream
+    // response bodies, so reuse exact known notices only.
+    const candidate = isError && !result.errors?.length ? (result.result?.trim() ?? '') : '';
+    const hint = CLAUDE_SDK_FAILURE_NOTICES.get(candidate);
+    const resultAsError = hint ? `${candidate}\n${hint}` : undefined;
     events.push({
       type: 'result',
-      text,
-      isError: result.is_error === true,
+      text: resultAsError ? null : (result.result ?? null),
+      isError,
+      error: result.errors?.length ? result.errors.join('\n') : resultAsError,
       usage: normalizeProviderUsage(result.usage),
     });
     return { events, acknowledgesTurn: true };

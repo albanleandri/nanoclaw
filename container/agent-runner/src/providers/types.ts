@@ -154,11 +154,11 @@ export interface AgentQuery {
 export type ProviderEvent =
   | { type: 'init'; continuation: string }
   /**
-   * Completed provider turn. `isError` means the underlying provider flagged
-   * the turn as a non-success result; the poll loop should surface its text
-   * even if it is not wrapped in message tags.
+   * Completed provider turn. `text` is model output; `error` is an optional
+   * user-facing provider notice kept separate from model scratchpad and raw
+   * diagnostics. A failed result without `error` receives a generic notice.
    */
-  | { type: 'result'; text: string | null; isError?: boolean; usage?: ProviderUsage }
+  | { type: 'result'; text: string | null; isError?: boolean; error?: string; usage?: ProviderUsage }
   | {
       type: 'error';
       message: string;

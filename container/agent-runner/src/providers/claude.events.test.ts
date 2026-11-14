@@ -28,6 +28,64 @@ describe('Claude SDK event translation', () => {
     });
   });
 
+  const ownerHint =
+    "Whoever runs this NanoClaw needs to fix this outside the chat. Please don't send keys or passwords here.";
+
+  it.each([
+    ['Not logged in · Please run /login', ownerHint],
+    ['Invalid API key · Fix external API key', ownerHint],
+    ['Invalid auth token · Fix external auth token', ownerHint],
+    ['Credit balance is too low', ownerHint],
+    ['Prompt is too long', 'This conversation got too long. An admin can send /clear to start a new one.'],
+  ])('turns the exact SDK notice %p into a chat-safe error', (notice, hint) => {
+    const translated = translateClaudeSdkMessage({
+      type: 'result',
+      is_error: true,
+      result: `  ${notice}\n`,
+      errors: [],
+    });
+    expect(translated.events[1]).toEqual({
+      type: 'result',
+      text: null,
+      isError: true,
+      error: `${notice}\n${hint}`,
+      usage: undefined,
+    });
+  });
+
+  it.each([
+    'API Error: 400 rejected input: private detail',
+    'Failed to authenticate. API Error: 403 private tenant',
+    'Rate limit reached for private tenant',
+    'Prompt is too long · API Error: 400 private detail',
+    'Invalid API key · Fix external API key\nsecond line',
+  ])('keeps unrecognized SDK error result %p out of the user-facing error field', (result) => {
+    expect(translateClaudeSdkMessage({ type: 'result', is_error: true, result, errors: [] }).events[1]).toEqual({
+      type: 'result',
+      text: result,
+      isError: true,
+      error: undefined,
+      usage: undefined,
+    });
+  });
+
+  it('keeps the SDK errors array separate from result text', () => {
+    expect(
+      translateClaudeSdkMessage({
+        type: 'result',
+        is_error: true,
+        result: 'model output',
+        errors: ['first error', 'second error'],
+      }).events[1],
+    ).toEqual({
+      type: 'result',
+      text: 'model output',
+      isError: true,
+      error: 'first error\nsecond error',
+      usage: undefined,
+    });
+  });
+
   it('classifies retry events and ignores informational rate-limit telemetry', () => {
     expect(translateClaudeSdkMessage({ type: 'system', subtype: 'api_retry' }).events[1]).toEqual({
       type: 'error',

@@ -798,18 +798,39 @@ describe('error result with no message envelope', () => {
     inReplyTo: 'm1',
   };
 
-  it('delivers a provider-marked billing/budget error to the triggering channel and does not nudge', async () => {
-    const budgetText = 'Spending limit reached. Add your own key at https://example.com/keys';
-    const { query, pushes } = makeResultQuery({ type: 'result', text: budgetText, isError: true } as ProviderEvent);
+  it('delivers only the provider user-facing error field and does not nudge', async () => {
+    const rawText = 'API Error: 403 private upstream response';
+    const safeNotice = 'Credit balance is too low\nAsk the NanoClaw owner to fix billing outside this chat.';
+    const { query, pushes } = makeResultQuery({
+      type: 'result',
+      text: rawText,
+      isError: true,
+      error: safeNotice,
+    } as ProviderEvent);
 
     await processQuery(query, routing, ['m1'], 'mock');
 
     const out = getUndeliveredMessages();
     expect(out).toHaveLength(1);
-    expect(JSON.parse(out[0].content).text).toBe(budgetText);
+    expect(JSON.parse(out[0].content).text).toBe(safeNotice);
+    expect(JSON.parse(out[0].content).text).not.toContain('private upstream response');
     expect(out[0].platform_id).toBe('chan-1');
     expect(out[0].channel_type).toBe('discord');
     expect(pushes).toHaveLength(0);
+  });
+
+  it('uses a generic notice when a failed result has no safe provider error', async () => {
+    const { query } = makeResultQuery({
+      type: 'result',
+      text: 'API Error: 500 private upstream response',
+      isError: true,
+    } as ProviderEvent);
+
+    await processQuery(query, routing, ['m1'], 'mock');
+
+    expect(getUndeliveredMessages().map((row) => JSON.parse(row.content).text)).toEqual([
+      'The agent run failed. Check the logs for details.',
+    ]);
   });
 
   it('still nudges a normal unwrapped result', async () => {
