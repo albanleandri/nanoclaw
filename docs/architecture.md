@@ -66,6 +66,12 @@ Important modules:
 | `src/cli/`                     | Host/operator and scoped agent command transport and dispatch                          |
 | `src/db/`                      | Central and session DB access                                                          |
 
+Channel registrations normally start during host initialization. A registration
+added later can be activated through the registry's `startChannelAdapter()`
+seam, which reuses the boot setup callback and transient-network retries.
+Because this fork has one active adapter per channel type, hot-start refuses to
+replace an already-live type.
+
 ## Identity, routing, and isolation
 
 An `agent_group` is a durable agent identity and workspace. A
